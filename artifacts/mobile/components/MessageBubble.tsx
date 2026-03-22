@@ -20,6 +20,7 @@ import {
 import Colors from "@/constants/colors";
 import type { AudioAttachment, ImageAttachment, Message, MessageFormatting, MusicAttachment } from "@/context/MessagingContext";
 import type { SkinTheme } from "@/context/SkinContext";
+import { useRecentClips } from "@/hooks/useRecentClips";
 
 interface MessageBubbleProps {
   message: Message;
@@ -289,9 +290,11 @@ const photoStyles = StyleSheet.create({
   },
 });
 
-function MusicReelBar({ music }: { music: MusicAttachment }) {
+function MusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
   const [playing, setPlaying] = useState(false);
+  const [saved, setSaved] = useState(false);
   const spinAnim = useRef(new Animated.Value(0)).current;
+  const { saveClip, recentClips } = useRecentClips();
   const spinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const stopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -334,6 +337,26 @@ function MusicReelBar({ music }: { music: MusicAttachment }) {
     };
   }, []);
 
+  const alreadySaved = recentClips.some(
+    (c) =>
+      c.id === music.id &&
+      c.clipStart === music.clipStart &&
+      c.clipEnd === music.clipEnd &&
+      c.playMode === music.playMode &&
+      c.delaySeconds === music.delaySeconds
+  );
+
+  useEffect(() => {
+    if (alreadySaved) setSaved(true);
+  }, [alreadySaved]);
+
+  const handleSave = () => {
+    if (saved) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    saveClip(music);
+    setSaved(true);
+  };
+
   function fmtTime(s: number) {
     const m = Math.floor(s / 60);
     const sec = Math.round(s) % 60;
@@ -374,6 +397,15 @@ function MusicReelBar({ music }: { music: MusicAttachment }) {
             <ReelEqBar key={i} duration={d} />
           ))}
         </View>
+      )}
+      {!isMine && (
+        <Pressable onPress={handleSave} hitSlop={8} style={styles.reelSaveBtn}>
+          <Ionicons
+            name={saved ? "bookmark" : "bookmark-outline"}
+            size={14}
+            color={saved ? "#FFD60A" : "rgba(255,255,255,0.7)"}
+          />
+        </Pressable>
       )}
     </View>
   );
@@ -767,7 +799,7 @@ export function MessageBubble({
               </Text>
             ) : null}
             <View style={[styles.reelSeparator, { backgroundColor: "rgba(255,255,255,0.2)" }]} />
-            <MusicReelBar music={message.musicAttachment!} />
+            <MusicReelBar music={message.musicAttachment!} isMine={isMine} />
             <View style={styles.metaRow}>
               <View style={isMine ? styles.metaRight : styles.metaLeft}>
                 <Text style={[styles.timestamp, { color: "rgba(255,255,255,0.7)" }]}>{time}</Text>
@@ -1181,5 +1213,9 @@ const styles = StyleSheet.create({
     height: 14,
     backgroundColor: "rgba(255,255,255,0.85)",
     borderRadius: 2,
+  },
+  reelSaveBtn: {
+    padding: 4,
+    flexShrink: 0,
   },
 });
