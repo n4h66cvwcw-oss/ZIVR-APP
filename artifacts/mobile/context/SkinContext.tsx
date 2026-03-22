@@ -204,6 +204,7 @@ type SkinContextValue = {
   coinBalance: number;
   applySkin: (id: string) => void;
   purchaseSkin: (skin: SkinTheme) => Promise<{ success: boolean; message: string }>;
+  addCoins: (amount: number) => Promise<void>;
   generateSkin: (prompt: string) => Promise<SkinTheme | null>;
   isGenerating: boolean;
   generationError: string | null;
@@ -291,6 +292,12 @@ export function SkinProvider({ children }: { children: React.ReactNode }) {
     [ownedIds, coinBalance]
   );
 
+  const addCoins = useCallback(async (amount: number) => {
+    const newBalance = coinBalance + amount;
+    setCoinBalance(newBalance);
+    await AsyncStorage.setItem(STORAGE_KEYS.balance, String(newBalance));
+  }, [coinBalance]);
+
   const generateSkin = useCallback(async (prompt: string): Promise<SkinTheme | null> => {
     setIsGenerating(true);
     setGenerationError(null);
@@ -337,12 +344,13 @@ export function SkinProvider({ children }: { children: React.ReactNode }) {
       coinBalance,
       applySkin,
       purchaseSkin,
+      addCoins,
       generateSkin,
       isGenerating,
       generationError,
       allSkins,
     }),
-    [activeSkin, ownedIds, aiSkins, coinBalance, applySkin, purchaseSkin, generateSkin, isGenerating, generationError, allSkins]
+    [activeSkin, ownedIds, aiSkins, coinBalance, applySkin, purchaseSkin, addCoins, generateSkin, isGenerating, generationError, allSkins]
   );
 
   return <SkinContext.Provider value={value}>{children}</SkinContext.Provider>;

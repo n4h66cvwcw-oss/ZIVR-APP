@@ -2,7 +2,7 @@ import { Feather, Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useSkin, type SkinTheme } from "@/context/SkinContext";
+import {
+  VIBECOIN_PACKAGES,
+  fetchProducts,
+  purchaseVibeCoinPackage,
+  type VibeCoinPackage,
+} from "@/utils/purchases";
+import type { IAPItemDetails } from "expo-in-app-purchases";
 
 type Tab = "store" | "my-skins" | "ai-lab";
 
@@ -36,6 +43,7 @@ export default function SkinStoreScreen() {
     coinBalance,
     applySkin,
     purchaseSkin,
+    addCoins,
     generateSkin,
     isGenerating,
     generationError,
@@ -45,6 +53,13 @@ export default function SkinStoreScreen() {
   const [aiPrompt, setAiPrompt] = useState("");
   const [previewSkin, setPreviewSkin] = useState<SkinTheme | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [showCoinModal, setShowCoinModal] = useState(false);
+  const [storeProducts, setStoreProducts] = useState<IAPItemDetails[]>([]);
+  const [purchasing, setPurchasing] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchProducts().then(setStoreProducts).catch(() => {});
+  }, []);
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
@@ -79,6 +94,26 @@ export default function SkinStoreScreen() {
     }
   };
 
+  const handleBuyCoins = async (pkg: VibeCoinPackage) => {
+    if (purchasing) return;
+    setPurchasing(pkg.id);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const result = await purchaseVibeCoinPackage(pkg, async (coins) => {
+      await addCoins(coins);
+    });
+    setPurchasing(null);
+    if (result.success) {
+      setShowCoinModal(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showSuccess(`🪙 +${result.coins} VibeCoins added!`);
+    } else if (result.reason !== "cancelled") {
+      Alert.alert("Purchase Failed", result.message ?? "Please try again.");
+    }
+  };
+
+  const getProductPrice = (productId: string) =>
+    storeProducts.find((p) => p.productId === productId)?.price ?? null;
+
   const officialSkins = allSkins.filter((s) => s.creator === "official");
 
   return (
@@ -98,12 +133,16 @@ export default function SkinStoreScreen() {
             Customize your vibe
           </Text>
         </View>
-        <View style={[styles.coinBadge, { backgroundColor: colors.surfaceSecondary }]}>
+        <Pressable
+          onPress={() => { Haptics.selectionAsync(); setShowCoinModal(true); }}
+          style={[styles.coinBadge, { backgroundColor: colors.surfaceSecondary }]}
+        >
           <Text style={styles.coinIcon}>🪙</Text>
           <Text style={[styles.coinCount, { color: colors.text }]}>
             {coinBalance.toLocaleString()}
           </Text>
-        </View>
+          <Ionicons name="add-circle" size={16} color={colors.primary} style={{ marginLeft: 2 }} />
+        </Pressable>
       </View>
 
       {successMsg && (
@@ -175,6 +214,73 @@ export default function SkinStoreScreen() {
           colors={colors}
         />
       )}
+
+      <Modal
+        visible={showCoinModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCoinModal(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setShowCoinModal(false)}
+        />
+        <View style={[styles.coinModalSheet, { backgroundColor: colors.surface }]}>
+          <View style={[styles.previewHandle, { backgroundColor: colors.border }]} />
+          <Text style={[styles.coinModalTitle, { color: colors.text }]}>
+            🪙 Buy VibeCoins
+          </Text>
+          <Text style={[styles.coinModalSub, { color: colors.textSecondary }]}>
+            Use VibeCoins to unlock skins & AI Lab
+          </Text>
+          <Text style={[styles.coinModalBalance, { color: colors.primary }]}>
+            Your balance: {coinBalance.toLocaleString()} 🪙
+          </Text>
+          {VIBECOIN_PACKAGES.map((pkg) => {
+            const livePrice = getProductPrice(pkg.id);
+            const isBuying = purchasing === pkg.id;
+            return (
+              <Pressable
+                key={pkg.id}
+                onPress={() => handleBuyCoins(pkg)}
+                disabled={!!purchasing}
+                style={[
+                  styles.coinPkgRow,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                ]}
+              >
+                <Text style={styles.coinPkgEmoji}>{pkg.emoji}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.coinPkgName, { color: colors.text }]}>
+                    {pkg.coins.toLocaleString()} VibeCoins
+                    {pkg.bonus ? (
+                      <Text style={{ color: "#32D74B" }}> +{pkg.bonus} bonus</Text>
+                    ) : null}
+                  </Text>
+                  <Text style={[styles.coinPkgPrice, { color: colors.textSecondary }]}>
+                    {livePrice ?? pkg.fallbackPrice}
+                  </Text>
+                </View>
+                {isBuying ? (
+                  <ActivityIndicator color={colors.primary} />
+                ) : (
+                  <View style={[styles.buyBtn, { backgroundColor: colors.primary }]}>
+                    <Text style={styles.buyBtnText}>Buy</Text>
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
+          <Pressable
+            onPress={() => setShowCoinModal(false)}
+            style={[styles.cancelBtn, { borderColor: colors.border }]}
+          >
+            <Text style={[styles.cancelBtnText, { color: colors.textSecondary }]}>
+              Cancel
+            </Text>
+          </Pressable>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -908,4 +1014,39 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   applyBtnText: { color: "#FFF", fontSize: 16, fontFamily: "Inter_700Bold" },
+  coinModalSheet: {
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    paddingBottom: 40,
+    gap: 12,
+  },
+  coinModalTitle: { fontSize: 22, fontFamily: "Inter_700Bold", textAlign: "center" },
+  coinModalSub: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", marginBottom: 4 },
+  coinModalBalance: { fontSize: 15, fontFamily: "Inter_600SemiBold", textAlign: "center", marginBottom: 4 },
+  coinPkgRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  coinPkgEmoji: { fontSize: 28 },
+  coinPkgName: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  coinPkgPrice: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
+  buyBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  buyBtnText: { color: "#FFF", fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  cancelBtn: {
+    alignItems: "center",
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 4,
+  },
+  cancelBtnText: { fontSize: 15, fontFamily: "Inter_400Regular" },
 });

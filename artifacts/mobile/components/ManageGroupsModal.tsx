@@ -29,7 +29,7 @@ const COLOR_OPTIONS = [
   "#5E5CE6","#64D2FF","#FF2D55","#34C759",
 ];
 
-type View = "list" | "editor" | "members";
+type ModalView = "list" | "editor" | "members";
 
 interface Props {
   visible: boolean;
@@ -43,7 +43,7 @@ export function ManageGroupsModal({ visible, onClose, chats }: Props) {
   const colors = isDark ? Colors.dark : Colors.light;
   const { groups, createGroup, updateGroup, deleteGroup, setChatIds } = useContactGroups();
 
-  const [view, setView] = useState<View>("list");
+  const [view, setView] = useState<ModalView>("list");
   const [editingGroup, setEditingGroup] = useState<ContactGroup | null>(null);
   const [editName, setEditName] = useState("");
   const [editEmoji, setEditEmoji] = useState("👥");

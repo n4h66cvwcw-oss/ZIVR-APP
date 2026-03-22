@@ -22,6 +22,13 @@ VibeMsg is a feature-rich iOS-style messaging app with unique innovations:
 - Read receipts, online status, "last seen" indicators
 - Dark/light mode, Inter fonts, iOS-native design language
 
+### VibeCoin In-App Purchases (IAP)
+- `utils/purchases.ts` — `VibeCoinPackage` type with `emoji`, `fallbackPrice`, `bonus` fields; `VIBECOIN_PACKAGES` (100/500/1000/2500 coins); `fetchProducts()`, `purchaseVibeCoinPackage()` using `expo-in-app-purchases`
+- `context/SkinContext.tsx` — `addCoins(amount)` function to credit coin balance + persist to AsyncStorage; exposed in context
+- `app/skin-store.tsx` — coin badge is now tappable, opens "Buy VibeCoins" bottom-sheet modal with 4 IAP packages, live store prices from IAP API (fallback to hardcoded), purchase spinner, success/failure handling
+- **IAP product IDs**: `com.vibemsg.app.coins.100/500/1000/2500` (must be created in App Store Connect + Play Console before publishing)
+- `expo-in-app-purchases` has no `app.plugin.js` config plugin — it is **not** listed in `app.json` plugins; native setup is handled automatically by EAS build
+
 ### Real-Time Backend (NEW)
 - **PostgreSQL** — `vm_users`, `vm_chats`, `vm_chat_members`, `vm_messages` tables (UUIDs, BigInt timestamps)
 - **Socket.io** on the Express API server — rooms per chat, `user:join`, `message:send→message:new`, `typing:start/stop`, disconnect cleanup

@@ -60,7 +60,7 @@ export default function ProfileScreen() {
       updateServerProfile(serverUserId, {
         displayName,
         statusMessage: status,
-        avatarUri: profile.avatar,
+        avatar: profile.avatar,
       });
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
