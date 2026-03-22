@@ -289,46 +289,33 @@ const photoStyles = StyleSheet.create({
   },
 });
 
-function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
-  const [expanded, setExpanded] = useState(false);
+function MusicReelBar({ music }: { music: MusicAttachment }) {
   const [playing, setPlaying] = useState(false);
-  const expandAnim = useRef(new Animated.Value(0)).current;
-  const bar1 = useRef(new Animated.Value(0.4)).current;
-  const bar2 = useRef(new Animated.Value(0.7)).current;
-  const bar3 = useRef(new Animated.Value(0.5)).current;
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const spinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
   const stopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const clipDuration = (music.clipEnd ?? music.duration) - (music.clipStart ?? 0);
 
-  const animateBar = (anim: Animated.Value, toMin: number, toMax: number, dur: number) =>
-    Animated.loop(Animated.sequence([
-      Animated.timing(anim, { toValue: toMax, duration: dur, useNativeDriver: true }),
-      Animated.timing(anim, { toValue: toMin, duration: dur, useNativeDriver: true }),
-    ]));
-
-  const startEq = () => {
-    animateBar(bar1, 0.2, 1.0, 220).start();
-    animateBar(bar2, 0.3, 0.9, 300).start();
-    animateBar(bar3, 0.15, 1.0, 180).start();
+  const startSpin = () => {
+    spinLoopRef.current = Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 2000, useNativeDriver: true })
+    );
+    spinLoopRef.current.start();
   };
 
-  const stopEq = () => {
-    bar1.stopAnimation(); bar2.stopAnimation(); bar3.stopAnimation();
-    Animated.parallel([
-      Animated.timing(bar1, { toValue: 0.4, duration: 200, useNativeDriver: true }),
-      Animated.timing(bar2, { toValue: 0.7, duration: 200, useNativeDriver: true }),
-      Animated.timing(bar3, { toValue: 0.5, duration: 200, useNativeDriver: true }),
-    ]).start();
+  const stopSpin = () => {
+    spinLoopRef.current?.stop();
+    Animated.timing(spinAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
   };
 
   const startPlaying = () => {
     setPlaying(true);
-    startEq();
+    startSpin();
     if (music.playMode !== "loop") {
       stopRef.current = setTimeout(() => {
         setPlaying(false);
-        stopEq();
+        stopSpin();
       }, clipDuration * 1000);
     }
   };
@@ -336,7 +323,7 @@ function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine:
   const stopPlaying = () => {
     if (stopRef.current) clearTimeout(stopRef.current);
     setPlaying(false);
-    stopEq();
+    stopSpin();
   };
 
   const toggle = () => {
@@ -344,28 +331,17 @@ function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine:
     if (playing) stopPlaying(); else startPlaying();
   };
 
-  const handleExpand = () => {
-    const next = !expanded;
-    setExpanded(next);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Animated.spring(expandAnim, {
-      toValue: next ? 1 : 0,
-      useNativeDriver: true,
-      tension: 160,
-      friction: 12,
-    }).start();
-
-    if (next && music.playMode === "delayed" && music.delaySeconds) {
-      delayRef.current = setTimeout(() => { startPlaying(); }, music.delaySeconds * 1000);
-    } else if (!next) {
-      if (delayRef.current) clearTimeout(delayRef.current);
-      stopPlaying();
+  useEffect(() => {
+    if (music.playMode === "delayed" && music.delaySeconds) {
+      delayRef.current = setTimeout(startPlaying, music.delaySeconds * 1000);
+    } else if (music.playMode === "once" || music.playMode === "loop") {
+      startPlaying();
     }
-  };
-
-  useEffect(() => () => {
-    if (stopRef.current) clearTimeout(stopRef.current);
-    if (delayRef.current) clearTimeout(delayRef.current);
+    return () => {
+      if (stopRef.current) clearTimeout(stopRef.current);
+      if (delayRef.current) clearTimeout(delayRef.current);
+      spinLoopRef.current?.stop();
+    };
   }, []);
 
   function fmtTime(s: number) {
@@ -374,77 +350,57 @@ function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine:
     return `${m}:${sec.toString().padStart(2, "0")}`;
   }
 
-  const playModeLabel: Record<string, string> = { once: "Play Once", loop: "Loop", delayed: `${music.delaySeconds ?? 0}s Delay` };
-  const playModeIcon: Record<string, string> = { once: "play-circle-outline", loop: "repeat", delayed: "timer-outline" };
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
 
-  const cardScale = expandAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
-  const cardOpacity = expandAnim;
+  const modeIcon: Record<string, any> = { once: "play-circle-outline", loop: "repeat", delayed: "timer-outline" };
+  const modeLabel: Record<string, string> = {
+    once: "Once",
+    loop: "Loop",
+    delayed: `+${music.delaySeconds ?? 0}s`,
+  };
 
   return (
-    <View style={styles.musicWrapper}>
-      <View style={[styles.musicNoteRow, isMine ? { justifyContent: "flex-end" } : { justifyContent: "flex-start" }]}>
-        <Pressable onPress={handleExpand} style={styles.musicNoteBtn} hitSlop={10}>
-          <Ionicons
-            name={expanded ? "musical-note" : "musical-note-outline"}
-            size={13}
-            color={expanded ? "#BF5AF2" : "rgba(191,90,242,0.65)"}
-          />
-          {playing && (
-            <View style={styles.musicNoteDot} />
-          )}
-        </Pressable>
+    <Pressable onPress={toggle} style={styles.reelBar} hitSlop={6}>
+      <Animated.View style={{ transform: [{ rotate: spin }] }}>
+        <View style={[styles.reelDisc, { backgroundColor: "rgba(255,255,255,0.22)" }]}>
+          <Ionicons name="musical-note" size={11} color="#fff" />
+        </View>
+      </Animated.View>
+      <View style={styles.reelInfo}>
+        <Text style={styles.reelTitle} numberOfLines={1}>
+          {music.emoji} {music.title} — {music.artist}
+        </Text>
+        <Text style={styles.reelClip}>
+          {fmtTime(music.clipStart ?? 0)}–{fmtTime(music.clipEnd ?? music.duration)} · {Math.round(clipDuration)}s
+        </Text>
       </View>
-
-      {expanded && (
-        <Animated.View style={{ transform: [{ scale: cardScale }], opacity: cardOpacity }}>
-          <LinearGradient
-            colors={music.colors as [string, string]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.musicCard}
-          >
-            <View style={styles.musicCardHeader}>
-              <Text style={styles.musicEmoji}>{music.emoji}</Text>
-              <View style={styles.musicInfo}>
-                <Text style={styles.musicTitle} numberOfLines={1}>{music.title}</Text>
-                <Text style={styles.musicArtist} numberOfLines={1}>{music.artist}</Text>
-              </View>
-            </View>
-
-            <View style={styles.musicClipRow}>
-              <View style={styles.musicClipBadge}>
-                <Text style={styles.musicClipText}>
-                  {fmtTime(music.clipStart ?? 0)} – {fmtTime(music.clipEnd ?? music.duration)} · {Math.round(clipDuration)}s
-                </Text>
-              </View>
-              <View style={styles.musicModeBadge}>
-                <Ionicons name={playModeIcon[music.playMode] as any} size={11} color="rgba(255,255,255,0.9)" />
-                <Text style={styles.musicModeText}>{playModeLabel[music.playMode]}</Text>
-              </View>
-            </View>
-
-            <View style={styles.musicFooter}>
-              <View style={styles.musicGenrePill}>
-                <Text style={styles.musicGenreText}>{music.genre}</Text>
-              </View>
-              <View style={styles.musicControls}>
-                {playing && (
-                  <View style={styles.eqBars}>
-                    {[bar1, bar2, bar3].map((bar, i) => (
-                      <Animated.View key={i} style={[styles.eqBar, { transform: [{ scaleY: bar }] }]} />
-                    ))}
-                  </View>
-                )}
-                <Pressable onPress={toggle} style={styles.musicPlayBtn} hitSlop={8}>
-                  <Ionicons name={playing ? "pause" : "play"} size={18} color="#fff" />
-                </Pressable>
-              </View>
-            </View>
-          </LinearGradient>
-        </Animated.View>
+      <View style={styles.reelModeTag}>
+        <Ionicons name={modeIcon[music.playMode]} size={10} color="rgba(255,255,255,0.85)" />
+        <Text style={styles.reelModeText}>{modeLabel[music.playMode]}</Text>
+      </View>
+      {playing && (
+        <View style={styles.reelEqRow}>
+          {[220, 300, 180].map((d, i) => (
+            <ReelEqBar key={i} duration={d} />
+          ))}
+        </View>
       )}
-    </View>
+    </Pressable>
   );
+}
+
+function ReelEqBar({ duration }: { duration: number }) {
+  const anim = useRef(new Animated.Value(0.3)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0.3, duration, useNativeDriver: true }),
+      ])
+    ).start();
+    return () => anim.stopAnimation();
+  }, []);
+  return <Animated.View style={[styles.reelEqBar, { transform: [{ scaleY: anim }] }]} />;
 }
 
 function AudioPlayer({
@@ -760,14 +716,16 @@ export function MessageBubble({
 
   const fmt = message.formatting;
   const hasGifBg = !!fmt?.backgroundGifUrl;
+  const hasMusicBg = !!message.musicAttachment && !hasGifBg;
   const skinSentText = activeSkin?.textOnSent ?? colors.messageTextSent;
   const skinReceivedText = activeSkin?.textOnReceived ?? colors.messageTextReceived;
   const skinReceivedBg = activeSkin?.receivedBubble ?? colors.messageReceived;
   const bubbleBg = hasGifBg ? "transparent" : (isMine ? colors.messageSent : skinReceivedBg);
   const defaultTextColor = isMine ? skinSentText : skinReceivedText;
-  const textColor = fmt?.textColor || (hasGifBg ? "#FFFFFF" : defaultTextColor);
-  const mutedText = hasGifBg ? "rgba(255,255,255,0.75)" : (isMine ? "rgba(255,255,255,0.7)" : colors.textSecondary);
+  const textColor = hasMusicBg ? "#FFFFFF" : (fmt?.textColor || (hasGifBg ? "#FFFFFF" : defaultTextColor));
+  const mutedText = (hasGifBg || hasMusicBg) ? "rgba(255,255,255,0.75)" : (isMine ? "rgba(255,255,255,0.7)" : colors.textSecondary);
   const sentBubbleColors = activeSkin ? activeSkin.sentBubble : null;
+  const musicBubbleColors = message.musicAttachment?.colors ?? null;
 
   const FONT_SIZE_VALUES: Record<string, number> = { sm: 11, md: 16, lg: 20, xl: 26 };
   const resolvedFontSize = fmt?.fontSize ? FONT_SIZE_VALUES[fmt.fontSize] : 16;
@@ -800,50 +758,57 @@ export function MessageBubble({
         onLongPress={handleLongPress}
         delayLongPress={300}
       >
-        {isMine && sentBubbleColors && !hasGifBg ? (
+        {hasMusicBg ? (
+          <LinearGradient
+            colors={musicBubbleColors as [string, string]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.bubble, isMine ? styles.myBubble : styles.theirBubble]}
+          >
+            {message.imageAttachment && (
+              <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
+            )}
+            {message.audioAttachment && (
+              <AudioPlayer audio={message.audioAttachment} isMine={isMine} colors={colors} />
+            )}
+            {message.text ? (
+              <Text style={[styles.messageText, { color: "#fff", fontSize: resolvedFontSize, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
+                {message.text}
+              </Text>
+            ) : null}
+            <View style={[styles.reelSeparator, { backgroundColor: "rgba(255,255,255,0.2)" }]} />
+            <MusicReelBar music={message.musicAttachment!} />
+            <View style={styles.metaRow}>
+              <View style={isMine ? styles.metaRight : styles.metaLeft}>
+                <Text style={[styles.timestamp, { color: "rgba(255,255,255,0.7)" }]}>{time}</Text>
+                {isMine && (
+                  <Ionicons name="checkmark-done" size={14} color={message.read ? "#64D2FF" : "rgba(255,255,255,0.5)"} style={{ marginLeft: 4 }} />
+                )}
+              </View>
+            </View>
+          </LinearGradient>
+        ) : isMine && sentBubbleColors && !hasGifBg ? (
           <LinearGradient
             colors={sentBubbleColors as [string, string]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={[styles.bubble, styles.myBubble]}
           >
-            {message.musicAttachment && (
-              <MusicMessageBubble music={message.musicAttachment} isMine={isMine} />
-            )}
             {message.imageAttachment && (
-              <SecurePhotoMessage
-                image={message.imageAttachment}
-                isMine={isMine}
-                messageId={message.id}
-                myId={myId}
-                onViewed={onImageViewed}
-                colors={colors}
-              />
+              <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
             )}
             {message.audioAttachment && (
               <AudioPlayer audio={message.audioAttachment} isMine={isMine} colors={colors} />
             )}
             {message.text ? (
-              <Text
-                style={[
-                  styles.messageText,
-                  { color: activeSkin?.textOnSent ?? colors.messageTextSent, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily },
-                  fmt?.italic && { fontStyle: "italic" },
-                  fmt?.underline && { textDecorationLine: "underline" },
-                ]}
-              >
+              <Text style={[styles.messageText, { color: activeSkin?.textOnSent ?? colors.messageTextSent, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
                 {message.text}
               </Text>
             ) : null}
             <View style={styles.metaRow}>
               <View style={styles.metaRight}>
                 <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
-                <Ionicons
-                  name="checkmark-done"
-                  size={14}
-                  color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"}
-                  style={{ marginLeft: 4 }}
-                />
+                <Ionicons name="checkmark-done" size={14} color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"} style={{ marginLeft: 4 }} />
               </View>
             </View>
           </LinearGradient>
@@ -857,45 +822,17 @@ export function MessageBubble({
           ]}
         >
           {hasGifBg && fmt?.backgroundGifUrl && (
-            <ExpoImage
-              source={{ uri: fmt.backgroundGifUrl }}
-              style={StyleSheet.absoluteFill}
-              contentFit="cover"
-              cachePolicy="memory-disk"
-            />
+            <ExpoImage source={{ uri: fmt.backgroundGifUrl }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" />
           )}
-          {hasGifBg && (
-            <View style={styles.gifOverlay} />
-          )}
-          {message.musicAttachment && (
-            <MusicMessageBubble music={message.musicAttachment} isMine={isMine} />
-          )}
+          {hasGifBg && <View style={styles.gifOverlay} />}
           {message.imageAttachment && (
-            <SecurePhotoMessage
-              image={message.imageAttachment}
-              isMine={isMine}
-              messageId={message.id}
-              myId={myId}
-              onViewed={onImageViewed}
-              colors={colors}
-            />
+            <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
           )}
           {message.audioAttachment && (
-            <AudioPlayer
-              audio={message.audioAttachment}
-              isMine={isMine}
-              colors={colors}
-            />
+            <AudioPlayer audio={message.audioAttachment} isMine={isMine} colors={colors} />
           )}
           {message.text ? (
-            <Text
-              style={[
-                styles.messageText,
-                { color: textColor, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily },
-                fmt?.italic && { fontStyle: "italic" },
-                fmt?.underline && { textDecorationLine: "underline" },
-              ]}
-            >
+            <Text style={[styles.messageText, { color: textColor, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
               {message.text}
             </Text>
           ) : null}
@@ -903,25 +840,12 @@ export function MessageBubble({
             <View style={isMine ? styles.metaRight : styles.metaLeft}>
               <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
               {isMine && (
-                <Ionicons
-                  name="checkmark-done"
-                  size={14}
-                  color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"}
-                  style={{ marginLeft: 4 }}
-                />
+                <Ionicons name="checkmark-done" size={14} color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"} style={{ marginLeft: 4 }} />
               )}
             </View>
             {hasCallHandlers && (
-              <Pressable
-                onPress={handlePress}
-                hitSlop={10}
-                style={styles.callIndicator}
-              >
-                <Ionicons
-                  name="call-outline"
-                  size={12}
-                  color={showCallBar ? colors.primary : mutedText}
-                />
+              <Pressable onPress={handlePress} hitSlop={10} style={styles.callIndicator}>
+                <Ionicons name="call-outline" size={12} color={showCallBar ? colors.primary : mutedText} />
               </Pressable>
             )}
           </View>
@@ -1206,131 +1130,66 @@ const styles = StyleSheet.create({
   reactionOptionEmoji: {
     fontSize: 24,
   },
-  musicWrapper: {
-    marginBottom: 2,
+  reelSeparator: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: 6,
+    marginHorizontal: -4,
   },
-  musicNoteRow: {
-    flexDirection: "row",
-    marginBottom: 2,
-  },
-  musicNoteBtn: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "rgba(191,90,242,0.12)",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-  musicNoteDot: {
-    position: "absolute",
-    top: 2,
-    right: 2,
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: "#BF5AF2",
-  },
-  musicCard: {
-    borderRadius: 14,
-    padding: 13,
-    marginBottom: 2,
-    minWidth: 210,
-    gap: 10,
-    overflow: "hidden",
-  },
-  musicCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  musicEmoji: {
-    fontSize: 28,
-  },
-  musicInfo: {
-    flex: 1,
-  },
-  musicTitle: {
-    color: "#fff",
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-  },
-  musicArtist: {
-    color: "rgba(255,255,255,0.8)",
-    fontSize: 11,
-    fontFamily: "Inter_400Regular",
-    marginTop: 1,
-  },
-  musicClipRow: {
-    flexDirection: "row",
-    gap: 6,
-    flexWrap: "wrap",
-  },
-  musicClipBadge: {
-    backgroundColor: "rgba(0,0,0,0.2)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-  },
-  musicClipText: {
-    color: "rgba(255,255,255,0.9)",
-    fontSize: 10,
-    fontFamily: "Inter_500Medium",
-  },
-  musicModeBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: "rgba(255,255,255,0.18)",
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 10,
-  },
-  musicModeText: {
-    color: "rgba(255,255,255,0.9)",
-    fontSize: 10,
-    fontFamily: "Inter_600SemiBold",
-  },
-  musicFooter: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  musicGenrePill: {
-    backgroundColor: "rgba(255,255,255,0.22)",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 20,
-  },
-  musicGenreText: {
-    color: "#fff",
-    fontSize: 10,
-    fontFamily: "Inter_600SemiBold",
-  },
-  musicControls: {
+  reelBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+    paddingVertical: 4,
+    marginBottom: 2,
   },
-  eqBars: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 3,
-    height: 18,
-  },
-  eqBar: {
-    width: 3,
-    height: 16,
-    backgroundColor: "#fff",
-    borderRadius: 2,
-    opacity: 0.9,
-  },
-  musicPlayBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.25)",
+  reelDisc: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
+  },
+  reelInfo: {
+    flex: 1,
+    gap: 1,
+  },
+  reelTitle: {
+    color: "#fff",
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+  },
+  reelClip: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+  },
+  reelModeTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(0,0,0,0.18)",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 10,
+    flexShrink: 0,
+  },
+  reelModeText: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+  },
+  reelEqRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 2,
+    height: 16,
+    flexShrink: 0,
+  },
+  reelEqBar: {
+    width: 3,
+    height: 14,
+    backgroundColor: "rgba(255,255,255,0.85)",
+    borderRadius: 2,
   },
 });
