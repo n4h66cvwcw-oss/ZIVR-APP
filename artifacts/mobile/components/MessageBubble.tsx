@@ -1,5 +1,6 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import { Image as ExpoImage } from "expo-image";
 import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -16,7 +17,7 @@ import {
   useColorScheme,
 } from "react-native";
 import Colors from "@/constants/colors";
-import type { AudioAttachment, ImageAttachment, Message } from "@/context/MessagingContext";
+import type { AudioAttachment, ImageAttachment, Message, MessageFormatting } from "@/context/MessagingContext";
 
 interface MessageBubbleProps {
   message: Message;
@@ -595,9 +596,16 @@ export function MessageBubble({
     minute: "2-digit",
   });
 
-  const bubbleBg = isMine ? colors.messageSent : colors.messageReceived;
-  const textColor = isMine ? colors.messageTextSent : colors.messageTextReceived;
-  const mutedText = isMine ? "rgba(255,255,255,0.7)" : colors.textSecondary;
+  const fmt = message.formatting;
+  const hasGifBg = !!fmt?.backgroundGifUrl;
+  const bubbleBg = hasGifBg ? "transparent" : (isMine ? colors.messageSent : colors.messageReceived);
+  const defaultTextColor = isMine ? colors.messageTextSent : colors.messageTextReceived;
+  const textColor = fmt?.textColor || (hasGifBg ? "#FFFFFF" : defaultTextColor);
+  const mutedText = hasGifBg ? "rgba(255,255,255,0.75)" : (isMine ? "rgba(255,255,255,0.7)" : colors.textSecondary);
+
+  const FONT_SIZE_VALUES: Record<string, number> = { sm: 11, md: 16, lg: 20, xl: 26 };
+  const resolvedFontSize = fmt?.fontSize ? FONT_SIZE_VALUES[fmt.fontSize] : 16;
+  const resolvedFontFamily = fmt?.bold ? "Inter_700Bold" : "Inter_400Regular";
 
   const totalReactions = Object.entries(message.reactions || {}).filter(
     ([, users]) => users.length > 0
@@ -629,10 +637,22 @@ export function MessageBubble({
         <View
           style={[
             styles.bubble,
-            { backgroundColor: bubbleBg },
+            { backgroundColor: hasGifBg ? (isMine ? colors.messageSent : colors.messageReceived) : bubbleBg },
             isMine ? styles.myBubble : styles.theirBubble,
+            hasGifBg && styles.gifBubble,
           ]}
         >
+          {hasGifBg && fmt?.backgroundGifUrl && (
+            <ExpoImage
+              source={{ uri: fmt.backgroundGifUrl }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+            />
+          )}
+          {hasGifBg && (
+            <View style={styles.gifOverlay} />
+          )}
           {message.imageAttachment && (
             <SecurePhotoMessage
               image={message.imageAttachment}
@@ -651,7 +671,14 @@ export function MessageBubble({
             />
           )}
           {message.text ? (
-            <Text style={[styles.messageText, { color: textColor }]}>
+            <Text
+              style={[
+                styles.messageText,
+                { color: textColor, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily },
+                fmt?.italic && { fontStyle: "italic" },
+                fmt?.underline && { textDecorationLine: "underline" },
+              ]}
+            >
               {message.text}
             </Text>
           ) : null}
@@ -783,6 +810,15 @@ const styles = StyleSheet.create({
   },
   theirBubble: {
     borderBottomLeftRadius: 6,
+  },
+  gifBubble: {
+    overflow: "hidden",
+    minWidth: 180,
+    minHeight: 80,
+  },
+  gifOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.32)",
   },
   senderName: {
     fontSize: 12,

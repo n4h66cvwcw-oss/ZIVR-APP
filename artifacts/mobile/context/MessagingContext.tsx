@@ -32,6 +32,15 @@ export type ImageAttachment = {
   viewedBy?: string[];
 };
 
+export type MessageFormatting = {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  fontSize?: "sm" | "md" | "lg" | "xl";
+  textColor?: string;
+  backgroundGifUrl?: string;
+};
+
 export type Message = {
   id: string;
   chatId: string;
@@ -40,6 +49,7 @@ export type Message = {
   timestamp: number;
   audioAttachment?: AudioAttachment;
   imageAttachment?: ImageAttachment;
+  formatting?: MessageFormatting;
   reactions?: Record<string, string[]>;
   read?: boolean;
   deliveredAt?: number;
@@ -517,7 +527,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const sendMessage = useCallback(
-    async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment) => {
+    async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting) => {
       const id = genId();
       const chat = chats.find((c) => c.id === chatId);
       const storedText =
@@ -533,6 +543,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         timestamp: Date.now(),
         audioAttachment: audio,
         imageAttachment: image,
+        formatting,
         read: false,
       };
       const chatMessages = messages[chatId] || [];

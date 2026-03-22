@@ -7,6 +7,7 @@ import {
   Animated,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,26 +15,80 @@ import {
   useColorScheme,
 } from "react-native";
 import Colors from "@/constants/colors";
-import type { AudioAttachment, ImageAttachment } from "@/context/MessagingContext";
+import type {
+  AudioAttachment,
+  ImageAttachment,
+  MessageFormatting,
+} from "@/context/MessagingContext";
 import { AudioClipEditor } from "@/components/AudioClipEditor";
+import { GifPickerModal } from "@/components/GifPickerModal";
 import { SecurePictureModal } from "@/components/SecurePictureModal";
 
 interface ChatInputProps {
-  onSend: (text: string, audio?: AudioAttachment, image?: ImageAttachment) => void;
+  onSend: (
+    text: string,
+    audio?: AudioAttachment,
+    image?: ImageAttachment,
+    formatting?: MessageFormatting
+  ) => void;
   placeholder?: string;
 }
+
+type FontSize = "sm" | "md" | "lg" | "xl";
+
+const FONT_SIZES: FontSize[] = ["sm", "md", "lg", "xl"];
+const FONT_SIZE_LABELS: Record<FontSize, string> = { sm: "A", md: "A", lg: "A", xl: "A" };
+const FONT_SIZE_VALUES: Record<FontSize, number> = { sm: 10, md: 13, lg: 17, xl: 22 };
+
+const TEXT_COLORS = [
+  "#FFFFFF",
+  "#000000",
+  "#FF3B30",
+  "#FF9F0A",
+  "#FFD60A",
+  "#32D74B",
+  "#0A84FF",
+  "#BF5AF2",
+  "#FF375F",
+  "#64D2FF",
+];
 
 export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
+
   const [text, setText] = useState("");
   const [attachedAudio, setAttachedAudio] = useState<AudioAttachment | null>(null);
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
   const [pendingImageSize, setPendingImageSize] = useState<{ w?: number; h?: number }>({});
   const [showClipEditor, setShowClipEditor] = useState(false);
   const [showSecurePicture, setShowSecurePicture] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showFormatBar, setShowFormatBar] = useState(false);
+
+  const [bold, setBold] = useState(false);
+  const [italic, setItalic] = useState(false);
+  const [underline, setUnderline] = useState(false);
+  const [fontSize, setFontSize] = useState<FontSize>("md");
+  const [textColor, setTextColor] = useState<string>("");
+  const [backgroundGifUrl, setBackgroundGifUrl] = useState<string>("");
+
   const sendScale = useRef(new Animated.Value(1)).current;
+
+  const hasFormatting = bold || italic || underline || fontSize !== "md" || !!textColor || !!backgroundGifUrl;
+
+  const buildFormatting = (): MessageFormatting | undefined => {
+    if (!hasFormatting) return undefined;
+    return {
+      bold: bold || undefined,
+      italic: italic || undefined,
+      underline: underline || undefined,
+      fontSize: fontSize !== "md" ? fontSize : undefined,
+      textColor: textColor || undefined,
+      backgroundGifUrl: backgroundGifUrl || undefined,
+    };
+  };
 
   const handleSend = () => {
     if (!text.trim() && !attachedAudio) return;
@@ -42,7 +97,7 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
       Animated.timing(sendScale, { toValue: 0.85, duration: 80, useNativeDriver: true }),
       Animated.spring(sendScale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }),
     ]).start();
-    onSend(text.trim(), attachedAudio || undefined);
+    onSend(text.trim(), attachedAudio || undefined, undefined, buildFormatting());
     setText("");
     setAttachedAudio(null);
   };
@@ -55,12 +110,7 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
       });
       if (!result.canceled && result.assets.length > 0) {
         const asset = result.assets[0];
-        const audio: AudioAttachment = {
-          uri: asset.uri,
-          name: asset.name,
-          duration: undefined,
-        };
-        setAttachedAudio(audio);
+        setAttachedAudio({ uri: asset.uri, name: asset.name, duration: undefined });
         setShowClipEditor(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -88,6 +138,19 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
     }
   };
 
+  const cycleFontSize = () => {
+    Haptics.selectionAsync();
+    const idx = FONT_SIZES.indexOf(fontSize);
+    setFontSize(FONT_SIZES[(idx + 1) % FONT_SIZES.length]);
+  };
+
+  const toggleFormat = (type: "bold" | "italic" | "underline") => {
+    Haptics.selectionAsync();
+    if (type === "bold") setBold((v) => !v);
+    else if (type === "italic") setItalic((v) => !v);
+    else setUnderline((v) => !v);
+  };
+
   const canSend = text.trim().length > 0 || !!attachedAudio;
 
   return (
@@ -109,11 +172,11 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
               </Text>
               {attachedAudio.startTime !== undefined && attachedAudio.endTime !== undefined ? (
                 <Text style={[styles.audioPreviewLabel, { color: colors.audioAccent }]}>
-                  Clip: {formatTime(attachedAudio.startTime)} – {formatTime(attachedAudio.endTime)}
+                  Clip: {fmt(attachedAudio.startTime)} – {fmt(attachedAudio.endTime)}
                 </Text>
               ) : (
                 <Text style={[styles.audioPreviewLabel, { color: colors.audioAccent }]}>
-                  Audio will play when message opens
+                  Audio attached
                 </Text>
               )}
             </View>
@@ -125,12 +188,136 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
               style={[styles.editClipBtn, { backgroundColor: colors.primary + "18" }]}
             >
               <Ionicons name="cut" size={14} color={colors.primary} />
-              <Text style={[styles.editClipText, { color: colors.primary }]}>Edit</Text>
+              <Text style={[styles.editClipText, { color: colors.primary }]}>Trim</Text>
             </Pressable>
             <Pressable onPress={() => setAttachedAudio(null)} hitSlop={8}>
               <Feather name="x" size={18} color={colors.textSecondary} />
             </Pressable>
           </View>
+        </View>
+      )}
+
+      {showFormatBar && (
+        <View
+          style={[
+            styles.formatBar,
+            { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+          ]}
+        >
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.formatBarContent}>
+            <FormatBtn
+              label="B"
+              active={bold}
+              style={{ fontWeight: "700" }}
+              onPress={() => toggleFormat("bold")}
+              colors={colors}
+            />
+            <FormatBtn
+              label="I"
+              active={italic}
+              style={{ fontStyle: "italic" }}
+              onPress={() => toggleFormat("italic")}
+              colors={colors}
+            />
+            <FormatBtn
+              label="U"
+              active={underline}
+              style={{ textDecorationLine: "underline" }}
+              onPress={() => toggleFormat("underline")}
+              colors={colors}
+            />
+
+            <View style={[styles.formatDivider, { backgroundColor: colors.border }]} />
+
+            {FONT_SIZES.map((sz) => (
+              <Pressable
+                key={sz}
+                onPress={() => { setFontSize(sz); Haptics.selectionAsync(); }}
+                style={[
+                  styles.fontSizeBtn,
+                  {
+                    backgroundColor: fontSize === sz ? colors.primary : "transparent",
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.fontSizeBtnText,
+                    {
+                      fontSize: FONT_SIZE_VALUES[sz],
+                      color: fontSize === sz ? "#FFF" : colors.text,
+                    },
+                  ]}
+                >
+                  A
+                </Text>
+              </Pressable>
+            ))}
+
+            <View style={[styles.formatDivider, { backgroundColor: colors.border }]} />
+
+            {TEXT_COLORS.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => {
+                  setTextColor(textColor === c ? "" : c);
+                  Haptics.selectionAsync();
+                }}
+                style={[
+                  styles.colorSwatch,
+                  { backgroundColor: c, borderColor: colors.border },
+                  textColor === c && { borderColor: colors.primary, borderWidth: 2.5 },
+                  c === "#FFFFFF" && { borderColor: colors.border },
+                ]}
+              />
+            ))}
+
+            <View style={[styles.formatDivider, { backgroundColor: colors.border }]} />
+
+            <Pressable
+              onPress={() => setShowGifPicker(true)}
+              style={[
+                styles.gifBtn,
+                {
+                  backgroundColor: backgroundGifUrl
+                    ? colors.primary + "22"
+                    : colors.surfaceSecondary,
+                  borderColor: backgroundGifUrl ? colors.primary : colors.border,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.gifBtnLabel,
+                  { color: backgroundGifUrl ? colors.primary : colors.textSecondary },
+                ]}
+              >
+                GIF BG
+              </Text>
+              {backgroundGifUrl && (
+                <Ionicons name="checkmark-circle" size={14} color={colors.primary} />
+              )}
+            </Pressable>
+
+            {hasFormatting && (
+              <Pressable
+                onPress={() => {
+                  setBold(false);
+                  setItalic(false);
+                  setUnderline(false);
+                  setFontSize("md");
+                  setTextColor("");
+                  setBackgroundGifUrl("");
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                }}
+                style={[styles.clearBtn, { borderColor: colors.border }]}
+                hitSlop={6}
+              >
+                <Ionicons name="close-circle" size={14} color={colors.textSecondary} />
+                <Text style={[styles.clearBtnText, { color: colors.textSecondary }]}>Clear</Text>
+              </Pressable>
+            )}
+          </ScrollView>
         </View>
       )}
 
@@ -162,6 +349,26 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
           <Ionicons name="image" size={20} color={colors.textSecondary} />
         </Pressable>
 
+        <Pressable
+          onPress={() => setShowFormatBar((v) => !v)}
+          style={[
+            styles.iconBtn,
+            {
+              backgroundColor: showFormatBar || hasFormatting
+                ? colors.secondary + "22"
+                : colors.surfaceSecondary,
+            },
+          ]}
+          hitSlop={8}
+        >
+          <Ionicons
+            name="text"
+            size={18}
+            color={showFormatBar || hasFormatting ? colors.secondary : colors.textSecondary}
+          />
+          {hasFormatting && <View style={[styles.formatDot, { backgroundColor: colors.secondary }]} />}
+        </Pressable>
+
         <View
           style={[
             styles.inputContainer,
@@ -169,7 +376,14 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
           ]}
         >
           <TextInput
-            style={[styles.input, { color: colors.text }]}
+            style={[
+              styles.input,
+              { color: textColor || (isDark ? colors.text : colors.text) },
+              bold && { fontFamily: "Inter_700Bold" },
+              italic && { fontStyle: "italic" },
+              underline && { textDecorationLine: "underline" },
+              fontSize !== "md" && { fontSize: FONT_SIZE_VALUES[fontSize] },
+            ]}
             value={text}
             onChangeText={setText}
             placeholder={placeholder}
@@ -212,7 +426,7 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
           imageWidth={pendingImageSize.w}
           imageHeight={pendingImageSize.h}
           onSend={(attachment) => {
-            onSend("", undefined, attachment);
+            onSend("", undefined, attachment, buildFormatting());
             setPendingImageUri(null);
             setShowSecurePicture(false);
           }}
@@ -222,11 +436,53 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
           }}
         />
       )}
+
+      <GifPickerModal
+        visible={showGifPicker}
+        currentUrl={backgroundGifUrl}
+        onSelect={(url) => setBackgroundGifUrl(url)}
+        onRemove={() => setBackgroundGifUrl("")}
+        onClose={() => setShowGifPicker(false)}
+      />
     </View>
   );
 }
 
-function formatTime(secs: number) {
+function FormatBtn({
+  label,
+  active,
+  style,
+  onPress,
+  colors,
+}: {
+  label: string;
+  active: boolean;
+  style?: object;
+  onPress: () => void;
+  colors: typeof Colors.light;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.formatBtnBase,
+        { backgroundColor: active ? colors.primary : "transparent" },
+      ]}
+    >
+      <Text
+        style={[
+          styles.formatBtnText,
+          style,
+          { color: active ? "#FFF" : colors.text },
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function fmt(secs: number) {
   const m = Math.floor(secs / 60);
   const s = Math.round(secs % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
@@ -282,6 +538,75 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
   },
+  formatBar: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 8,
+  },
+  formatBarContent: {
+    paddingHorizontal: 12,
+    alignItems: "center",
+    gap: 6,
+  },
+  formatBtnBase: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  formatBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+  formatDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 24,
+    marginHorizontal: 2,
+  },
+  fontSizeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fontSizeBtnText: {
+    fontFamily: "Inter_600SemiBold",
+    lineHeight: 28,
+  },
+  colorSwatch: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.5,
+  },
+  gifBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  gifBtnLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
+  },
+  clearBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  clearBtnText: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+  },
   inputRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -295,6 +620,14 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
+  },
+  formatDot: {
+    position: "absolute",
+    top: 5,
+    right: 5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   inputContainer: {
     flex: 1,
