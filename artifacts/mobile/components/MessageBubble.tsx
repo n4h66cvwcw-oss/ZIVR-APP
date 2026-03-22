@@ -290,19 +290,22 @@ const photoStyles = StyleSheet.create({
 });
 
 function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const expandAnim = useRef(new Animated.Value(0)).current;
   const bar1 = useRef(new Animated.Value(0.4)).current;
   const bar2 = useRef(new Animated.Value(0.7)).current;
   const bar3 = useRef(new Animated.Value(0.5)).current;
   const stopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const animateBar = (anim: Animated.Value, toMin: number, toMax: number, duration: number) =>
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(anim, { toValue: toMax, duration, useNativeDriver: true }),
-        Animated.timing(anim, { toValue: toMin, duration, useNativeDriver: true }),
-      ])
-    );
+  const clipDuration = (music.clipEnd ?? music.duration) - (music.clipStart ?? 0);
+
+  const animateBar = (anim: Animated.Value, toMin: number, toMax: number, dur: number) =>
+    Animated.loop(Animated.sequence([
+      Animated.timing(anim, { toValue: toMax, duration: dur, useNativeDriver: true }),
+      Animated.timing(anim, { toValue: toMin, duration: dur, useNativeDriver: true }),
+    ]));
 
   const startEq = () => {
     animateBar(bar1, 0.2, 1.0, 220).start();
@@ -311,9 +314,7 @@ function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine:
   };
 
   const stopEq = () => {
-    bar1.stopAnimation();
-    bar2.stopAnimation();
-    bar3.stopAnimation();
+    bar1.stopAnimation(); bar2.stopAnimation(); bar3.stopAnimation();
     Animated.parallel([
       Animated.timing(bar1, { toValue: 0.4, duration: 200, useNativeDriver: true }),
       Animated.timing(bar2, { toValue: 0.7, duration: 200, useNativeDriver: true }),
@@ -321,72 +322,128 @@ function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine:
     ]).start();
   };
 
-  const toggle = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (playing) {
-      if (stopRef.current) clearTimeout(stopRef.current);
-      setPlaying(false);
-      stopEq();
-    } else {
-      setPlaying(true);
-      startEq();
+  const startPlaying = () => {
+    setPlaying(true);
+    startEq();
+    if (music.playMode !== "loop") {
       stopRef.current = setTimeout(() => {
         setPlaying(false);
         stopEq();
-      }, 20000);
+      }, clipDuration * 1000);
     }
   };
 
-  useEffect(() => () => { if (stopRef.current) clearTimeout(stopRef.current); }, []);
+  const stopPlaying = () => {
+    if (stopRef.current) clearTimeout(stopRef.current);
+    setPlaying(false);
+    stopEq();
+  };
 
-  function fmtDuration(s: number) {
+  const toggle = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (playing) stopPlaying(); else startPlaying();
+  };
+
+  const handleExpand = () => {
+    const next = !expanded;
+    setExpanded(next);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Animated.spring(expandAnim, {
+      toValue: next ? 1 : 0,
+      useNativeDriver: true,
+      tension: 160,
+      friction: 12,
+    }).start();
+
+    if (next && music.playMode === "delayed" && music.delaySeconds) {
+      delayRef.current = setTimeout(() => { startPlaying(); }, music.delaySeconds * 1000);
+    } else if (!next) {
+      if (delayRef.current) clearTimeout(delayRef.current);
+      stopPlaying();
+    }
+  };
+
+  useEffect(() => () => {
+    if (stopRef.current) clearTimeout(stopRef.current);
+    if (delayRef.current) clearTimeout(delayRef.current);
+  }, []);
+
+  function fmtTime(s: number) {
     const m = Math.floor(s / 60);
-    const sec = s % 60;
+    const sec = Math.round(s) % 60;
     return `${m}:${sec.toString().padStart(2, "0")}`;
   }
 
+  const playModeLabel: Record<string, string> = { once: "Play Once", loop: "Loop", delayed: `${music.delaySeconds ?? 0}s Delay` };
+  const playModeIcon: Record<string, string> = { once: "play-circle-outline", loop: "repeat", delayed: "timer-outline" };
+
+  const cardScale = expandAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
+  const cardOpacity = expandAnim;
+
   return (
-    <LinearGradient
-      colors={music.colors}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.musicCard}
-    >
-      <View style={styles.musicHeader}>
-        <Text style={styles.musicEmoji}>{music.emoji}</Text>
-        <View style={styles.musicInfo}>
-          <Text style={styles.musicTitle} numberOfLines={1}>{music.title}</Text>
-          <Text style={styles.musicArtist} numberOfLines={1}>{music.artist}</Text>
-        </View>
-      </View>
-      <View style={styles.musicFooter}>
-        <View style={styles.musicMeta}>
-          <View style={styles.musicGenrePill}>
-            <Text style={styles.musicGenreText}>{music.genre}</Text>
-          </View>
-          <Text style={styles.musicDuration}>{fmtDuration(music.duration)}</Text>
-        </View>
-        <View style={styles.musicControls}>
+    <View style={styles.musicWrapper}>
+      <View style={[styles.musicNoteRow, isMine ? { justifyContent: "flex-end" } : { justifyContent: "flex-start" }]}>
+        <Pressable onPress={handleExpand} style={styles.musicNoteBtn} hitSlop={10}>
+          <Ionicons
+            name={expanded ? "musical-note" : "musical-note-outline"}
+            size={13}
+            color={expanded ? "#BF5AF2" : "rgba(191,90,242,0.65)"}
+          />
           {playing && (
-            <View style={styles.eqBars}>
-              {[bar1, bar2, bar3].map((bar, i) => (
-                <Animated.View
-                  key={i}
-                  style={[styles.eqBar, { transform: [{ scaleY: bar }] }]}
-                />
-              ))}
-            </View>
+            <View style={styles.musicNoteDot} />
           )}
-          <Pressable onPress={toggle} style={styles.musicPlayBtn} hitSlop={8}>
-            <Ionicons
-              name={playing ? "pause" : "play"}
-              size={18}
-              color="#fff"
-            />
-          </Pressable>
-        </View>
+        </Pressable>
       </View>
-    </LinearGradient>
+
+      {expanded && (
+        <Animated.View style={{ transform: [{ scale: cardScale }], opacity: cardOpacity }}>
+          <LinearGradient
+            colors={music.colors as [string, string]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.musicCard}
+          >
+            <View style={styles.musicCardHeader}>
+              <Text style={styles.musicEmoji}>{music.emoji}</Text>
+              <View style={styles.musicInfo}>
+                <Text style={styles.musicTitle} numberOfLines={1}>{music.title}</Text>
+                <Text style={styles.musicArtist} numberOfLines={1}>{music.artist}</Text>
+              </View>
+            </View>
+
+            <View style={styles.musicClipRow}>
+              <View style={styles.musicClipBadge}>
+                <Text style={styles.musicClipText}>
+                  {fmtTime(music.clipStart ?? 0)} – {fmtTime(music.clipEnd ?? music.duration)} · {Math.round(clipDuration)}s
+                </Text>
+              </View>
+              <View style={styles.musicModeBadge}>
+                <Ionicons name={playModeIcon[music.playMode] as any} size={11} color="rgba(255,255,255,0.9)" />
+                <Text style={styles.musicModeText}>{playModeLabel[music.playMode]}</Text>
+              </View>
+            </View>
+
+            <View style={styles.musicFooter}>
+              <View style={styles.musicGenrePill}>
+                <Text style={styles.musicGenreText}>{music.genre}</Text>
+              </View>
+              <View style={styles.musicControls}>
+                {playing && (
+                  <View style={styles.eqBars}>
+                    {[bar1, bar2, bar3].map((bar, i) => (
+                      <Animated.View key={i} style={[styles.eqBar, { transform: [{ scaleY: bar }] }]} />
+                    ))}
+                  </View>
+                )}
+                <Pressable onPress={toggle} style={styles.musicPlayBtn} hitSlop={8}>
+                  <Ionicons name={playing ? "pause" : "play"} size={18} color="#fff" />
+                </Pressable>
+              </View>
+            </View>
+          </LinearGradient>
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -1149,45 +1206,95 @@ const styles = StyleSheet.create({
   reactionOptionEmoji: {
     fontSize: 24,
   },
+  musicWrapper: {
+    marginBottom: 2,
+  },
+  musicNoteRow: {
+    flexDirection: "row",
+    marginBottom: 2,
+  },
+  musicNoteBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(191,90,242,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  musicNoteDot: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#BF5AF2",
+  },
   musicCard: {
     borderRadius: 14,
-    padding: 14,
-    marginBottom: 4,
-    minWidth: 220,
-    gap: 12,
+    padding: 13,
+    marginBottom: 2,
+    minWidth: 210,
+    gap: 10,
     overflow: "hidden",
   },
-  musicHeader: {
+  musicCardHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
   },
   musicEmoji: {
-    fontSize: 32,
+    fontSize: 28,
   },
   musicInfo: {
     flex: 1,
   },
   musicTitle: {
     color: "#fff",
-    fontSize: 15,
+    fontSize: 14,
     fontFamily: "Inter_700Bold",
   },
   musicArtist: {
     color: "rgba(255,255,255,0.8)",
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: "Inter_400Regular",
     marginTop: 1,
+  },
+  musicClipRow: {
+    flexDirection: "row",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  musicClipBadge: {
+    backgroundColor: "rgba(0,0,0,0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  musicClipText: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 10,
+    fontFamily: "Inter_500Medium",
+  },
+  musicModeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  musicModeText: {
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
   },
   musicFooter: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-  },
-  musicMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
   },
   musicGenrePill: {
     backgroundColor: "rgba(255,255,255,0.22)",
@@ -1199,11 +1306,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 10,
     fontFamily: "Inter_600SemiBold",
-  },
-  musicDuration: {
-    color: "rgba(255,255,255,0.7)",
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
   },
   musicControls: {
     flexDirection: "row",
@@ -1224,9 +1326,9 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   musicPlayBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: "rgba(255,255,255,0.25)",
     alignItems: "center",
     justifyContent: "center",

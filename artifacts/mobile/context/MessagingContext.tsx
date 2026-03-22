@@ -41,6 +41,8 @@ export type MessageFormatting = {
   backgroundGifUrl?: string;
 };
 
+export type MusicPlayMode = "once" | "loop" | "delayed";
+
 export type MusicAttachment = {
   id: string;
   title: string;
@@ -51,6 +53,10 @@ export type MusicAttachment = {
   emoji: string;
   duration: number;
   uri?: string;
+  clipStart: number;
+  clipEnd: number;
+  playMode: MusicPlayMode;
+  delaySeconds?: number;
 };
 
 export type Message = {
