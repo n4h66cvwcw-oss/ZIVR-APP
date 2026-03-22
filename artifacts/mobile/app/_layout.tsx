@@ -16,7 +16,9 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MessagingProvider } from "@/context/MessagingContext";
 import { CallProvider } from "@/context/CallContext";
+import { ProfileProvider } from "@/context/ProfileContext";
 import { IncomingCallModal } from "@/components/IncomingCallModal";
+import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -88,6 +90,14 @@ function RootLayoutNav() {
             presentation: "modal",
           }}
         />
+        <Stack.Screen
+          name="profile"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+            animation: "slide_from_bottom",
+          }}
+        />
       </Stack>
       <IncomingCallModal />
     </>
@@ -114,15 +124,19 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <MessagingProvider>
-            <CallProvider>
-              <GestureHandlerRootView style={{ flex: 1 }}>
-                <KeyboardProvider>
-                  <RootLayoutNav />
-                </KeyboardProvider>
-              </GestureHandlerRootView>
-            </CallProvider>
-          </MessagingProvider>
+          <ProfileProvider>
+            <MessagingProvider>
+              <CallProvider>
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  <KeyboardProvider>
+                    <ScreenCaptureGuard>
+                      <RootLayoutNav />
+                    </ScreenCaptureGuard>
+                  </KeyboardProvider>
+                </GestureHandlerRootView>
+              </CallProvider>
+            </MessagingProvider>
+          </ProfileProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </SafeAreaProvider>

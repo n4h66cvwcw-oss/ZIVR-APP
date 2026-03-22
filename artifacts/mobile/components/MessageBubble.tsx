@@ -3,16 +3,20 @@ import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
+  Image,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useColorScheme,
 } from "react-native";
 import Colors from "@/constants/colors";
-import type { AudioAttachment, Message } from "@/context/MessagingContext";
+import type { AudioAttachment, ImageAttachment, Message } from "@/context/MessagingContext";
 
 interface MessageBubbleProps {
   message: Message;
@@ -23,9 +27,263 @@ interface MessageBubbleProps {
   onReact?: (emoji: string) => void;
   onVoiceCall?: () => void;
   onVideoCall?: () => void;
+  onImageViewed?: (messageId: string) => void;
+  myId?: string;
 }
 
 const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🎉", "👍"];
+
+function SecurePhotoMessage({
+  image,
+  isMine,
+  messageId,
+  myId,
+  onViewed,
+  colors,
+}: {
+  image: ImageAttachment;
+  isMine: boolean;
+  messageId: string;
+  myId?: string;
+  onViewed?: (messageId: string) => void;
+  colors: typeof Colors.light;
+}) {
+  const [unlocked, setUnlocked] = useState(false);
+  const [pwInput, setPwInput] = useState("");
+  const [showPwPrompt, setShowPwPrompt] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  const alreadyViewed = myId && (image.viewedBy ?? []).includes(myId);
+  const isDeleted = image.security === "single-view" && !isMine && alreadyViewed && !image.uri;
+  const isTimedLocked = image.security === "timed" && image.viewAfter && Date.now() < image.viewAfter;
+
+  const getTimeRemaining = () => {
+    if (!image.viewAfter) return "";
+    const diff = image.viewAfter - Date.now();
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+
+  const handleUnlock = () => {
+    if (image.security === "none") {
+      setUnlocked(true);
+      onViewed?.(messageId);
+    } else if (image.security === "password") {
+      setShowPwPrompt(true);
+    } else if (image.security === "single-view" && !alreadyViewed) {
+      setUnlocked(true);
+      onViewed?.(messageId);
+    } else if (image.security === "timed" && !isTimedLocked) {
+      setUnlocked(true);
+      onViewed?.(messageId);
+    }
+  };
+
+  const handlePwSubmit = () => {
+    if (pwInput === image.password) {
+      setUnlocked(true);
+      setShowPwPrompt(false);
+      onViewed?.(messageId);
+    } else {
+      Alert.alert("Wrong Password", "Incorrect password. Try again.");
+      setPwInput("");
+    }
+  };
+
+  if (isDeleted) {
+    return (
+      <View style={[photoStyles.container, { backgroundColor: isMine ? "rgba(255,255,255,0.15)" : colors.surfaceSecondary }]}>
+        <Ionicons name="eye-off-outline" size={20} color={colors.textTertiary} />
+        <Text style={[photoStyles.lockedText, { color: colors.textTertiary }]}>Photo deleted after viewing</Text>
+      </View>
+    );
+  }
+
+  if (unlocked || (isMine && image.security === "none") || (isMine)) {
+    return (
+      <>
+        <Pressable onPress={() => setFullscreen(true)}>
+          <Image source={{ uri: image.uri }} style={photoStyles.photo} resizeMode="cover" />
+          {image.security !== "none" && (
+            <View style={photoStyles.securityBadge}>
+              <Ionicons
+                name={
+                  image.security === "single-view" ? "eye" :
+                  image.security === "password" ? "lock-closed" : "timer-outline"
+                }
+                size={12}
+                color="#FFF"
+              />
+            </View>
+          )}
+        </Pressable>
+        <Modal visible={fullscreen} transparent animationType="fade">
+          <Pressable style={photoStyles.fullscreenBg} onPress={() => setFullscreen(false)}>
+            <Image source={{ uri: image.uri }} style={photoStyles.fullscreenImg} resizeMode="contain" />
+          </Pressable>
+        </Modal>
+        {showPwPrompt && (
+          <Modal transparent animationType="fade">
+            <View style={photoStyles.pwBackdrop}>
+              <View style={[photoStyles.pwBox, { backgroundColor: colors.surface }]}>
+                <Text style={[photoStyles.pwTitle, { color: colors.text }]}>Enter Password</Text>
+                <TextInput
+                  style={[photoStyles.pwInput, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
+                  value={pwInput}
+                  onChangeText={setPwInput}
+                  placeholder="Password..."
+                  placeholderTextColor={colors.textTertiary}
+                  secureTextEntry
+                  autoFocus
+                />
+                <Pressable onPress={handlePwSubmit} style={[photoStyles.pwBtn, { backgroundColor: colors.primary }]}>
+                  <Text style={photoStyles.pwBtnText}>Unlock</Text>
+                </Pressable>
+              </View>
+            </View>
+          </Modal>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Pressable onPress={handleUnlock} style={[photoStyles.locked, { backgroundColor: isMine ? "rgba(255,255,255,0.15)" : colors.surfaceSecondary }]}>
+        <Ionicons
+          name={
+            isTimedLocked ? "timer-outline" :
+            image.security === "password" ? "lock-closed" :
+            image.security === "single-view" ? "eye" : "image-outline"
+          }
+          size={24}
+          color={isMine ? "rgba(255,255,255,0.8)" : colors.textSecondary}
+        />
+        <Text style={[photoStyles.lockedText, { color: isMine ? "rgba(255,255,255,0.8)" : colors.textSecondary }]}>
+          {isTimedLocked
+            ? `Available in ${getTimeRemaining()}`
+            : image.security === "password"
+            ? "Tap to enter password"
+            : image.security === "single-view"
+            ? "Tap to view (once)"
+            : "Tap to view"}
+        </Text>
+      </Pressable>
+      {showPwPrompt && (
+        <Modal transparent animationType="fade">
+          <View style={photoStyles.pwBackdrop}>
+            <View style={[photoStyles.pwBox, { backgroundColor: colors.surface }]}>
+              <Text style={[photoStyles.pwTitle, { color: colors.text }]}>Enter Password</Text>
+              <TextInput
+                style={[photoStyles.pwInput, { backgroundColor: colors.surfaceSecondary, color: colors.text }]}
+                value={pwInput}
+                onChangeText={setPwInput}
+                placeholder="Password..."
+                placeholderTextColor={colors.textTertiary}
+                secureTextEntry
+                autoFocus
+              />
+              <View style={{ flexDirection: "row", gap: 10 }}>
+                <Pressable onPress={() => setShowPwPrompt(false)} style={[photoStyles.pwBtn, { backgroundColor: colors.surfaceSecondary, flex: 1 }]}>
+                  <Text style={[photoStyles.pwBtnText, { color: colors.text }]}>Cancel</Text>
+                </Pressable>
+                <Pressable onPress={handlePwSubmit} style={[photoStyles.pwBtn, { backgroundColor: colors.primary, flex: 1 }]}>
+                  <Text style={photoStyles.pwBtnText}>Unlock</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+const photoStyles = StyleSheet.create({
+  container: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+  },
+  photo: {
+    width: 200,
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 6,
+  },
+  securityBadge: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    borderRadius: 10,
+    padding: 4,
+  },
+  locked: {
+    width: 200,
+    height: 120,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginBottom: 6,
+  },
+  lockedText: {
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    textAlign: "center",
+    paddingHorizontal: 12,
+  },
+  fullscreenBg: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fullscreenImg: {
+    width: "100%",
+    height: "100%",
+  },
+  pwBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pwBox: {
+    width: 280,
+    borderRadius: 20,
+    padding: 24,
+    gap: 14,
+  },
+  pwTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
+  },
+  pwInput: {
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+  },
+  pwBtn: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  pwBtnText: {
+    color: "#FFF",
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+});
 
 function AudioPlayer({
   audio,
@@ -39,10 +297,15 @@ function AudioPlayer({
   const player = useAudioPlayer({ uri: audio.uri });
   const status = useAudioPlayerStatus(player);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isPlaying = status.playing;
   const position = status.currentTime ?? 0;
-  const duration = status.duration ?? audio.duration ?? 0;
+  const startTime = audio.startTime ?? 0;
+  const endTime = audio.endTime;
+  const clipDuration = endTime !== undefined ? endTime - startTime : (status.duration ?? audio.duration ?? 0);
+  const duration = clipDuration;
+  const clipPosition = Math.max(0, position - startTime);
 
   useEffect(() => {
     if (isPlaying) {
@@ -65,12 +328,26 @@ function AudioPlayer({
     }
   }, [isPlaying]);
 
+  useEffect(() => {
+    return () => {
+      if (stopTimer.current) clearTimeout(stopTimer.current);
+    };
+  }, []);
+
   const togglePlay = () => {
     try {
       if (isPlaying) {
         player.pause();
+        if (stopTimer.current) clearTimeout(stopTimer.current);
       } else {
+        if (startTime > 0) player.seekTo(startTime);
         player.play();
+        if (endTime !== undefined) {
+          const remaining = (endTime - startTime) * 1000;
+          stopTimer.current = setTimeout(() => {
+            player.pause();
+          }, remaining);
+        }
       }
     } catch (e) {
       console.log("Audio error:", e);
@@ -87,7 +364,7 @@ function AudioPlayer({
   const mutedColor = isMine ? "rgba(255,255,255,0.7)" : colors.textSecondary;
   const bgColor = isMine ? "rgba(255,255,255,0.2)" : colors.surfaceSecondary;
   const accentColor = isMine ? "#FFFFFF" : colors.audioAccent;
-  const progress = duration > 0 ? position / duration : 0;
+  const progress = duration > 0 ? clipPosition / duration : 0;
 
   return (
     <View style={[styles.audioPlayer, { backgroundColor: bgColor }]}>
@@ -133,7 +410,7 @@ function AudioPlayer({
             {audio.name}
           </Text>
           <Text style={[styles.audioDuration, { color: mutedColor }]}>
-            {isPlaying ? formatTime(position) : formatTime(duration)}
+            {isPlaying ? formatTime(clipPosition) : formatTime(duration)}
           </Text>
         </View>
       </View>
@@ -250,6 +527,8 @@ export function MessageBubble({
   onReact,
   onVoiceCall,
   onVideoCall,
+  onImageViewed,
+  myId,
 }: MessageBubbleProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -354,6 +633,16 @@ export function MessageBubble({
             isMine ? styles.myBubble : styles.theirBubble,
           ]}
         >
+          {message.imageAttachment && (
+            <SecurePhotoMessage
+              image={message.imageAttachment}
+              isMine={isMine}
+              messageId={message.id}
+              myId={myId}
+              onViewed={onImageViewed}
+              colors={colors}
+            />
+          )}
           {message.audioAttachment && (
             <AudioPlayer
               audio={message.audioAttachment}

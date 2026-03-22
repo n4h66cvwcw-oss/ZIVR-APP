@@ -18,6 +18,18 @@ export type AudioAttachment = {
   uri: string;
   name: string;
   duration?: number;
+  startTime?: number;
+  endTime?: number;
+};
+
+export type ImageAttachment = {
+  uri: string;
+  width?: number;
+  height?: number;
+  security: "none" | "password" | "single-view" | "timed";
+  password?: string;
+  viewAfter?: number;
+  viewedBy?: string[];
 };
 
 export type Message = {
@@ -27,6 +39,7 @@ export type Message = {
   senderId: string;
   timestamp: number;
   audioAttachment?: AudioAttachment;
+  imageAttachment?: ImageAttachment;
   reactions?: Record<string, string[]>;
   read?: boolean;
   deliveredAt?: number;
@@ -183,7 +196,8 @@ interface MessagingContextValue {
   broadcasts: CheckInBroadcast[];
   sortMode: ChatSortMode;
   setSortMode: (mode: ChatSortMode) => Promise<void>;
-  sendMessage: (chatId: string, text: string, audio?: AudioAttachment) => Promise<void>;
+  sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment) => Promise<void>;
+  markImageViewed: (chatId: string, messageId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
   createGroupChat: (name: string, participantIds: string[], description?: string) => Promise<string>;
   createCheckInGroup: (name: string, memberIds: string[], anonymous?: boolean) => Promise<string>;
@@ -485,8 +499,25 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [checkInGroups]
   );
 
+  const markImageViewed = useCallback(
+    async (chatId: string, messageId: string) => {
+      const chatMessages = messages[chatId] || [];
+      const updated = chatMessages.map((m) => {
+        if (m.id !== messageId || !m.imageAttachment) return m;
+        const img = m.imageAttachment;
+        const viewedBy = [...(img.viewedBy ?? []), myId];
+        if (img.security === "single-view") {
+          return { ...m, imageAttachment: { ...img, viewedBy, uri: "" } };
+        }
+        return { ...m, imageAttachment: { ...img, viewedBy } };
+      });
+      await saveMessages({ ...messages, [chatId]: updated });
+    },
+    [messages, myId, saveMessages]
+  );
+
   const sendMessage = useCallback(
-    async (chatId: string, text: string, audio?: AudioAttachment) => {
+    async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment) => {
       const id = genId();
       const chat = chats.find((c) => c.id === chatId);
       const storedText =
@@ -501,13 +532,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         senderId: myId,
         timestamp: Date.now(),
         audioAttachment: audio,
+        imageAttachment: image,
         read: false,
       };
       const chatMessages = messages[chatId] || [];
       const updatedMessages = { ...messages, [chatId]: [...chatMessages, msg] };
       await saveMessages(updatedMessages);
 
-      const previewText = chat?.isEncrypted ? "🔐 Encrypted message" : text || (audio ? "Audio message" : "");
+      const previewText = chat?.isEncrypted
+        ? "🔐 Encrypted message"
+        : text || (audio ? "🎵 Audio message" : image ? "📷 Photo" : "");
       const updatedChats = chats.map((c) =>
         c.id === chatId
           ? { ...c, lastMessage: previewText, lastMessageTime: msg.timestamp, lastAudio: audio }
@@ -816,6 +850,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       sortMode,
       setSortMode,
       sendMessage,
+      markImageViewed,
       createDirectChat,
       createGroupChat,
       createCheckInGroup,
@@ -851,6 +886,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       sortMode,
       setSortMode,
       sendMessage,
+      markImageViewed,
       createDirectChat,
       createGroupChat,
       createCheckInGroup,

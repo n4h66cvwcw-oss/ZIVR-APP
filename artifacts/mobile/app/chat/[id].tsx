@@ -33,6 +33,7 @@ export default function ChatScreen() {
     myId,
     getDecryptedMessages,
     sendMessage,
+    markImageViewed,
     addReaction,
     markChatRead,
     getContactById,
@@ -54,14 +55,22 @@ export default function ChatScreen() {
   const otherContact = otherId ? getContactById(otherId) : null;
 
   const handleSend = useCallback(
-    async (text: string, audio?: any) => {
+    async (text: string, audio?: any, image?: any) => {
       if (!id) return;
-      await sendMessage(id, text, audio);
+      await sendMessage(id, text, audio, image);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     },
     [id, sendMessage]
+  );
+
+  const handleImageViewed = useCallback(
+    (messageId: string) => {
+      if (!id) return;
+      markImageViewed(id, messageId);
+    },
+    [id, markImageViewed]
   );
 
   const handleReact = useCallback(
@@ -106,9 +115,11 @@ export default function ChatScreen() {
         isMine={isMine}
         showSender={showSender}
         senderName={sender?.name}
+        myId={myId}
         onReact={(emoji) => handleReact(item.id, emoji)}
         onVoiceCall={!isMine ? () => handleCallFromMessage(item.senderId, "voice") : undefined}
         onVideoCall={!isMine ? () => handleCallFromMessage(item.senderId, "video") : undefined}
+        onImageViewed={handleImageViewed}
       />
     );
   };

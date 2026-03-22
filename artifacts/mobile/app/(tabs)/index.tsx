@@ -153,7 +153,12 @@ export default function ChatsScreen() {
         ]}
       >
         <View style={styles.headerTop}>
-          <View>
+          <Pressable onPress={() => router.push("/profile")} hitSlop={8} style={styles.profileBtn}>
+            <View style={[styles.profileAvatar, { backgroundColor: colors.primary }]}>
+              <Ionicons name="person" size={18} color="#FFF" />
+            </View>
+          </Pressable>
+          <View style={{ flex: 1 }}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Messages</Text>
             {unreadTotal > 0 && (
               <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
@@ -405,7 +410,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 10,
   },
-  headerTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  headerTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  profileBtn: { marginTop: 2 },
+  profileAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   headerTitle: { fontSize: 28, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
   headerSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   headerActions: { flexDirection: "row", gap: 8, marginTop: 4 },

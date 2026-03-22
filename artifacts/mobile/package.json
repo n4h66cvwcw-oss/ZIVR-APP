@@ -63,6 +63,7 @@
     "expo-file-system": "^19.0.21",
     "expo-mail-composer": "^15.0.8",
     "expo-print": "^15.0.8",
+    "expo-screen-capture": "~8.0.9",
     "expo-sharing": "^14.0.8"
   }
 }
