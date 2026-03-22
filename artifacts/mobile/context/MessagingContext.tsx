@@ -41,6 +41,18 @@ export type MessageFormatting = {
   backgroundGifUrl?: string;
 };
 
+export type MusicAttachment = {
+  id: string;
+  title: string;
+  artist: string;
+  genre: string;
+  mood: string;
+  colors: [string, string];
+  emoji: string;
+  duration: number;
+  uri?: string;
+};
+
 export type Message = {
   id: string;
   chatId: string;
@@ -49,6 +61,7 @@ export type Message = {
   timestamp: number;
   audioAttachment?: AudioAttachment;
   imageAttachment?: ImageAttachment;
+  musicAttachment?: MusicAttachment;
   formatting?: MessageFormatting;
   reactions?: Record<string, string[]>;
   read?: boolean;
@@ -262,7 +275,7 @@ interface MessagingContextValue {
   broadcasts: CheckInBroadcast[];
   sortMode: ChatSortMode;
   setSortMode: (mode: ChatSortMode) => Promise<void>;
-  sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment) => Promise<void>;
+  sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
   createGroupChat: (name: string, participantIds: string[], description?: string) => Promise<string>;
@@ -610,7 +623,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const sendMessage = useCallback(
-    async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting) => {
+    async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment) => {
       const id = genId();
       const chat = chats.find((c) => c.id === chatId);
       const storedText =
@@ -626,6 +639,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         timestamp: Date.now(),
         audioAttachment: audio,
         imageAttachment: image,
+        musicAttachment: music,
         formatting,
         read: false,
       };
@@ -635,7 +649,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
       const previewText = chat?.isEncrypted
         ? "🔐 Encrypted message"
-        : text || (audio ? "🎵 Audio message" : image ? "📷 Photo" : "");
+        : text || (music ? `${music.emoji} ${music.title} — ${music.artist}` : audio ? "🎵 Audio message" : image ? "📷 Photo" : "");
       const updatedChats = chats.map((c) =>
         c.id === chatId
           ? { ...c, lastMessage: previewText, lastMessageTime: msg.timestamp, lastAudio: audio }

@@ -1,9 +1,10 @@
 # VibeMsg — Expo React Native Messaging App
 
 ## App Overview
-VibeMsg is a feature-rich iOS-style messaging app with two unique innovations:
-1. **Broadcast Check-In Groups** — members can't see each other, only sender sees replies, sender can reply to all or start private 1-on-1 side chats
-2. **Musical Messages** — attach MP3/WAV/audio files to any message that display a waveform player in the message bubble
+VibeMsg is a feature-rich iOS-style messaging app with unique innovations:
+1. **Broadcast Check-In Groups** — members can't see each other, only sender sees replies, live reply progress bars, auto member reply simulation
+2. **Musical Messages (two tiers)** — (a) raw audio clips via file picker shown as waveform player bubbles; (b) Music Card messages — 18 curated tracks across 6 moods (Energy/Vibe/Chill/Love/Good Mood/Attitude) rendered as gradient mini-player bubbles with animated EQ bars and play/pause
+3. **Skin Store** — 3-tab (Store/AI Lab/My Skins) with VibeCoin purchases, AI-generated skins, gradient chat/bubble theming
 
 ### Key Features
 - End-to-end AES-256 encryption (via crypto-js) per chat — encrypted on device, stored ciphertext in AsyncStorage

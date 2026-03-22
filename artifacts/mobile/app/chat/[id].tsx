@@ -59,9 +59,9 @@ export default function ChatScreen() {
   const otherContact = otherId ? getContactById(otherId) : null;
 
   const handleSend = useCallback(
-    async (text: string, audio?: any, image?: any, formatting?: any) => {
+    async (text: string, audio?: any, image?: any, formatting?: any, music?: any) => {
       if (!id) return;
-      await sendMessage(id, text, audio, image, formatting);
+      await sendMessage(id, text, audio, image, formatting, music);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);

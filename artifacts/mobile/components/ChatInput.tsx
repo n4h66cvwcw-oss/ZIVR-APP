@@ -19,17 +19,20 @@ import type {
   AudioAttachment,
   ImageAttachment,
   MessageFormatting,
+  MusicAttachment,
 } from "@/context/MessagingContext";
 import { AudioClipEditor } from "@/components/AudioClipEditor";
 import { GifPickerModal } from "@/components/GifPickerModal";
 import { SecurePictureModal } from "@/components/SecurePictureModal";
+import { MusicalMessageModal } from "@/components/MusicalMessageModal";
 
 interface ChatInputProps {
   onSend: (
     text: string,
     audio?: AudioAttachment,
     image?: ImageAttachment,
-    formatting?: MessageFormatting
+    formatting?: MessageFormatting,
+    music?: MusicAttachment
   ) => void;
   placeholder?: string;
 }
@@ -60,12 +63,14 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
 
   const [text, setText] = useState("");
   const [attachedAudio, setAttachedAudio] = useState<AudioAttachment | null>(null);
+  const [attachedMusic, setAttachedMusic] = useState<MusicAttachment | null>(null);
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
   const [pendingImageSize, setPendingImageSize] = useState<{ w?: number; h?: number }>({});
   const [showClipEditor, setShowClipEditor] = useState(false);
   const [showSecurePicture, setShowSecurePicture] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showFormatBar, setShowFormatBar] = useState(false);
+  const [showMusicModal, setShowMusicModal] = useState(false);
 
   const [bold, setBold] = useState(false);
   const [italic, setItalic] = useState(false);
@@ -91,15 +96,16 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
   };
 
   const handleSend = () => {
-    if (!text.trim() && !attachedAudio) return;
+    if (!text.trim() && !attachedAudio && !attachedMusic) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     Animated.sequence([
       Animated.timing(sendScale, { toValue: 0.85, duration: 80, useNativeDriver: true }),
       Animated.spring(sendScale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }),
     ]).start();
-    onSend(text.trim(), attachedAudio || undefined, undefined, buildFormatting());
+    onSend(text.trim(), attachedAudio || undefined, undefined, buildFormatting(), attachedMusic || undefined);
     setText("");
     setAttachedAudio(null);
+    setAttachedMusic(null);
   };
 
   const pickAudio = async () => {
@@ -151,10 +157,30 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
     else setUnderline((v) => !v);
   };
 
-  const canSend = text.trim().length > 0 || !!attachedAudio;
+  const canSend = text.trim().length > 0 || !!attachedAudio || !!attachedMusic;
 
   return (
     <View style={[styles.wrapper, { borderTopColor: colors.border }]}>
+      {attachedMusic && (
+        <View style={[styles.audioPreview, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <View style={styles.audioPreviewLeft}>
+            <View style={[styles.audioIconBg, { backgroundColor: "#BF5AF222" }]}>
+              <Text style={{ fontSize: 16 }}>{attachedMusic.emoji}</Text>
+            </View>
+            <View style={styles.audioPreviewInfo}>
+              <Text style={[styles.audioPreviewName, { color: colors.text }]} numberOfLines={1}>
+                {attachedMusic.title}
+              </Text>
+              <Text style={[styles.audioPreviewLabel, { color: "#BF5AF2" }]}>
+                {attachedMusic.artist} · {attachedMusic.genre}
+              </Text>
+            </View>
+          </View>
+          <Pressable onPress={() => setAttachedMusic(null)} hitSlop={8}>
+            <Feather name="x" size={18} color={colors.textSecondary} />
+          </Pressable>
+        </View>
+      )}
       {attachedAudio && !showClipEditor && (
         <View
           style={[
@@ -342,6 +368,28 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
         </Pressable>
 
         <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setShowMusicModal(true);
+          }}
+          style={[
+            styles.iconBtn,
+            {
+              backgroundColor: attachedMusic
+                ? "#BF5AF222"
+                : colors.surfaceSecondary,
+            },
+          ]}
+          hitSlop={8}
+        >
+          <Ionicons
+            name="disc"
+            size={20}
+            color={attachedMusic ? "#BF5AF2" : colors.textSecondary}
+          />
+        </Pressable>
+
+        <Pressable
           onPress={pickImage}
           style={[styles.iconBtn, { backgroundColor: colors.surfaceSecondary }]}
           hitSlop={8}
@@ -443,6 +491,12 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
         onSelect={(url) => setBackgroundGifUrl(url)}
         onRemove={() => setBackgroundGifUrl("")}
         onClose={() => setShowGifPicker(false)}
+      />
+
+      <MusicalMessageModal
+        visible={showMusicModal}
+        onClose={() => setShowMusicModal(false)}
+        onSelect={(track) => setAttachedMusic(track)}
       />
     </View>
   );

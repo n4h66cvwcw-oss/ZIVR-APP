@@ -18,7 +18,7 @@ import {
   useColorScheme,
 } from "react-native";
 import Colors from "@/constants/colors";
-import type { AudioAttachment, ImageAttachment, Message, MessageFormatting } from "@/context/MessagingContext";
+import type { AudioAttachment, ImageAttachment, Message, MessageFormatting, MusicAttachment } from "@/context/MessagingContext";
 import type { SkinTheme } from "@/context/SkinContext";
 
 interface MessageBubbleProps {
@@ -288,6 +288,107 @@ const photoStyles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
   },
 });
+
+function MusicMessageBubble({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
+  const [playing, setPlaying] = useState(false);
+  const bar1 = useRef(new Animated.Value(0.4)).current;
+  const bar2 = useRef(new Animated.Value(0.7)).current;
+  const bar3 = useRef(new Animated.Value(0.5)).current;
+  const stopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const animateBar = (anim: Animated.Value, toMin: number, toMax: number, duration: number) =>
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: toMax, duration, useNativeDriver: true }),
+        Animated.timing(anim, { toValue: toMin, duration, useNativeDriver: true }),
+      ])
+    );
+
+  const startEq = () => {
+    animateBar(bar1, 0.2, 1.0, 220).start();
+    animateBar(bar2, 0.3, 0.9, 300).start();
+    animateBar(bar3, 0.15, 1.0, 180).start();
+  };
+
+  const stopEq = () => {
+    bar1.stopAnimation();
+    bar2.stopAnimation();
+    bar3.stopAnimation();
+    Animated.parallel([
+      Animated.timing(bar1, { toValue: 0.4, duration: 200, useNativeDriver: true }),
+      Animated.timing(bar2, { toValue: 0.7, duration: 200, useNativeDriver: true }),
+      Animated.timing(bar3, { toValue: 0.5, duration: 200, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const toggle = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (playing) {
+      if (stopRef.current) clearTimeout(stopRef.current);
+      setPlaying(false);
+      stopEq();
+    } else {
+      setPlaying(true);
+      startEq();
+      stopRef.current = setTimeout(() => {
+        setPlaying(false);
+        stopEq();
+      }, 20000);
+    }
+  };
+
+  useEffect(() => () => { if (stopRef.current) clearTimeout(stopRef.current); }, []);
+
+  function fmtDuration(s: number) {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  }
+
+  return (
+    <LinearGradient
+      colors={music.colors}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.musicCard}
+    >
+      <View style={styles.musicHeader}>
+        <Text style={styles.musicEmoji}>{music.emoji}</Text>
+        <View style={styles.musicInfo}>
+          <Text style={styles.musicTitle} numberOfLines={1}>{music.title}</Text>
+          <Text style={styles.musicArtist} numberOfLines={1}>{music.artist}</Text>
+        </View>
+      </View>
+      <View style={styles.musicFooter}>
+        <View style={styles.musicMeta}>
+          <View style={styles.musicGenrePill}>
+            <Text style={styles.musicGenreText}>{music.genre}</Text>
+          </View>
+          <Text style={styles.musicDuration}>{fmtDuration(music.duration)}</Text>
+        </View>
+        <View style={styles.musicControls}>
+          {playing && (
+            <View style={styles.eqBars}>
+              {[bar1, bar2, bar3].map((bar, i) => (
+                <Animated.View
+                  key={i}
+                  style={[styles.eqBar, { transform: [{ scaleY: bar }] }]}
+                />
+              ))}
+            </View>
+          )}
+          <Pressable onPress={toggle} style={styles.musicPlayBtn} hitSlop={8}>
+            <Ionicons
+              name={playing ? "pause" : "play"}
+              size={18}
+              color="#fff"
+            />
+          </Pressable>
+        </View>
+      </View>
+    </LinearGradient>
+  );
+}
 
 function AudioPlayer({
   audio,
@@ -649,6 +750,9 @@ export function MessageBubble({
             end={{ x: 1, y: 0 }}
             style={[styles.bubble, styles.myBubble]}
           >
+            {message.musicAttachment && (
+              <MusicMessageBubble music={message.musicAttachment} isMine={isMine} />
+            )}
             {message.imageAttachment && (
               <SecurePhotoMessage
                 image={message.imageAttachment}
@@ -705,6 +809,9 @@ export function MessageBubble({
           )}
           {hasGifBg && (
             <View style={styles.gifOverlay} />
+          )}
+          {message.musicAttachment && (
+            <MusicMessageBubble music={message.musicAttachment} isMine={isMine} />
           )}
           {message.imageAttachment && (
             <SecurePhotoMessage
@@ -1041,5 +1148,87 @@ const styles = StyleSheet.create({
   },
   reactionOptionEmoji: {
     fontSize: 24,
+  },
+  musicCard: {
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 4,
+    minWidth: 220,
+    gap: 12,
+    overflow: "hidden",
+  },
+  musicHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  musicEmoji: {
+    fontSize: 32,
+  },
+  musicInfo: {
+    flex: 1,
+  },
+  musicTitle: {
+    color: "#fff",
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
+  },
+  musicArtist: {
+    color: "rgba(255,255,255,0.8)",
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    marginTop: 1,
+  },
+  musicFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  musicMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  musicGenrePill: {
+    backgroundColor: "rgba(255,255,255,0.22)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  musicGenreText: {
+    color: "#fff",
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+  },
+  musicDuration: {
+    color: "rgba(255,255,255,0.7)",
+    fontSize: 11,
+    fontFamily: "Inter_500Medium",
+  },
+  musicControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  eqBars: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 3,
+    height: 18,
+  },
+  eqBar: {
+    width: 3,
+    height: 16,
+    backgroundColor: "#fff",
+    borderRadius: 2,
+    opacity: 0.9,
+  },
+  musicPlayBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });
