@@ -35,6 +35,7 @@ interface ChatInputProps {
     music?: MusicAttachment
   ) => void;
   placeholder?: string;
+  onTextChange?: (text: string) => void;
 }
 
 type FontSize = "sm" | "md" | "lg" | "xl";
@@ -56,7 +57,7 @@ const TEXT_COLORS = [
   "#64D2FF",
 ];
 
-export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps) {
+export function ChatInput({ onSend, placeholder = "Message...", onTextChange }: ChatInputProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
@@ -433,7 +434,7 @@ export function ChatInput({ onSend, placeholder = "Message..." }: ChatInputProps
               fontSize !== "md" && { fontSize: FONT_SIZE_VALUES[fontSize] },
             ]}
             value={text}
-            onChangeText={setText}
+            onChangeText={(t) => { setText(t); onTextChange?.(t); }}
             placeholder={placeholder}
             placeholderTextColor={colors.textTertiary}
             multiline

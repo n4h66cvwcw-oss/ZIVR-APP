@@ -22,8 +22,19 @@ VibeMsg is a feature-rich iOS-style messaging app with unique innovations:
 - Read receipts, online status, "last seen" indicators
 - Dark/light mode, Inter fonts, iOS-native design language
 
+### Real-Time Backend (NEW)
+- **PostgreSQL** — `vm_users`, `vm_chats`, `vm_chat_members`, `vm_messages` tables (UUIDs, BigInt timestamps)
+- **Socket.io** on the Express API server — rooms per chat, `user:join`, `message:send→message:new`, `typing:start/stop`, disconnect cleanup
+- **REST routes**: `POST /api/users/register`, `GET /api/users/find`, `POST /api/chats/direct`, `POST /api/chats/group`, `GET /api/chats/:id/messages`
+- **ServerContext** (`artifacts/mobile/context/ServerContext.tsx`) — socket client, server user ID (persisted in AsyncStorage), register, find users, create chats, typing events
+- **Registration** happens silently on onboarding completion (fire-and-forget)
+- **Find People tab** in New Chat screen searches live server users by name/@username
+- **Live badge** + **typing indicator** appear in chat header for server chats
+- All existing local-only features still work; server is opt-in per chat
+
 ### Architecture
-- `artifacts/mobile/context/MessagingContext.tsx` — all state, AsyncStorage persistence, encryption, search, PDF gen
+- `artifacts/mobile/context/ServerContext.tsx` — socket connection, server user registration, user search, real-time events
+- `artifacts/mobile/context/MessagingContext.tsx` — all state, AsyncStorage persistence, encryption, search, PDF gen, socket integration
 - `artifacts/mobile/utils/crypto.ts` — AES encrypt/decrypt, PBKDF2, SHA-256 via crypto-js
 - `artifacts/mobile/app/(tabs)/index.tsx` — main chats screen with all filter/sort/organize features
 - `artifacts/mobile/app/search.tsx` — advanced multi-mode search screen

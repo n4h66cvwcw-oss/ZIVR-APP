@@ -17,6 +17,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MessagingProvider } from "@/context/MessagingContext";
 import { CallProvider } from "@/context/CallContext";
 import { ProfileProvider, useProfile } from "@/context/ProfileContext";
+import { ServerProvider } from "@/context/ServerContext";
 import { SkinProvider } from "@/context/SkinContext";
 import { IncomingCallModal } from "@/components/IncomingCallModal";
 import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
@@ -151,6 +152,7 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <ProfileProvider>
+            <ServerProvider>
             <SkinProvider>
               <MessagingProvider>
                 <CallProvider>
@@ -164,6 +166,7 @@ export default function RootLayout() {
                 </CallProvider>
               </MessagingProvider>
             </SkinProvider>
+            </ServerProvider>
           </ProfileProvider>
         </QueryClientProvider>
       </ErrorBoundary>

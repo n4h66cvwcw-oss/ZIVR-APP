@@ -2,7 +2,7 @@ import { Feather, Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
@@ -16,6 +16,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging, type Message } from "@/context/MessagingContext";
+import { useServer } from "@/context/ServerContext";
 import { useCall } from "@/context/CallContext";
 import { useSkin } from "@/context/SkinContext";
 import { Avatar } from "@/components/Avatar";
@@ -41,7 +42,13 @@ export default function ChatScreen() {
     addReaction,
     markChatRead,
     getContactById,
+    contacts,
   } = useMessaging();
+
+  const { serverUserId, isConnected, onTyping, emitTyping } = useServer();
+  const [typingUsers, setTypingUsers] = useState<{ id: string; name: string }[]>([]);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef = useRef(false);
 
   const { startCall } = useCall();
 
@@ -51,6 +58,44 @@ export default function ChatScreen() {
   useEffect(() => {
     if (id) markChatRead(id);
   }, [id, messages.length]);
+
+  useEffect(() => {
+    if (!chat?.isServerChat) return;
+    const unsub = onTyping((data) => {
+      if (data.chatId !== id) return;
+      setTypingUsers((prev) => {
+        if (data.typing) {
+          if (prev.some((u) => u.id === data.userId)) return prev;
+          return [...prev, { id: data.userId, name: data.name }];
+        } else {
+          return prev.filter((u) => u.id !== data.userId);
+        }
+      });
+      if (data.typing) {
+        setTimeout(() => {
+          setTypingUsers((prev) => prev.filter((u) => u.id !== data.userId));
+        }, 4000);
+      }
+    });
+    return unsub;
+  }, [id, chat?.isServerChat, onTyping]);
+
+  const handleTypingChange = useCallback((text: string) => {
+    if (!chat?.isServerChat || !serverUserId || !id) return;
+    const myContact = contacts.find((c) => c.id === "me");
+    const myName = myContact?.name ?? "Someone";
+    if (text.length > 0 && !isTypingRef.current) {
+      isTypingRef.current = true;
+      emitTyping(id, serverUserId, myName, true);
+    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        emitTyping(id, serverUserId, myName, false);
+      }
+    }, 2000);
+  }, [chat?.isServerChat, serverUserId, id, contacts, emitTyping]);
 
   const isGroup = chat?.type === "group";
   const otherId = !isGroup
@@ -157,10 +202,22 @@ export default function ChatScreen() {
             isOnline={otherContact?.isOnline}
           />
           <View style={styles.headerInfo}>
-            <Text style={[styles.headerName, { color: colors.text }]}>
-              {chat.name}
-            </Text>
-            {otherContact?.isOnline ? (
+            <View style={styles.nameRowHeader}>
+              <Text style={[styles.headerName, { color: colors.text }]}>
+                {chat.name}
+              </Text>
+              {chat.isServerChat && isConnected && (
+                <View style={styles.liveBadge}>
+                  <View style={styles.liveDot} />
+                  <Text style={styles.liveText}>Live</Text>
+                </View>
+              )}
+            </View>
+            {typingUsers.length > 0 ? (
+              <Text style={[styles.headerStatus, { color: "#0A84FF" }]}>
+                {typingUsers[0].name} is typing…
+              </Text>
+            ) : otherContact?.isOnline ? (
               <Text style={[styles.headerStatus, { color: colors.secondary }]}>
                 Online
               </Text>
@@ -264,7 +321,7 @@ export default function ChatScreen() {
           }
         />
         <View style={{ paddingBottom: insets.bottom }}>
-          <ChatInput onSend={handleSend} />
+          <ChatInput onSend={handleSend} onTextChange={handleTypingChange} />
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -299,9 +356,34 @@ const styles = StyleSheet.create({
   headerInfo: {
     flex: 1,
   },
+  nameRowHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   headerName: {
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
+  },
+  liveBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#34C75920",
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 6,
+    gap: 3,
+  },
+  liveDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#34C759",
+  },
+  liveText: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    color: "#34C759",
   },
   headerStatus: {
     fontSize: 12,

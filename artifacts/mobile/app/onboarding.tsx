@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useProfile } from "@/context/ProfileContext";
 import { useMessaging } from "@/context/MessagingContext";
+import { useServer } from "@/context/ServerContext";
 import { useContactSync } from "@/hooks/useContactSync";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
 
@@ -33,6 +34,7 @@ export default function OnboardingScreen() {
 
   const { updateProfile } = useProfile();
   const { updateContacts } = useMessaging();
+  const { registerOnServer } = useServer();
   const { status, syncedCount, syncContacts } = useContactSync();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -83,25 +85,38 @@ export default function OnboardingScreen() {
   async function handleFinish() {
     setSaving(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const displayName = name.trim();
     await updateProfile({
-      displayName: name.trim(),
+      displayName,
       phone: phone.trim() || undefined,
       username: username.trim() || undefined,
       avatar: avatarUri,
       onboardingComplete: true,
     });
+    registerOnServer({
+      displayName,
+      username: username.trim() || undefined,
+      phone: phone.trim() || undefined,
+      statusMessage: "Hey there! I'm on VibeMsg",
+    }).catch(() => {});
     router.replace("/(tabs)");
   }
 
   async function handleSkip() {
     Haptics.selectionAsync();
+    const displayName = name.trim() || "Me";
     await updateProfile({
-      displayName: name.trim() || "Me",
+      displayName,
       phone: phone.trim() || undefined,
       username: username.trim() || undefined,
       avatar: avatarUri,
       onboardingComplete: true,
     });
+    registerOnServer({
+      displayName,
+      username: username.trim() || undefined,
+      phone: phone.trim() || undefined,
+    }).catch(() => {});
     router.replace("/(tabs)");
   }
 

@@ -5,6 +5,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -13,6 +14,7 @@ import {
   hashPasscode,
   generateEncryptionKey,
 } from "@/utils/crypto";
+import { useServer, type ServerUser } from "@/context/ServerContext";
 
 export type AudioAttachment = {
   uri: string;
@@ -102,6 +104,7 @@ export type Chat = {
   passcodeSalt?: string;
   recoveryEmail?: string;
   passcodeHint?: string;
+  isServerChat?: boolean;
 };
 
 export type CheckInGroup = {
@@ -284,6 +287,7 @@ interface MessagingContextValue {
   sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
+  createServerDirectChat: (serverUser: ServerUser) => Promise<string>;
   createGroupChat: (name: string, participantIds: string[], description?: string) => Promise<string>;
   createCheckInGroup: (name: string, memberIds: string[], anonymous?: boolean) => Promise<string>;
   sendBroadcast: (groupId: string, text: string, audio?: AudioAttachment) => Promise<string>;
@@ -323,6 +327,7 @@ function genId(): string {
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const myId = "me";
+  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat } = useServer();
   const [contacts, setContactsState] = useState<Contact[]>(SAMPLE_CONTACTS);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
@@ -330,9 +335,50 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [broadcasts, setBroadcasts] = useState<CheckInBroadcast[]>([]);
   const [sortMode, setSortModeState] = useState<ChatSortMode>("recent");
 
+  const sentLocalIds = useRef<Set<string>>(new Set());
+  const chatsRef = useRef(chats);
+  const messagesRef = useRef(messages);
+  useEffect(() => { chatsRef.current = chats; }, [chats]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    const unsub = onNewMessage((msg) => {
+      if (sentLocalIds.current.has(msg.localId ?? "")) {
+        sentLocalIds.current.delete(msg.localId!);
+        return;
+      }
+      const chatId = msg.chatId;
+      const newMsg: Message = {
+        id: msg.id,
+        chatId,
+        text: msg.text,
+        senderId: msg.senderId,
+        timestamp: msg.createdAt,
+        read: false,
+      };
+      setMessages((prev) => {
+        const existing = prev[chatId] || [];
+        if (existing.some((m) => m.id === msg.id)) return prev;
+        const updated = { ...prev, [chatId]: [...existing, newMsg] };
+        AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+      setChats((prev) => {
+        const updated = prev.map((c) =>
+          c.id === chatId
+            ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
+            : c
+        );
+        AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    });
+    return unsub;
+  }, [onNewMessage]);
 
   async function loadData() {
     try {
@@ -592,6 +638,50 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [chats, contacts, myId]
   );
 
+  const createServerDirectChat = useCallback(
+    async (serverUser: ServerUser): Promise<string> => {
+      const existing = chats.find(
+        (c) => c.isServerChat && c.participantIds.includes(serverUser.id)
+      );
+      if (existing) return existing.id;
+
+      if (!serverUserId) return "";
+
+      const chatId = await getOrCreateDirectChat(serverUserId, serverUser.id);
+      if (!chatId) return "";
+
+      const contact: Contact = {
+        id: serverUser.id,
+        name: serverUser.displayName,
+        phone: serverUser.phone,
+        avatar: serverUser.avatar,
+        status: serverUser.statusMessage,
+        isOnline: serverUser.isOnline,
+        lastSeen: serverUser.lastSeen,
+      };
+
+      const updatedContacts = contacts.some((c) => c.id === serverUser.id)
+        ? contacts
+        : [...contacts, contact];
+      setContactsState(updatedContacts);
+      await AsyncStorage.setItem(STORAGE_KEYS.CONTACTS, JSON.stringify(updatedContacts));
+
+      const newChat: Chat = {
+        id: chatId,
+        type: "direct",
+        name: serverUser.displayName,
+        participantIds: [serverUserId, serverUser.id],
+        createdAt: Date.now(),
+        unreadCount: 0,
+        avatar: serverUser.avatar,
+        isServerChat: true,
+      };
+      await saveChats([newChat, ...chats]);
+      return chatId;
+    },
+    [chats, contacts, serverUserId, getOrCreateDirectChat]
+  );
+
   const createGroupChat = useCallback(
     async (name: string, participantIds: string[], description?: string): Promise<string> => {
       const id = genId();
@@ -664,6 +754,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         formatting,
         read: false,
       };
+
+      if (chat?.isServerChat && serverUserId) {
+        sentLocalIds.current.add(id);
+        sendServerMessage(chatId, serverUserId, text, id);
+      }
+
       const chatMessages = messages[chatId] || [];
       const updatedMessages = { ...messages, [chatId]: [...chatMessages, msg] };
       await saveMessages(updatedMessages);
@@ -1070,6 +1166,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       sendMessage,
       markImageViewed,
       createDirectChat,
+      createServerDirectChat,
       createGroupChat,
       createCheckInGroup,
       sendBroadcast,
@@ -1111,6 +1208,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       sendMessage,
       markImageViewed,
       createDirectChat,
+      createServerDirectChat,
       createGroupChat,
       createCheckInGroup,
       sendBroadcast,
