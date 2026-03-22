@@ -15,14 +15,19 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging, type Contact } from "@/context/MessagingContext";
+import { useCall } from "@/context/CallContext";
 import { Avatar } from "@/components/Avatar";
 
 function ContactRow({
   contact,
   onPress,
+  onVoiceCall,
+  onVideoCall,
 }: {
   contact: Contact;
   onPress: () => void;
+  onVoiceCall: () => void;
+  onVideoCall: () => void;
 }) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -69,12 +74,28 @@ function ContactRow({
           </Text>
         ) : null}
       </View>
-      <Pressable
-        onPress={onPress}
-        style={[styles.messageBtn, { backgroundColor: colors.primary }]}
-      >
-        <Feather name="send" size={14} color="#FFFFFF" />
-      </Pressable>
+      <View style={styles.contactActions}>
+        <Pressable
+          onPress={onVideoCall}
+          hitSlop={8}
+          style={[styles.callBtn, { backgroundColor: colors.primary + "15" }]}
+        >
+          <Ionicons name="videocam" size={18} color={colors.primary} />
+        </Pressable>
+        <Pressable
+          onPress={onVoiceCall}
+          hitSlop={8}
+          style={[styles.callBtn, { backgroundColor: "#30D158" + "20" }]}
+        >
+          <Ionicons name="call" size={18} color="#30D158" />
+        </Pressable>
+        <Pressable
+          onPress={onPress}
+          style={[styles.messageBtn, { backgroundColor: colors.primary }]}
+        >
+          <Feather name="send" size={14} color="#FFFFFF" />
+        </Pressable>
+      </View>
     </Pressable>
   );
 }
@@ -92,6 +113,7 @@ export default function ContactsScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { contacts, createDirectChat } = useMessaging();
+  const { startCall } = useCall();
   const [search, setSearch] = useState("");
 
   const otherContacts = contacts.filter((c) => c.id !== "me");
@@ -129,9 +151,18 @@ export default function ContactsScreen() {
           },
         ]}
       >
-        <Text style={[styles.headerTitle, { color: colors.text }]}>
-          Contacts
-        </Text>
+        <View style={styles.headerRow}>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>
+            Contacts
+          </Text>
+          <Pressable
+            onPress={() => router.push("/call-history")}
+            style={[styles.recentsBtn, { backgroundColor: colors.primary + "15" }]}
+          >
+            <Ionicons name="time-outline" size={16} color={colors.primary} />
+            <Text style={[styles.recentsBtnText, { color: colors.primary }]}>Recents</Text>
+          </Pressable>
+        </View>
         <View
           style={[
             styles.searchContainer,
@@ -170,6 +201,14 @@ export default function ContactsScreen() {
               <ContactRow
                 contact={item}
                 onPress={() => handleMessage(item.id)}
+                onVoiceCall={() => {
+                  startCall(item.id, item.name, "voice");
+                  router.push({ pathname: "/call/[id]", params: { id: item.id, name: item.name, type: "voice" } });
+                }}
+                onVideoCall={() => {
+                  startCall(item.id, item.name, "video");
+                  router.push({ pathname: "/call/[id]", params: { id: item.id, name: item.name, type: "video" } });
+                }}
               />
             </>
           );
@@ -253,6 +292,35 @@ const styles = StyleSheet.create({
   lastSeen: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  recentsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  recentsBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
+  },
+  contactActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  callBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
   },
   messageBtn: {
     width: 34,

@@ -15,6 +15,7 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging, type Message } from "@/context/MessagingContext";
+import { useCall } from "@/context/CallContext";
 import { Avatar } from "@/components/Avatar";
 import { ChatInput } from "@/components/ChatInput";
 import { MessageBubble } from "@/components/MessageBubble";
@@ -36,6 +37,8 @@ export default function ChatScreen() {
     markChatRead,
     getContactById,
   } = useMessaging();
+
+  const { startCall } = useCall();
 
   const chat = chats.find((c) => c.id === id);
   const messages = getDecryptedMessages(id);
@@ -145,10 +148,26 @@ export default function ChatScreen() {
           {chat.isEncrypted && (
             <Ionicons name="shield-checkmark" size={16} color={colors.secondary} style={{ marginRight: 2 }} />
           )}
-          <Pressable hitSlop={10} style={styles.headerActionBtn}>
+          <Pressable
+            hitSlop={10}
+            style={styles.headerActionBtn}
+            onPress={() => {
+              const name = otherContact?.name ?? chat.name;
+              startCall(otherId ?? id, name, "video");
+              router.push({ pathname: "/call/[id]", params: { id: otherId ?? id, name, type: "video" } });
+            }}
+          >
             <Feather name="video" size={20} color={colors.primary} />
           </Pressable>
-          <Pressable hitSlop={10} style={styles.headerActionBtn}>
+          <Pressable
+            hitSlop={10}
+            style={styles.headerActionBtn}
+            onPress={() => {
+              const name = otherContact?.name ?? chat.name;
+              startCall(otherId ?? id, name, "voice");
+              router.push({ pathname: "/call/[id]", params: { id: otherId ?? id, name, type: "voice" } });
+            }}
+          >
             <Feather name="phone" size={20} color={colors.primary} />
           </Pressable>
           <Pressable
