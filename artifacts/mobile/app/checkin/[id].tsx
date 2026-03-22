@@ -18,6 +18,7 @@ import {
   useMessaging,
   type AudioAttachment,
   type CheckInBroadcast,
+  type CheckInGroup,
 } from "@/context/MessagingContext";
 import { Avatar } from "@/components/Avatar";
 import { ChatInput } from "@/components/ChatInput";
@@ -32,11 +33,12 @@ function BroadcastCard({
   onPress: () => void;
   colors: typeof Colors.dark;
 }) {
-  const { contacts } = useMessaging();
-  const replyCount = Object.values(broadcast.replies).flat().length;
+  const { getBroadcastReplyStats } = useMessaging();
+  const stats = getBroadcastReplyStats(broadcast.id);
   const unreadReplies = Object.values(broadcast.replies)
     .flat()
     .filter((r) => !r.read).length;
+  const replyPct = stats.total > 0 ? stats.replied / stats.total : 0;
 
   const time = new Date(broadcast.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -51,47 +53,29 @@ function BroadcastCard({
       }}
       style={({ pressed }) => [
         styles.broadcastCard,
-        {
-          backgroundColor: colors.surface,
-          opacity: pressed ? 0.85 : 1,
-        },
+        { backgroundColor: colors.surface, opacity: pressed ? 0.85 : 1 },
       ]}
     >
       <View style={styles.broadcastCardHeader}>
         <View
-          style={[
-            styles.broadcastIconBg,
-            { backgroundColor: colors.broadcastAccent + "18" },
-          ]}
+          style={[styles.broadcastIconBg, { backgroundColor: colors.broadcastAccent + "18" }]}
         >
           <Ionicons name="send" size={14} color={colors.broadcastAccent} />
         </View>
-        <Text style={[styles.broadcastTime, { color: colors.textTertiary }]}>
-          {time}
-        </Text>
+        <Text style={[styles.broadcastTime, { color: colors.textTertiary }]}>{time}</Text>
         {unreadReplies > 0 && (
-          <View
-            style={[
-              styles.unreadDot,
-              { backgroundColor: colors.primary },
-            ]}
-          >
+          <View style={[styles.unreadDot, { backgroundColor: colors.primary }]}>
             <Text style={styles.unreadDotText}>{unreadReplies}</Text>
           </View>
         )}
       </View>
 
-      <Text style={[styles.broadcastText, { color: colors.text }]}>
+      <Text style={[styles.broadcastText, { color: colors.text }]} numberOfLines={2}>
         {broadcast.text}
       </Text>
 
       {broadcast.audioAttachment && (
-        <View
-          style={[
-            styles.audioIndicator,
-            { backgroundColor: colors.audioAccent + "15" },
-          ]}
-        >
+        <View style={[styles.audioIndicator, { backgroundColor: colors.audioAccent + "15" }]}>
           <Ionicons name="musical-notes" size={14} color={colors.audioAccent} />
           <Text style={[styles.audioIndicatorText, { color: colors.audioAccent }]}>
             {broadcast.audioAttachment.name}
@@ -99,12 +83,36 @@ function BroadcastCard({
         </View>
       )}
 
-      <View style={styles.broadcastFooter}>
-        <View style={styles.replyCountBadge}>
-          <Ionicons name="chatbubble" size={13} color={colors.textSecondary} />
-          <Text style={[styles.replyCountText, { color: colors.textSecondary }]}>
-            {replyCount} {replyCount === 1 ? "reply" : "replies"}
+      {stats.total > 0 && (
+        <View style={styles.progressSection}>
+          <View style={[styles.progressTrack, { backgroundColor: colors.broadcastAccent + "20" }]}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  backgroundColor: replyPct === 1 ? "#32D74B" : colors.broadcastAccent,
+                  width: `${Math.round(replyPct * 100)}%`,
+                },
+              ]}
+            />
+          </View>
+          <Text style={[styles.progressLabel, { color: replyPct === 1 ? "#32D74B" : colors.broadcastAccent }]}>
+            {stats.replied}/{stats.total} replied
           </Text>
+        </View>
+      )}
+
+      <View style={styles.broadcastFooter}>
+        <View style={styles.memberStatusRow}>
+          {stats.pending.slice(0, 5).map((memberId) => (
+            <View
+              key={memberId}
+              style={[styles.statusDot, { backgroundColor: colors.textTertiary + "60" }]}
+            />
+          ))}
+          {Array.from({ length: stats.replied }).map((_, i) => (
+            <View key={`r${i}`} style={[styles.statusDot, { backgroundColor: "#32D74B" }]} />
+          ))}
         </View>
         <Feather name="chevron-right" size={14} color={colors.textTertiary} />
       </View>
@@ -463,6 +471,40 @@ const styles = StyleSheet.create({
   replyCountText: {
     fontSize: 13,
     fontFamily: "Inter_500Medium",
+  },
+  progressSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 6,
+  },
+  progressTrack: {
+    flex: 1,
+    height: 5,
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: 5,
+    borderRadius: 3,
+  },
+  progressLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    minWidth: 56,
+    textAlign: "right",
+  },
+  memberStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    flex: 1,
+    flexWrap: "wrap",
+  },
+  statusDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
   },
   emptyBroadcasts: {
     alignItems: "center",

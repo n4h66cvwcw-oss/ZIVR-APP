@@ -107,6 +107,10 @@ function RootLayoutNav() {
             animation: "slide_from_bottom",
           }}
         />
+        <Stack.Screen
+          name="checkin/received/[broadcastId]"
+          options={{ headerShown: false }}
+        />
       </Stack>
       <IncomingCallModal />
     </>

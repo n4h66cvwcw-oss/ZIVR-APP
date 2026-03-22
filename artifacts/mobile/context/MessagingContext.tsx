@@ -92,6 +92,12 @@ export type CheckInGroup = {
   createdAt: number;
   anonymous: boolean;
   description?: string;
+  creatorId?: string;
+};
+
+export type BroadcastDeadline = {
+  timestamp: number;
+  label: string;
 };
 
 export type CheckInBroadcast = {
@@ -103,6 +109,8 @@ export type CheckInBroadcast = {
   timestamp: number;
   replies: Record<string, CheckInReply[]>;
   privateSideChats: Record<string, Message[]>;
+  deadline?: number;
+  myReply?: string;
 };
 
 export type CheckInReply = {
@@ -142,6 +150,54 @@ const STORAGE_KEYS = {
   CONTACTS: "@vibemsg_contacts",
   ME: "@vibemsg_me",
   SORT_MODE: "@vibemsg_sort_mode",
+};
+
+const SIMULATE_REPLIES = [
+  "All good on my end! 👍",
+  "Checked in ✓",
+  "Here! Everything's fine",
+  "Will update you shortly",
+  "Running a bit late but on it 🏃",
+  "Present and accounted for 👋",
+  "Doing great, thanks for checking!",
+  "All good here!",
+  "On it! 🔥",
+  "Just saw this — I'm good",
+  "Yes, still on track",
+  "👍 Got it!",
+  "Confirmed ✓",
+  "I'm in!",
+  "Copy that 📋",
+  "Good here, no issues",
+  "Solid, thanks for checking in",
+  "Yep, all systems go 🚀",
+];
+
+const NOW = Date.now();
+const SEED_GROUP_ID = "seed-rcv-group-1";
+const SEED_BROADCAST_ID = "seed-rcv-broadcast-1";
+
+const SEED_RECEIVED_GROUP: CheckInGroup = {
+  id: SEED_GROUP_ID,
+  name: "Weekend Warriors",
+  memberIds: ["me", "c2", "c3", "c4"],
+  createdAt: NOW - 86400000,
+  anonymous: false,
+  creatorId: "c1",
+};
+
+const SEED_RECEIVED_BROADCAST: CheckInBroadcast = {
+  id: SEED_BROADCAST_ID,
+  groupId: SEED_GROUP_ID,
+  senderId: "c1",
+  text: "Hey team! Quick check-in — what's everyone up to this weekend? Got a group hike planned 🏔️ Let me know if you're in or have other plans.",
+  timestamp: NOW - 3600000,
+  replies: {
+    c2: [{ id: "seed-r1", memberId: "c2", text: "I'm in! Let's do it 🏔️", timestamp: NOW - 3400000, read: false }],
+    c3: [{ id: "seed-r2", memberId: "c3", text: "Sounds amazing, count me in!", timestamp: NOW - 3000000, read: false }],
+  },
+  privateSideChats: {},
+  myReply: undefined,
 };
 
 const SAMPLE_CONTACTS: Contact[] = [
@@ -213,7 +269,11 @@ interface MessagingContextValue {
   createCheckInGroup: (name: string, memberIds: string[], anonymous?: boolean) => Promise<string>;
   sendBroadcast: (groupId: string, text: string, audio?: AudioAttachment) => Promise<string>;
   replyToBroadcast: (broadcastId: string, text: string, audio?: AudioAttachment) => Promise<void>;
+  replyToReceivedBroadcast: (broadcastId: string, text: string) => Promise<void>;
   sendPrivateSideChat: (broadcastId: string, memberId: string, text: string, audio?: AudioAttachment) => Promise<void>;
+  markBroadcastRepliesRead: (broadcastId: string) => Promise<void>;
+  getReceivedBroadcasts: () => Array<{ broadcast: CheckInBroadcast; group: CheckInGroup; sender: Contact | undefined }>;
+  getBroadcastReplyStats: (broadcastId: string) => { total: number; replied: number; pending: string[] };
   addReaction: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   markChatRead: (chatId: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
@@ -267,8 +327,31 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
       if (chatsStr) setChats(JSON.parse(chatsStr));
       if (messagesStr) setMessages(JSON.parse(messagesStr));
-      if (groupsStr) setCheckInGroups(JSON.parse(groupsStr));
-      if (broadcastsStr) setBroadcasts(JSON.parse(broadcastsStr));
+
+      if (groupsStr) {
+        const loadedGroups: CheckInGroup[] = JSON.parse(groupsStr);
+        const hasSeed = loadedGroups.some((g) => g.id === SEED_GROUP_ID);
+        setCheckInGroups(hasSeed ? loadedGroups : [SEED_RECEIVED_GROUP, ...loadedGroups]);
+        if (!hasSeed) {
+          await AsyncStorage.setItem(STORAGE_KEYS.CHECKIN_GROUPS, JSON.stringify([SEED_RECEIVED_GROUP, ...loadedGroups]));
+        }
+      } else {
+        setCheckInGroups([SEED_RECEIVED_GROUP]);
+        await AsyncStorage.setItem(STORAGE_KEYS.CHECKIN_GROUPS, JSON.stringify([SEED_RECEIVED_GROUP]));
+      }
+
+      if (broadcastsStr) {
+        const loadedBroadcasts: CheckInBroadcast[] = JSON.parse(broadcastsStr);
+        const hasSeedBroadcast = loadedBroadcasts.some((b) => b.id === SEED_BROADCAST_ID);
+        setBroadcasts(hasSeedBroadcast ? loadedBroadcasts : [SEED_RECEIVED_BROADCAST, ...loadedBroadcasts]);
+        if (!hasSeedBroadcast) {
+          await AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify([SEED_RECEIVED_BROADCAST, ...loadedBroadcasts]));
+        }
+      } else {
+        setBroadcasts([SEED_RECEIVED_BROADCAST]);
+        await AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify([SEED_RECEIVED_BROADCAST]));
+      }
+
       if (sortStr) setSortModeState(sortStr as ChatSortMode);
     } catch (e) {
       console.error("Error loading data:", e);
@@ -613,6 +696,34 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [chats, messages, myId]
   );
 
+  const simulateMemberReplies = useCallback(
+    (broadcastId: string, memberIds: string[]) => {
+      memberIds.forEach((memberId, index) => {
+        if (Math.random() < 0.25) return;
+        const delay = (4 + index * 5 + Math.random() * 6) * 1000;
+        setTimeout(() => {
+          const reply: CheckInReply = {
+            id: genId(),
+            memberId,
+            text: SIMULATE_REPLIES[Math.floor(Math.random() * SIMULATE_REPLIES.length)],
+            timestamp: Date.now(),
+            read: false,
+          };
+          setBroadcasts((prev) => {
+            const updated = prev.map((b) =>
+              b.id === broadcastId
+                ? { ...b, replies: { ...b.replies, [memberId]: [...(b.replies[memberId] || []), reply] } }
+                : b
+            );
+            AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify(updated));
+            return updated;
+          });
+        }, delay);
+      });
+    },
+    []
+  );
+
   const sendBroadcast = useCallback(
     async (groupId: string, text: string, audio?: AudioAttachment): Promise<string> => {
       const id = genId();
@@ -627,9 +738,70 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         privateSideChats: {},
       };
       await saveBroadcasts([broadcast, ...broadcasts]);
+      const group = checkInGroups.find((g) => g.id === groupId);
+      if (group) {
+        simulateMemberReplies(id, group.memberIds.filter((m) => m !== myId));
+      }
       return id;
     },
-    [broadcasts, myId]
+    [broadcasts, myId, checkInGroups, simulateMemberReplies]
+  );
+
+  const replyToReceivedBroadcast = useCallback(
+    async (broadcastId: string, text: string) => {
+      setBroadcasts((prev) => {
+        const updated = prev.map((b) =>
+          b.id === broadcastId ? { ...b, myReply: text } : b
+        );
+        AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify(updated));
+        return updated;
+      });
+    },
+    []
+  );
+
+  const markBroadcastRepliesRead = useCallback(
+    async (broadcastId: string) => {
+      setBroadcasts((prev) => {
+        const updated = prev.map((b) => {
+          if (b.id !== broadcastId) return b;
+          const newReplies: Record<string, CheckInReply[]> = {};
+          for (const [k, v] of Object.entries(b.replies)) {
+            newReplies[k] = v.map((r) => ({ ...r, read: true }));
+          }
+          return { ...b, replies: newReplies };
+        });
+        AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify(updated));
+        return updated;
+      });
+    },
+    []
+  );
+
+  const getReceivedBroadcasts = useCallback(() => {
+    return broadcasts
+      .filter((b) => b.senderId !== myId)
+      .map((b) => {
+        const group = checkInGroups.find((g) => g.id === b.groupId);
+        const sender = SAMPLE_CONTACTS.find((c) => c.id === b.senderId);
+        return { broadcast: b, group: group!, sender };
+      })
+      .filter((item) => item.group !== undefined)
+      .sort((a, b) => b.broadcast.timestamp - a.broadcast.timestamp);
+  }, [broadcasts, checkInGroups, myId]);
+
+  const getBroadcastReplyStats = useCallback(
+    (broadcastId: string) => {
+      const broadcast = broadcasts.find((b) => b.id === broadcastId);
+      if (!broadcast) return { total: 0, replied: 0, pending: [] };
+      const group = checkInGroups.find((g) => g.id === broadcast.groupId);
+      if (!group) return { total: 0, replied: 0, pending: [] };
+      const members = group.memberIds.filter((m) => m !== myId);
+      const replied = members.filter((m) => (broadcast.replies[m]?.length ?? 0) > 0);
+      const pending = members.filter((m) => !broadcast.replies[m]?.length);
+      return { total: members.length, replied: replied.length, pending };
+    },
+    [broadcasts, checkInGroups, myId]
   );
 
   const replyToBroadcast = useCallback(
@@ -867,7 +1039,11 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       createCheckInGroup,
       sendBroadcast,
       replyToBroadcast,
+      replyToReceivedBroadcast,
       sendPrivateSideChat,
+      markBroadcastRepliesRead,
+      getReceivedBroadcasts,
+      getBroadcastReplyStats,
       addReaction,
       markChatRead,
       deleteChat,
@@ -903,7 +1079,11 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       createCheckInGroup,
       sendBroadcast,
       replyToBroadcast,
+      replyToReceivedBroadcast,
       sendPrivateSideChat,
+      markBroadcastRepliesRead,
+      getReceivedBroadcasts,
+      getBroadcastReplyStats,
       addReaction,
       markChatRead,
       deleteChat,
