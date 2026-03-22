@@ -297,46 +297,36 @@ function MusicReelBar({ music }: { music: MusicAttachment }) {
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const clipDuration = (music.clipEnd ?? music.duration) - (music.clipStart ?? 0);
 
-  const startSpin = () => {
-    spinLoopRef.current = Animated.loop(
-      Animated.timing(spinAnim, { toValue: 1, duration: 2000, useNativeDriver: true })
-    );
-    spinLoopRef.current.start();
-  };
-
-  const stopSpin = () => {
-    spinLoopRef.current?.stop();
-    Animated.timing(spinAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
-  };
-
-  const startPlaying = () => {
-    setPlaying(true);
-    startSpin();
-    if (music.playMode !== "loop") {
-      stopRef.current = setTimeout(() => {
-        setPlaying(false);
-        stopSpin();
-      }, clipDuration * 1000);
-    }
-  };
-
-  const stopPlaying = () => {
-    if (stopRef.current) clearTimeout(stopRef.current);
-    setPlaying(false);
-    stopSpin();
-  };
-
-  const toggle = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (playing) stopPlaying(); else startPlaying();
-  };
+  const clipDurationMs = clipDuration * 1000;
+  const playModeRef = useRef(music.playMode);
+  const delaySecondsRef = useRef(music.delaySeconds ?? 0);
+  playModeRef.current = music.playMode;
+  delaySecondsRef.current = music.delaySeconds ?? 0;
 
   useEffect(() => {
-    if (music.playMode === "delayed" && music.delaySeconds) {
-      delayRef.current = setTimeout(startPlaying, music.delaySeconds * 1000);
-    } else if (music.playMode === "once" || music.playMode === "loop") {
-      startPlaying();
+    const doPlay = () => {
+      setPlaying(true);
+      spinLoopRef.current?.stop();
+      spinLoopRef.current = Animated.loop(
+        Animated.timing(spinAnim, { toValue: 1, duration: 2000, useNativeDriver: true })
+      );
+      spinLoopRef.current.start();
+
+      if (playModeRef.current !== "loop") {
+        stopRef.current = setTimeout(() => {
+          setPlaying(false);
+          spinLoopRef.current?.stop();
+          Animated.timing(spinAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+        }, clipDurationMs);
+      }
+    };
+
+    if (playModeRef.current === "delayed" && delaySecondsRef.current > 0) {
+      delayRef.current = setTimeout(doPlay, delaySecondsRef.current * 1000);
+    } else {
+      doPlay();
     }
+
     return () => {
       if (stopRef.current) clearTimeout(stopRef.current);
       if (delayRef.current) clearTimeout(delayRef.current);
@@ -360,7 +350,7 @@ function MusicReelBar({ music }: { music: MusicAttachment }) {
   };
 
   return (
-    <Pressable onPress={toggle} style={styles.reelBar} hitSlop={6}>
+    <View style={styles.reelBar}>
       <Animated.View style={{ transform: [{ rotate: spin }] }}>
         <View style={[styles.reelDisc, { backgroundColor: "rgba(255,255,255,0.22)" }]}>
           <Ionicons name="musical-note" size={11} color="#fff" />
@@ -385,7 +375,7 @@ function MusicReelBar({ music }: { music: MusicAttachment }) {
           ))}
         </View>
       )}
-    </Pressable>
+    </View>
   );
 }
 
