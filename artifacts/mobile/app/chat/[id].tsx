@@ -1,4 +1,5 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef } from "react";
@@ -16,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging, type Message } from "@/context/MessagingContext";
 import { useCall } from "@/context/CallContext";
+import { useSkin } from "@/context/SkinContext";
 import { Avatar } from "@/components/Avatar";
 import { ChatInput } from "@/components/ChatInput";
 import { MessageBubble } from "@/components/MessageBubble";
@@ -27,6 +29,8 @@ export default function ChatScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
+
+  const { activeSkin } = useSkin();
 
   const {
     chats,
@@ -116,6 +120,7 @@ export default function ChatScreen() {
         showSender={showSender}
         senderName={sender?.name}
         myId={myId}
+        activeSkin={activeSkin}
         onReact={(emoji) => handleReact(item.id, emoji)}
         onVoiceCall={!isMine ? () => handleCallFromMessage(item.senderId, "voice") : undefined}
         onVideoCall={!isMine ? () => handleCallFromMessage(item.senderId, "video") : undefined}
@@ -208,6 +213,13 @@ export default function ChatScreen() {
         behavior="padding"
         keyboardVerticalOffset={0}
       >
+        <LinearGradient
+          colors={activeSkin.chatBackground as [string, string]}
+          style={StyleSheet.absoluteFill}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          pointerEvents="none"
+        />
         <FlatList
           ref={flatListRef}
           data={messages}

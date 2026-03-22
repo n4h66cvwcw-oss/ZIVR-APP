@@ -17,6 +17,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MessagingProvider } from "@/context/MessagingContext";
 import { CallProvider } from "@/context/CallContext";
 import { ProfileProvider } from "@/context/ProfileContext";
+import { SkinProvider } from "@/context/SkinContext";
 import { IncomingCallModal } from "@/components/IncomingCallModal";
 import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 
@@ -98,6 +99,14 @@ function RootLayoutNav() {
             animation: "slide_from_bottom",
           }}
         />
+        <Stack.Screen
+          name="skin-store"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+            animation: "slide_from_bottom",
+          }}
+        />
       </Stack>
       <IncomingCallModal />
     </>
@@ -125,17 +134,19 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <ProfileProvider>
-            <MessagingProvider>
-              <CallProvider>
-                <GestureHandlerRootView style={{ flex: 1 }}>
-                  <KeyboardProvider>
-                    <ScreenCaptureGuard>
-                      <RootLayoutNav />
-                    </ScreenCaptureGuard>
-                  </KeyboardProvider>
-                </GestureHandlerRootView>
-              </CallProvider>
-            </MessagingProvider>
+            <SkinProvider>
+              <MessagingProvider>
+                <CallProvider>
+                  <GestureHandlerRootView style={{ flex: 1 }}>
+                    <KeyboardProvider>
+                      <ScreenCaptureGuard>
+                        <RootLayoutNav />
+                      </ScreenCaptureGuard>
+                    </KeyboardProvider>
+                  </GestureHandlerRootView>
+                </CallProvider>
+              </MessagingProvider>
+            </SkinProvider>
           </ProfileProvider>
         </QueryClientProvider>
       </ErrorBoundary>

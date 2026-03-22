@@ -182,6 +182,13 @@ export default function ChatsScreen() {
               <Ionicons name="funnel-outline" size={18} color={colors.primary} />
             </Pressable>
             <Pressable
+              onPress={() => router.push("/skin-store")}
+              style={[styles.headerBtn, { backgroundColor: colors.surfaceSecondary }]}
+              hitSlop={8}
+            >
+              <Ionicons name="color-palette-outline" size={20} color={colors.primary} />
+            </Pressable>
+            <Pressable
               onPress={() => router.push("/new-group")}
               style={[styles.headerBtn, { backgroundColor: colors.surfaceSecondary }]}
             >

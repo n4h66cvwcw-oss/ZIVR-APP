@@ -1,6 +1,7 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { Image as ExpoImage } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -18,6 +19,7 @@ import {
 } from "react-native";
 import Colors from "@/constants/colors";
 import type { AudioAttachment, ImageAttachment, Message, MessageFormatting } from "@/context/MessagingContext";
+import type { SkinTheme } from "@/context/SkinContext";
 
 interface MessageBubbleProps {
   message: Message;
@@ -30,6 +32,7 @@ interface MessageBubbleProps {
   onVideoCall?: () => void;
   onImageViewed?: (messageId: string) => void;
   myId?: string;
+  activeSkin?: SkinTheme;
 }
 
 const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🎉", "👍"];
@@ -530,6 +533,7 @@ export function MessageBubble({
   onVideoCall,
   onImageViewed,
   myId,
+  activeSkin,
 }: MessageBubbleProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -598,10 +602,14 @@ export function MessageBubble({
 
   const fmt = message.formatting;
   const hasGifBg = !!fmt?.backgroundGifUrl;
-  const bubbleBg = hasGifBg ? "transparent" : (isMine ? colors.messageSent : colors.messageReceived);
-  const defaultTextColor = isMine ? colors.messageTextSent : colors.messageTextReceived;
+  const skinSentText = activeSkin?.textOnSent ?? colors.messageTextSent;
+  const skinReceivedText = activeSkin?.textOnReceived ?? colors.messageTextReceived;
+  const skinReceivedBg = activeSkin?.receivedBubble ?? colors.messageReceived;
+  const bubbleBg = hasGifBg ? "transparent" : (isMine ? colors.messageSent : skinReceivedBg);
+  const defaultTextColor = isMine ? skinSentText : skinReceivedText;
   const textColor = fmt?.textColor || (hasGifBg ? "#FFFFFF" : defaultTextColor);
   const mutedText = hasGifBg ? "rgba(255,255,255,0.75)" : (isMine ? "rgba(255,255,255,0.7)" : colors.textSecondary);
+  const sentBubbleColors = activeSkin ? activeSkin.sentBubble : null;
 
   const FONT_SIZE_VALUES: Record<string, number> = { sm: 11, md: 16, lg: 20, xl: 26 };
   const resolvedFontSize = fmt?.fontSize ? FONT_SIZE_VALUES[fmt.fontSize] : 16;
@@ -634,6 +642,51 @@ export function MessageBubble({
         onLongPress={handleLongPress}
         delayLongPress={300}
       >
+        {isMine && sentBubbleColors && !hasGifBg ? (
+          <LinearGradient
+            colors={sentBubbleColors as [string, string]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.bubble, styles.myBubble]}
+          >
+            {message.imageAttachment && (
+              <SecurePhotoMessage
+                image={message.imageAttachment}
+                isMine={isMine}
+                messageId={message.id}
+                myId={myId}
+                onViewed={onImageViewed}
+                colors={colors}
+              />
+            )}
+            {message.audioAttachment && (
+              <AudioPlayer audio={message.audioAttachment} isMine={isMine} colors={colors} />
+            )}
+            {message.text ? (
+              <Text
+                style={[
+                  styles.messageText,
+                  { color: activeSkin?.textOnSent ?? colors.messageTextSent, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily },
+                  fmt?.italic && { fontStyle: "italic" },
+                  fmt?.underline && { textDecorationLine: "underline" },
+                ]}
+              >
+                {message.text}
+              </Text>
+            ) : null}
+            <View style={styles.metaRow}>
+              <View style={styles.metaRight}>
+                <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
+                <Ionicons
+                  name="checkmark-done"
+                  size={14}
+                  color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"}
+                  style={{ marginLeft: 4 }}
+                />
+              </View>
+            </View>
+          </LinearGradient>
+        ) : (
         <View
           style={[
             styles.bubble,
@@ -709,6 +762,7 @@ export function MessageBubble({
             )}
           </View>
         </View>
+        )}
 
         {totalReactions.length > 0 && (
           <View
