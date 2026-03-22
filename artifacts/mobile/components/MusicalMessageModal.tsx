@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import Colors from "@/constants/colors";
 import type { MusicAttachment, MusicPlayMode } from "@/context/MessagingContext";
+import { useRecentClips } from "@/hooks/useRecentClips";
 
 export const MUSIC_LIBRARY: Omit<MusicAttachment, "clipStart" | "clipEnd" | "playMode" | "delaySeconds">[] = [
   { id: "m1",  title: "On Fire",       artist: "VibeBeats",    genre: "Hip-Hop",  mood: "Energy",    colors: ["#FF6B35", "#FF3B30"], emoji: "🔥", duration: 185 },
@@ -63,6 +64,7 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
+  const { recentClips, saveClip, removeClip } = useRecentClips();
 
   const [step, setStep] = useState<"pick" | "configure">("pick");
   const [activeMood, setActiveMood] = useState("All");
@@ -94,14 +96,35 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
   const handleAttach = () => {
     if (!selectedTrack) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    onSelect({
+    const clip: MusicAttachment = {
       ...selectedTrack,
       clipStart,
       clipEnd,
       playMode,
       delaySeconds: playMode === "delayed" ? delaySeconds : undefined,
-    });
+    };
+    saveClip(clip);
+    onSelect(clip);
     resetAndClose();
+  };
+
+  const handleQuickAttach = (clip: MusicAttachment) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    saveClip(clip);
+    onSelect(clip);
+    resetAndClose();
+  };
+
+  const handleQuickConfigure = (clip: MusicAttachment) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const base = MUSIC_LIBRARY.find((t) => t.id === clip.id);
+    if (!base) return;
+    setSelectedTrack(base);
+    setClipStart(clip.clipStart ?? 0);
+    setClipLength((clip.clipEnd ?? clip.duration) - (clip.clipStart ?? 0));
+    setPlayMode(clip.playMode);
+    setDelaySeconds(clip.delaySeconds ?? 3);
+    setStep("configure");
   };
 
   const resetAndClose = () => {
@@ -168,6 +191,54 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
 
         {step === "pick" ? (
           <>
+            {recentClips.length > 0 && (
+              <View style={styles.quickAddSection}>
+                <View style={styles.quickAddHeader}>
+                  <Ionicons name="flash" size={14} color="#FF9F0A" />
+                  <Text style={[styles.quickAddTitle, { color: colors.text }]}>Quick Add</Text>
+                  <Text style={[styles.quickAddSub, { color: colors.textSecondary }]}>Tap to reuse · Hold to remove</Text>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickAddRow}>
+                  {recentClips.map((clip, i) => {
+                    const clipLen = Math.round((clip.clipEnd ?? clip.duration) - (clip.clipStart ?? 0));
+                    const modeLabels: Record<string, string> = { once: "1x", loop: "∞", delayed: `+${clip.delaySeconds ?? 0}s` };
+                    return (
+                      <Pressable
+                        key={`${clip.id}-${i}`}
+                        onPress={() => handleQuickAttach(clip)}
+                        onLongPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); removeClip(clip); }}
+                        delayLongPress={500}
+                        style={styles.quickCard}
+                      >
+                        <LinearGradient
+                          colors={clip.colors as [string, string]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={styles.quickCardGradient}
+                        >
+                          <View style={styles.quickCardTop}>
+                            <Text style={styles.quickCardEmoji}>{clip.emoji}</Text>
+                            <View style={styles.quickModeBadge}>
+                              <Text style={styles.quickModeBadgeText}>{modeLabels[clip.playMode]}</Text>
+                            </View>
+                          </View>
+                          <Text style={styles.quickCardTitle} numberOfLines={1}>{clip.title}</Text>
+                          <Text style={styles.quickCardClip}>{clipLen}s clip</Text>
+                          <Pressable
+                            onPress={() => handleQuickConfigure(clip)}
+                            hitSlop={6}
+                            style={styles.quickEditBtn}
+                          >
+                            <Ionicons name="create-outline" size={11} color="rgba(255,255,255,0.75)" />
+                          </Pressable>
+                        </LinearGradient>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.moodBar} contentContainerStyle={styles.moodBarContent}>
               {MOODS.map((mood) => (
                 <Pressable
@@ -378,7 +449,7 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
               )}
               {playMode === "once" && (
                 <Text style={[styles.playModeHint, { color: colors.textSecondary }]}>
-                  Clip plays once when the recipient taps play
+                  Clip plays once automatically when the message is opened
                 </Text>
               )}
             </View>
@@ -514,4 +585,28 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   attachBtnText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  quickAddSection: { paddingTop: 12, paddingBottom: 4 },
+  quickAddHeader: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 16, marginBottom: 8 },
+  quickAddTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  quickAddSub: { fontSize: 11, fontFamily: "Inter_400Regular", marginLeft: 4 },
+  quickAddRow: { paddingHorizontal: 14, gap: 10 },
+  quickCard: { width: 110, borderRadius: 14, overflow: "hidden" },
+  quickCardGradient: { padding: 11, minHeight: 110, justifyContent: "space-between" },
+  quickCardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  quickCardEmoji: { fontSize: 22 },
+  quickModeBadge: {
+    backgroundColor: "rgba(0,0,0,0.28)",
+    borderRadius: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  quickModeBadgeText: { color: "#fff", fontSize: 10, fontFamily: "Inter_700Bold" },
+  quickCardTitle: { color: "#fff", fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  quickCardClip: { color: "rgba(255,255,255,0.72)", fontSize: 10, fontFamily: "Inter_400Regular" },
+  quickEditBtn: {
+    alignSelf: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.2)",
+    borderRadius: 6,
+    padding: 4,
+  },
 });
