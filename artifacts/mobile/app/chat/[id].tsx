@@ -83,6 +83,16 @@ export default function ChatScreen() {
     );
   }
 
+  const handleCallFromMessage = useCallback(
+    (senderId: string, type: "voice" | "video") => {
+      const contact = getContactById(senderId);
+      const callName = contact?.name ?? senderId;
+      startCall(senderId, callName, type);
+      router.push({ pathname: "/call/[id]", params: { id: senderId, name: callName, type } });
+    },
+    [getContactById, startCall]
+  );
+
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isMine = item.senderId === myId;
     const prevMsg = messages[index - 1];
@@ -97,6 +107,8 @@ export default function ChatScreen() {
         showSender={showSender}
         senderName={sender?.name}
         onReact={(emoji) => handleReact(item.id, emoji)}
+        onVoiceCall={!isMine ? () => handleCallFromMessage(item.senderId, "voice") : undefined}
+        onVideoCall={!isMine ? () => handleCallFromMessage(item.senderId, "video") : undefined}
       />
     );
   };

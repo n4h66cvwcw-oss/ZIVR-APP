@@ -1,5 +1,6 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
+import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
@@ -20,6 +21,8 @@ interface MessageBubbleProps {
   senderName?: string;
   onLongPress?: () => void;
   onReact?: (emoji: string) => void;
+  onVoiceCall?: () => void;
+  onVideoCall?: () => void;
 }
 
 const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🎉", "👍"];
@@ -80,12 +83,8 @@ function AudioPlayer({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  const textColor = isMine
-    ? colors.messageTextSent
-    : colors.messageTextReceived;
-  const mutedColor = isMine
-    ? "rgba(255,255,255,0.7)"
-    : colors.textSecondary;
+  const textColor = isMine ? colors.messageTextSent : colors.messageTextReceived;
+  const mutedColor = isMine ? "rgba(255,255,255,0.7)" : colors.textSecondary;
   const bgColor = isMine ? "rgba(255,255,255,0.2)" : colors.surfaceSecondary;
   const accentColor = isMine ? "#FFFFFF" : colors.audioAccent;
   const progress = duration > 0 ? position / duration : 0;
@@ -142,6 +141,106 @@ function AudioPlayer({
   );
 }
 
+function CallActionBar({
+  visible,
+  isMine,
+  onVoiceCall,
+  onVideoCall,
+  colors,
+}: {
+  visible: boolean;
+  isMine: boolean;
+  onVoiceCall?: () => void;
+  onVideoCall?: () => void;
+  colors: typeof Colors.light;
+}) {
+  const slideAnim = useRef(new Animated.Value(0)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(slideAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 180,
+          friction: 12,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 0,
+          duration: 120,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [visible]);
+
+  const translateY = slideAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-8, 0],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        styles.callBar,
+        isMine ? styles.callBarRight : styles.callBarLeft,
+        {
+          opacity: opacityAnim,
+          transform: [{ translateY }],
+          backgroundColor: colors.surface,
+          borderColor: colors.border,
+          shadowColor: colors.shadow,
+        },
+      ]}
+      pointerEvents={visible ? "auto" : "none"}
+    >
+      <Pressable
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          onVoiceCall?.();
+        }}
+        style={({ pressed }) => [
+          styles.callBarBtn,
+          { backgroundColor: "#30D158" + (pressed ? "40" : "18") },
+        ]}
+      >
+        <Ionicons name="call" size={15} color="#30D158" />
+        <Text style={[styles.callBarBtnText, { color: "#30D158" }]}>Voice</Text>
+      </Pressable>
+
+      <View style={[styles.callBarDivider, { backgroundColor: colors.border }]} />
+
+      <Pressable
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          onVideoCall?.();
+        }}
+        style={({ pressed }) => [
+          styles.callBarBtn,
+          { backgroundColor: colors.primary + (pressed ? "40" : "18") },
+        ]}
+      >
+        <Ionicons name="videocam" size={15} color={colors.primary} />
+        <Text style={[styles.callBarBtnText, { color: colors.primary }]}>Video</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
 export function MessageBubble({
   message,
   isMine,
@@ -149,14 +248,19 @@ export function MessageBubble({
   senderName,
   onLongPress,
   onReact,
+  onVoiceCall,
+  onVideoCall,
 }: MessageBubbleProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
   const [showReactions, setShowReactions] = useState(false);
+  const [showCallBar, setShowCallBar] = useState(false);
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const bubbleScale = useRef(new Animated.Value(0.9)).current;
   const bubbleOpacity = useRef(new Animated.Value(0)).current;
+
+  const hasCallHandlers = !isMine && (onVoiceCall || onVideoCall);
 
   useEffect(() => {
     Animated.parallel([
@@ -174,8 +278,15 @@ export function MessageBubble({
     ]).start();
   }, []);
 
+  const handlePress = useCallback(() => {
+    if (!hasCallHandlers) return;
+    setShowCallBar((v) => !v);
+    if (showReactions) setShowReactions(false);
+  }, [hasCallHandlers, showReactions]);
+
   const handleLongPress = useCallback(() => {
     setShowReactions(true);
+    setShowCallBar(false);
     Animated.spring(scaleAnim, {
       toValue: 1,
       useNativeDriver: true,
@@ -193,6 +304,12 @@ export function MessageBubble({
     },
     [onReact, scaleAnim]
   );
+
+  const handleDismiss = useCallback(() => {
+    setShowCallBar(false);
+    setShowReactions(false);
+    scaleAnim.setValue(0);
+  }, [scaleAnim]);
 
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -215,14 +332,8 @@ export function MessageBubble({
         { opacity: bubbleOpacity, transform: [{ scale: bubbleScale }] },
       ]}
     >
-      {showReactions && (
-        <Pressable
-          style={StyleSheet.absoluteFill}
-          onPress={() => {
-            setShowReactions(false);
-            scaleAnim.setValue(0);
-          }}
-        />
+      {(showReactions || showCallBar) && (
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleDismiss} />
       )}
 
       {showSender && senderName && !isMine && (
@@ -231,7 +342,11 @@ export function MessageBubble({
         </Text>
       )}
 
-      <Pressable onLongPress={handleLongPress} delayLongPress={300}>
+      <Pressable
+        onPress={handlePress}
+        onLongPress={handleLongPress}
+        delayLongPress={300}
+      >
         <View
           style={[
             styles.bubble,
@@ -251,17 +366,30 @@ export function MessageBubble({
               {message.text}
             </Text>
           ) : null}
-          <View style={isMine ? styles.metaRight : styles.metaLeft}>
-            <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
-            {isMine && (
-              <Ionicons
-                name="checkmark-done"
-                size={14}
-                color={
-                  message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"
-                }
-                style={{ marginLeft: 4 }}
-              />
+          <View style={styles.metaRow}>
+            <View style={isMine ? styles.metaRight : styles.metaLeft}>
+              <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
+              {isMine && (
+                <Ionicons
+                  name="checkmark-done"
+                  size={14}
+                  color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"}
+                  style={{ marginLeft: 4 }}
+                />
+              )}
+            </View>
+            {hasCallHandlers && (
+              <Pressable
+                onPress={handlePress}
+                hitSlop={10}
+                style={styles.callIndicator}
+              >
+                <Ionicons
+                  name="call-outline"
+                  size={12}
+                  color={showCallBar ? colors.primary : mutedText}
+                />
+              </Pressable>
             )}
           </View>
         </View>
@@ -293,6 +421,22 @@ export function MessageBubble({
           </View>
         )}
       </Pressable>
+
+      {hasCallHandlers && (
+        <CallActionBar
+          visible={showCallBar}
+          isMine={isMine}
+          onVoiceCall={() => {
+            setShowCallBar(false);
+            onVoiceCall?.();
+          }}
+          onVideoCall={() => {
+            setShowCallBar(false);
+            onVideoCall?.();
+          }}
+          colors={colors}
+        />
+      )}
 
       {showReactions && (
         <Animated.View
@@ -362,21 +506,64 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     lineHeight: 22,
   },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+    gap: 8,
+  },
   metaRight: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    marginTop: 4,
+    flex: 1,
   },
   metaLeft: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-start",
-    marginTop: 4,
+    flex: 1,
+  },
+  callIndicator: {
+    opacity: 0.7,
   },
   timestamp: {
     fontSize: 11,
     fontFamily: "Inter_400Regular",
+  },
+  callBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginTop: 6,
+    overflow: "hidden",
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
+  callBarLeft: {
+    alignSelf: "flex-start",
+  },
+  callBarRight: {
+    alignSelf: "flex-end",
+  },
+  callBarBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  callBarBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  callBarDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 28,
   },
   audioPlayer: {
     flexDirection: "row",
