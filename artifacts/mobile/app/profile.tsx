@@ -26,6 +26,7 @@ import {
   useProfile,
   type CaptureGuardType,
 } from "@/context/ProfileContext";
+import { ContactCardWidget } from "@/components/ContactCardWidget";
 
 const GUARD_TYPES: { type: CaptureGuardType; icon: string; label: string }[] = [
   { type: "ai_gradient", icon: "color-palette",    label: "AI Background" },
@@ -137,6 +138,24 @@ export default function ProfileScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}>
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
+            SHARE MY CONTACT
+          </Text>
+          <View style={{ paddingVertical: 12, paddingHorizontal: 4 }}>
+            <ContactCardWidget
+              data={{
+                name: profile.displayName || "Me",
+                phone: profile.phone,
+                username: profile.username,
+                avatarUri: profile.avatar,
+                statusMessage: profile.statusMessage,
+              }}
+              compact={false}
+            />
+          </View>
+        </View>
+
         <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
             MY PROFILE

@@ -50,6 +50,8 @@ export const AI_GRADIENTS: AiGradientPreset[] = [
 
 export type ProfileSettings = {
   displayName: string;
+  phone?: string;
+  username?: string;
   statusMessage: string;
   avatar?: string;
   captureGuardEnabled: boolean;
@@ -63,6 +65,8 @@ export type ProfileSettings = {
 
 const DEFAULT_SETTINGS: ProfileSettings = {
   displayName: "",
+  phone: "",
+  username: "",
   statusMessage: "Hey there! I'm on VibeMsg",
   captureGuardEnabled: true,
   captureGuardType: "ai_gradient",
