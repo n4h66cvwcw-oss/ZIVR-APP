@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging } from "@/context/MessagingContext";
 import { PasscodeModal } from "@/components/PasscodeModal";
+import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
 
 export default function ChatSettingsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -40,6 +41,8 @@ export default function ChatSettingsScreen() {
     deleteChat,
     pinChat,
     muteChat,
+    setNotificationSound,
+    setReadReceiptsEnabled,
   } = useMessaging();
 
   const chat = chats.find((c) => c.id === id);
@@ -53,6 +56,7 @@ export default function ChatSettingsScreen() {
   const [hint, setHint] = useState(chat?.passcodeHint || "");
   const [passcodeStep, setPasscodeStep] = useState<"enter" | "repeat">("enter");
   const [exporting, setExporting] = useState(false);
+  const [showSoundPicker, setShowSoundPicker] = useState(false);
 
   if (!chat) return null;
 
@@ -272,12 +276,44 @@ export default function ChatSettingsScreen() {
           onPress={() => pinChat(id)}
         />
 
+        <SectionHeader title="Notifications" colors={colors} />
+
         <SettingRow
-          icon={chat.isMuted ? "volume-high-outline" : "volume-mute-outline"}
-          label={chat.isMuted ? "Unmute Notifications" : "Mute Notifications"}
-          subtitle={chat.isMuted ? "Re-enable notifications" : "Silence notifications"}
+          icon={chat.isMuted ? "notifications-off-outline" : "notifications-outline"}
+          label={chat.isMuted ? "Unmute Chat" : "Mute Chat"}
+          subtitle={chat.isMuted ? "Notifications are silenced" : "Receive alerts for new messages"}
           colors={colors}
-          onPress={() => muteChat(id)}
+          right={
+            <Switch
+              value={!chat.isMuted}
+              onValueChange={() => { Haptics.selectionAsync(); muteChat(id); }}
+              trackColor={{ false: colors.border, true: colors.primary + "80" }}
+              thumbColor={!chat.isMuted ? colors.primary : colors.textTertiary}
+            />
+          }
+        />
+
+        <SettingRow
+          icon="musical-note-outline"
+          label="Notification Sound"
+          subtitle={getSoundLabel(chat.notificationSound ?? "default")}
+          colors={colors}
+          onPress={() => setShowSoundPicker(true)}
+        />
+
+        <SettingRow
+          icon="checkmark-done-outline"
+          label="Read Receipts"
+          subtitle={chat.readReceiptsEnabled !== false ? "Others can see when you've read their messages" : "Read receipts are hidden"}
+          colors={colors}
+          right={
+            <Switch
+              value={chat.readReceiptsEnabled !== false}
+              onValueChange={(v) => { Haptics.selectionAsync(); setReadReceiptsEnabled(id, v); }}
+              trackColor={{ false: colors.border, true: colors.primary + "80" }}
+              thumbColor={chat.readReceiptsEnabled !== false ? colors.primary : colors.textTertiary}
+            />
+          }
         />
 
         <SectionHeader title="Danger Zone" colors={colors} />
@@ -291,6 +327,41 @@ export default function ChatSettingsScreen() {
           danger
         />
       </ScrollView>
+
+      <Modal visible={showSoundPicker} animationType="slide" presentationStyle="pageSheet" transparent>
+        <Pressable style={styles.soundPickerOverlay} onPress={() => setShowSoundPicker(false)}>
+          <Pressable style={[styles.soundPickerSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.soundPickerHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.soundPickerTitle, { color: colors.text }]}>Notification Sound</Text>
+            {NOTIFICATION_SOUNDS.map((sound) => {
+              const selected = (chat.notificationSound ?? "default") === sound.id;
+              return (
+                <Pressable
+                  key={sound.id}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setNotificationSound(id, sound.id);
+                    setShowSoundPicker(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.soundRow,
+                    { backgroundColor: selected ? colors.primary + "14" : "transparent", opacity: pressed ? 0.7 : 1 },
+                  ]}
+                >
+                  <View style={[styles.soundIcon, { backgroundColor: selected ? colors.primary + "20" : colors.surfaceSecondary }]}>
+                    <Ionicons name={sound.icon as any} size={18} color={selected ? colors.primary : colors.textSecondary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.soundLabel, { color: selected ? colors.primary : colors.text }]}>{sound.label}</Text>
+                    <Text style={[styles.soundDesc, { color: colors.textSecondary }]}>{sound.description}</Text>
+                  </View>
+                  {selected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={showSetPasscode} animationType="slide" presentationStyle="pageSheet">
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
@@ -532,4 +603,47 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingHorizontal: 20,
   },
+  soundPickerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  soundPickerSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 12,
+    gap: 2,
+  },
+  soundPickerHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  soundPickerTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  soundRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  soundIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  soundLabel: { fontSize: 15, fontFamily: "Inter_500Medium" },
+  soundDesc: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
 });

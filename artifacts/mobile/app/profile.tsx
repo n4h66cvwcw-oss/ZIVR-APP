@@ -9,6 +9,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -26,7 +27,9 @@ import {
   useProfile,
   type CaptureGuardType,
 } from "@/context/ProfileContext";
+import { useServer } from "@/context/ServerContext";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
+import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
 
 const GUARD_TYPES: { type: CaptureGuardType; icon: string; label: string }[] = [
   { type: "ai_gradient", icon: "color-palette",    label: "AI Background" },
@@ -41,9 +44,11 @@ export default function ProfileScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { profile, updateProfile } = useProfile();
+  const { serverUserId, updateServerProfile } = useServer();
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [status, setStatus] = useState(profile.statusMessage);
   const [customText, setCustomText] = useState(profile.captureGuardText);
+  const [showDefaultSoundPicker, setShowDefaultSoundPicker] = useState(false);
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
 
   const selectedGradient =
@@ -51,6 +56,13 @@ export default function ProfileScreen() {
 
   const handleSaveProfile = () => {
     updateProfile({ displayName, statusMessage: status });
+    if (serverUserId) {
+      updateServerProfile(serverUserId, {
+        displayName,
+        statusMessage: status,
+        avatarUri: profile.avatar,
+      });
+    }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
@@ -324,7 +336,64 @@ export default function ProfileScreen() {
             />
           </View>
         )}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
+            NOTIFICATIONS
+          </Text>
+          <Pressable
+            onPress={() => setShowDefaultSoundPicker(true)}
+            style={({ pressed }) => [styles.field, { borderBottomColor: "transparent", opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary, width: "auto", flex: 1 }]}>
+              Default Notification Sound
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={[styles.fieldInput, { flex: 0, color: colors.primary }]}>
+                {getSoundLabel(profile.defaultNotificationSound ?? "default")}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+            </View>
+          </Pressable>
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            Applied to chats where no per-chat sound is set.
+          </Text>
+        </View>
       </ScrollView>
+
+      <Modal visible={showDefaultSoundPicker} animationType="slide" presentationStyle="pageSheet" transparent>
+        <Pressable style={styles.soundPickerOverlay} onPress={() => setShowDefaultSoundPicker(false)}>
+          <Pressable style={[styles.soundPickerSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.soundPickerHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.soundPickerTitle, { color: colors.text }]}>Default Notification Sound</Text>
+            {NOTIFICATION_SOUNDS.map((sound) => {
+              const selected = (profile.defaultNotificationSound ?? "default") === sound.id;
+              return (
+                <Pressable
+                  key={sound.id}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    updateProfile({ defaultNotificationSound: sound.id });
+                    setShowDefaultSoundPicker(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.soundRow,
+                    { backgroundColor: selected ? colors.primary + "14" : "transparent", opacity: pressed ? 0.7 : 1 },
+                  ]}
+                >
+                  <View style={[styles.soundIconBox, { backgroundColor: selected ? colors.primary + "20" : colors.surfaceSecondary }]}>
+                    <Ionicons name={sound.icon as any} size={18} color={selected ? colors.primary : colors.textSecondary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.soundLabel, { color: selected ? colors.primary : colors.text }]}>{sound.label}</Text>
+                    <Text style={[styles.soundDesc, { color: colors.textSecondary }]}>{sound.description}</Text>
+                  </View>
+                  {selected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -474,4 +543,47 @@ const styles = StyleSheet.create({
     top: 6,
     right: 6,
   },
+  soundPickerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  soundPickerSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    paddingTop: 12,
+    gap: 2,
+  },
+  soundPickerHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  soundPickerTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  soundRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  soundIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  soundLabel: { fontSize: 15, fontFamily: "Inter_500Medium" },
+  soundDesc: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
 });

@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { scheduleLocalNotification } from "@/utils/notifications";
 import React, {
   createContext,
   useCallback,
@@ -105,6 +106,8 @@ export type Chat = {
   recoveryEmail?: string;
   passcodeHint?: string;
   isServerChat?: boolean;
+  notificationSound?: string;
+  readReceiptsEnabled?: boolean;
 };
 
 export type CheckInGroup = {
@@ -303,6 +306,8 @@ interface MessagingContextValue {
   deleteMessage: (chatId: string, messageId: string) => Promise<void>;
   pinChat: (chatId: string) => Promise<void>;
   muteChat: (chatId: string) => Promise<void>;
+  setNotificationSound: (chatId: string, sound: string) => Promise<void>;
+  setReadReceiptsEnabled: (chatId: string, enabled: boolean) => Promise<void>;
   addMemberToCheckIn: (groupId: string, memberId: string) => Promise<void>;
   removeMemberFromCheckIn: (groupId: string, memberId: string) => Promise<void>;
   getContactById: (id: string) => Contact | undefined;
@@ -327,7 +332,7 @@ function genId(): string {
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const myId = "me";
-  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat } = useServer();
+  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt } = useServer();
   const [contacts, setContactsState] = useState<Contact[]>(SAMPLE_CONTACTS);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
@@ -368,6 +373,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         return updated;
       });
       setChats((prev) => {
+        const chat = prev.find((c) => c.id === chatId);
+        const sound = chat?.notificationSound ?? "default";
+        if (!chat?.isMuted && sound !== "none") {
+          const senderName = msg.senderName || "New message";
+          scheduleLocalNotification(senderName, msg.text, sound).catch(() => {});
+        }
         const updated = prev.map((c) =>
           c.id === chatId
             ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
@@ -379,6 +390,26 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     });
     return unsub;
   }, [onNewMessage]);
+
+  useEffect(() => {
+    const unsub = onReadReceipt((data) => {
+      setMessages((prev) => {
+        const chatMsgs = prev[data.chatId];
+        if (!chatMsgs) return prev;
+        const updated = {
+          ...prev,
+          [data.chatId]: chatMsgs.map((m) =>
+            m.senderId === "me" || m.senderId === serverUserId
+              ? { ...m, read: true, deliveredAt: data.readAt }
+              : m
+          ),
+        };
+        AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    });
+    return unsub;
+  }, [onReadReceipt, serverUserId]);
 
   async function loadData() {
     try {
@@ -1054,6 +1085,26 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [chats]
   );
 
+  const setNotificationSound = useCallback(
+    async (chatId: string, sound: string) => {
+      const updatedChats = chats.map((c) =>
+        c.id === chatId ? { ...c, notificationSound: sound } : c
+      );
+      await saveChats(updatedChats);
+    },
+    [chats]
+  );
+
+  const setReadReceiptsEnabled = useCallback(
+    async (chatId: string, enabled: boolean) => {
+      const updatedChats = chats.map((c) =>
+        c.id === chatId ? { ...c, readReceiptsEnabled: enabled } : c
+      );
+      await saveChats(updatedChats);
+    },
+    [chats]
+  );
+
   const setChatPasscode = useCallback(
     async (chatId: string, passcode: string, recoveryEmail?: string, hint?: string) => {
       const salt = genId();
@@ -1182,6 +1233,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       deleteMessage,
       pinChat,
       muteChat,
+      setNotificationSound,
+      setReadReceiptsEnabled,
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,
@@ -1224,6 +1277,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       deleteMessage,
       pinChat,
       muteChat,
+      setNotificationSound,
+      setReadReceiptsEnabled,
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,

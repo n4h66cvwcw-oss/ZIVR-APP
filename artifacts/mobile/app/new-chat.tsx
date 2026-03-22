@@ -307,7 +307,16 @@ export default function NewChatScreen() {
           <Ionicons name="close" size={24} color={colors.textSecondary} />
         </Pressable>
         <Text style={[styles.headerTitle, { color: colors.text }]}>New Message</Text>
-        <View style={{ width: 24 }} />
+        {tab === "find" && serverUserId ? (
+          <Pressable
+            onPress={() => router.push({ pathname: "/new-group", params: { serverGroup: "true" } })}
+            hitSlop={12}
+          >
+            <Ionicons name="people-outline" size={24} color={colors.primary} />
+          </Pressable>
+        ) : (
+          <View style={{ width: 24 }} />
+        )}
       </View>
 
       <View

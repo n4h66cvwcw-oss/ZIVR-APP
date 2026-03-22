@@ -41,11 +41,12 @@ export default function ChatScreen() {
     markImageViewed,
     addReaction,
     markChatRead,
+    muteChat,
     getContactById,
     contacts,
   } = useMessaging();
 
-  const { serverUserId, isConnected, onTyping, emitTyping } = useServer();
+  const { serverUserId, isConnected, onTyping, emitTyping, emitChatRead } = useServer();
   const [typingUsers, setTypingUsers] = useState<{ id: string; name: string }[]>([]);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
@@ -56,8 +57,13 @@ export default function ChatScreen() {
   const messages = getDecryptedMessages(id);
 
   useEffect(() => {
-    if (id) markChatRead(id);
-  }, [id, messages.length]);
+    if (id) {
+      markChatRead(id);
+      if (chat?.isServerChat && serverUserId) {
+        emitChatRead(id, serverUserId);
+      }
+    }
+  }, [id, messages.length, chat?.isServerChat, serverUserId]);
 
   useEffect(() => {
     if (!chat?.isServerChat) return;
@@ -233,6 +239,17 @@ export default function ChatScreen() {
           {chat.isEncrypted && (
             <Ionicons name="shield-checkmark" size={16} color={colors.secondary} style={{ marginRight: 2 }} />
           )}
+          <Pressable
+            hitSlop={10}
+            style={styles.headerActionBtn}
+            onPress={() => { Haptics.selectionAsync(); muteChat(id); }}
+          >
+            <Ionicons
+              name={chat.isMuted ? "notifications-off" : "notifications-outline"}
+              size={20}
+              color={chat.isMuted ? colors.textTertiary : colors.primary}
+            />
+          </Pressable>
           <Pressable
             hitSlop={10}
             style={styles.headerActionBtn}

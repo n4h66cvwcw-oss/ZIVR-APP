@@ -61,6 +61,7 @@ export type ProfileSettings = {
   captureGuardText: string;
   captureGuardSoundUri?: string;
   onboardingComplete: boolean;
+  defaultNotificationSound?: string;
 };
 
 const DEFAULT_SETTINGS: ProfileSettings = {

@@ -17,10 +17,11 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { MessagingProvider } from "@/context/MessagingContext";
 import { CallProvider } from "@/context/CallContext";
 import { ProfileProvider, useProfile } from "@/context/ProfileContext";
-import { ServerProvider } from "@/context/ServerContext";
+import { ServerProvider, useServer } from "@/context/ServerContext";
 import { SkinProvider } from "@/context/SkinContext";
 import { IncomingCallModal } from "@/components/IncomingCallModal";
 import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
+import { registerForPushNotificationsAsync } from "@/utils/notifications";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -37,10 +38,22 @@ function OnboardingGate() {
   return null;
 }
 
+function PushRegistrar() {
+  const { serverUserId, updateServerProfile } = useServer();
+  useEffect(() => {
+    if (!serverUserId) return;
+    registerForPushNotificationsAsync().then((token) => {
+      if (token) updateServerProfile(serverUserId, { pushToken: token });
+    });
+  }, [serverUserId]);
+  return null;
+}
+
 function RootLayoutNav() {
   return (
     <>
       <OnboardingGate />
+      <PushRegistrar />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false, presentation: "fullScreenModal", animation: "fade" }} />

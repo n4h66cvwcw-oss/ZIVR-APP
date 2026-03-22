@@ -32,6 +32,7 @@ export type ServerMessage = {
 };
 
 type MessageHandler = (msg: ServerMessage) => void;
+type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
 
 interface ServerContextValue {
   serverUserId: string | null;
@@ -43,6 +44,13 @@ interface ServerContextValue {
     avatar?: string;
     statusMessage?: string;
   }) => Promise<string | null>;
+  updateServerProfile: (userId: string, updates: {
+    displayName?: string;
+    username?: string;
+    statusMessage?: string;
+    avatar?: string;
+    pushToken?: string;
+  }) => Promise<void>;
   findUsers: (query: string) => Promise<ServerUser[]>;
   getOrCreateDirectChat: (myUserId: string, theirUserId: string) => Promise<string | null>;
   createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<string | null>;
@@ -51,6 +59,8 @@ interface ServerContextValue {
   onNewMessage: (handler: MessageHandler) => () => void;
   emitTyping: (chatId: string, userId: string, name: string, isTyping: boolean) => void;
   onTyping: (handler: (data: { chatId: string; userId: string; name: string; typing: boolean }) => void) => () => void;
+  emitChatRead: (chatId: string, userId: string) => void;
+  onReadReceipt: (handler: ReadReceiptHandler) => () => void;
 }
 
 const ServerContext = createContext<ServerContextValue | null>(null);
@@ -75,6 +85,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
   const messageHandlers = useRef<Set<MessageHandler>>(new Set());
   const typingHandlers = useRef<Set<(d: { chatId: string; userId: string; name: string; typing: boolean }) => void>>(new Set());
+  const readReceiptHandlers = useRef<Set<ReadReceiptHandler>>(new Set());
 
   useEffect(() => {
     AsyncStorage.getItem(SERVER_USER_KEY).then((id) => {
@@ -113,6 +124,10 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
     socket.on("typing:update", (data: { chatId: string; userId: string; name: string; typing: boolean }) => {
       typingHandlers.current.forEach((h) => h(data));
+    });
+
+    socket.on("message:read", (data: { chatId: string; readByUserId: string; readAt: number }) => {
+      readReceiptHandlers.current.forEach((h) => h(data));
     });
 
     socket.on("connect_error", (err) => {
@@ -253,12 +268,38 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const emitChatRead = useCallback((chatId: string, userId: string) => {
+    if (!socketRef.current?.connected) return;
+    socketRef.current.emit("chat:read", { chatId, userId });
+  }, []);
+
+  const onReadReceipt = useCallback((handler: ReadReceiptHandler) => {
+    readReceiptHandlers.current.add(handler);
+    return () => { readReceiptHandlers.current.delete(handler); };
+  }, []);
+
+  const updateServerProfile = useCallback(
+    async (userId: string, updates: { displayName?: string; username?: string; statusMessage?: string; avatar?: string; pushToken?: string }) => {
+      try {
+        await fetch(`${getApiBase()}/users/${userId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+      } catch (e) {
+        console.warn("[ServerContext] updateServerProfile error:", e);
+      }
+    },
+    []
+  );
+
   return (
     <ServerContext.Provider
       value={{
         serverUserId,
         isConnected,
         registerOnServer,
+        updateServerProfile,
         findUsers,
         getOrCreateDirectChat,
         createServerGroupChat,
@@ -267,6 +308,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         onNewMessage,
         emitTyping,
         onTyping,
+        emitChatRead,
+        onReadReceipt,
       }}
     >
       {children}

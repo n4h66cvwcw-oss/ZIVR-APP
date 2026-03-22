@@ -14,6 +14,27 @@ export type ServerMessage = {
 
 const onlineUsers = new Map<string, string>();
 
+async function sendExpoPush(tokens: string[], title: string, body: string, sound: string) {
+  if (!tokens.length) return;
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(
+        tokens.map((to) => ({
+          to,
+          title,
+          body,
+          sound: sound === "none" ? undefined : "default",
+          data: { sound },
+        }))
+      ),
+    });
+  } catch (err) {
+    console.warn("[push] failed to send:", err);
+  }
+}
+
 export function attachSocket(httpServer: HttpServer): SocketServer {
   const io = new SocketServer(httpServer, {
     cors: { origin: "*", methods: ["GET", "POST"] },
@@ -37,6 +58,7 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         [userId]
       );
       chats.forEach(({ id }) => { void socket.join(`chat:${id}`); });
+      socket.join(`user:${userId}`);
 
       io.to(`user:${userId}`).emit("user:online", { userId, online: true });
       socket.emit("user:joined", { userId, chatRooms: chats.map((c) => c.id) });
@@ -86,9 +108,58 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         };
 
         io.to(`chat:${chatId}`).emit("message:new", { ...outgoing, localId });
+
+        const offlineMembers = await query<{ id: string; push_token: string | null }>(
+          `SELECT u.id, u.push_token
+           FROM vm_chat_members cm
+           JOIN vm_users u ON u.id = cm.user_id
+           WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false`,
+          [chatId, senderId]
+        );
+
+        const tokens = offlineMembers
+          .map((m) => m.push_token)
+          .filter((t): t is string => !!t && t.startsWith("ExponentPushToken"));
+
+        if (tokens.length > 0) {
+          const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
+          await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
+        }
       } catch (err) {
         console.error("message:send error", err);
         socket.emit("error", { message: "Failed to send message" });
+      }
+    });
+
+    socket.on("chat:read", async (payload: { chatId: string; userId: string; lastMessageId?: string }) => {
+      try {
+        const { chatId, userId } = payload;
+        const now = Date.now();
+
+        const unread = await query<{ id: string; sender_id: string }>(
+          `SELECT m.id, m.sender_id FROM vm_messages m
+           WHERE m.chat_id = $1 AND m.sender_id != $2 AND m.read_at IS NULL`,
+          [chatId, userId]
+        );
+
+        if (unread.length > 0) {
+          await query(
+            `UPDATE vm_messages SET read_at = $1
+             WHERE chat_id = $2 AND sender_id != $3 AND read_at IS NULL`,
+            [now, chatId, userId]
+          );
+
+          const senderIds = [...new Set(unread.map((m) => m.sender_id))];
+          for (const sid of senderIds) {
+            io.to(`user:${sid}`).emit("message:read", {
+              chatId,
+              readByUserId: userId,
+              readAt: now,
+            });
+          }
+        }
+      } catch (err) {
+        console.error("chat:read error", err);
       }
     });
 

@@ -51,7 +51,7 @@ router.post("/register", async (req, res) => {
 router.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { displayName, username, phone, avatar, statusMessage } = req.body as Record<string, string | undefined>;
+    const { displayName, username, phone, avatar, statusMessage, pushToken } = req.body as Record<string, string | undefined>;
 
     await query(
       `UPDATE vm_users SET
@@ -59,9 +59,10 @@ router.patch("/:id", async (req, res) => {
         username       = COALESCE($2, username),
         phone          = COALESCE($3, phone),
         avatar         = COALESCE($4, avatar),
-        status_message = COALESCE($5, status_message)
-       WHERE id = $6`,
-      [displayName ?? null, username ?? null, phone ?? null, avatar ?? null, statusMessage ?? null, id]
+        status_message = COALESCE($5, status_message),
+        push_token     = COALESCE($6, push_token)
+       WHERE id = $7`,
+      [displayName ?? null, username ?? null, phone ?? null, avatar ?? null, statusMessage ?? null, pushToken ?? null, id]
     );
     res.json({ ok: true });
   } catch (err) {
