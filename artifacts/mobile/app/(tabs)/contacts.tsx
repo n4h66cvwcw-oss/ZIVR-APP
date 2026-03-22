@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import Colors from "@/constants/colors";
 import { useMessaging, type Contact } from "@/context/MessagingContext";
 import { useCall } from "@/context/CallContext";
 import { Avatar } from "@/components/Avatar";
+import { useContactSync } from "@/hooks/useContactSync";
 
 function ContactRow({
   contact,
@@ -112,9 +114,21 @@ export default function ContactsScreen() {
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
-  const { contacts, createDirectChat } = useMessaging();
+  const { contacts, createDirectChat, updateContacts } = useMessaging();
   const { startCall } = useCall();
   const [search, setSearch] = useState("");
+  const { status: syncStatus, syncedCount, syncContacts } = useContactSync();
+
+  const isSyncing = syncStatus === "requesting" || syncStatus === "syncing";
+
+  const handleSync = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const result = await syncContacts();
+    if (result.length > 0) {
+      await updateContacts(result);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+  };
 
   const otherContacts = contacts.filter((c) => c.id !== "me");
   const filtered = otherContacts.filter((c) =>
@@ -155,13 +169,43 @@ export default function ContactsScreen() {
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Contacts
           </Text>
-          <Pressable
-            onPress={() => router.push("/call-history")}
-            style={[styles.recentsBtn, { backgroundColor: colors.primary + "15" }]}
-          >
-            <Ionicons name="time-outline" size={16} color={colors.primary} />
-            <Text style={[styles.recentsBtnText, { color: colors.primary }]}>Recents</Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+            <Pressable
+              onPress={handleSync}
+              disabled={isSyncing}
+              style={[
+                styles.recentsBtn,
+                {
+                  backgroundColor:
+                    syncStatus === "done"
+                      ? "#34C75920"
+                      : syncStatus === "denied" || syncStatus === "error"
+                      ? "#FF453A20"
+                      : colors.primary + "15",
+                },
+              ]}
+            >
+              {isSyncing ? (
+                <ActivityIndicator size="small" color={colors.primary} style={{ width: 16, height: 16 }} />
+              ) : (
+                <Ionicons
+                  name={syncStatus === "done" ? "checkmark-circle" : syncStatus === "denied" || syncStatus === "error" ? "alert-circle" : "sync"}
+                  size={16}
+                  color={syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary}
+                />
+              )}
+              <Text style={[styles.recentsBtnText, { color: syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary }]}>
+                {syncStatus === "done" ? `${syncedCount} synced` : syncStatus === "requesting" || syncStatus === "syncing" ? "Syncing…" : "Sync"}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push("/call-history")}
+              style={[styles.recentsBtn, { backgroundColor: colors.primary + "15" }]}
+            >
+              <Ionicons name="time-outline" size={16} color={colors.primary} />
+              <Text style={[styles.recentsBtnText, { color: colors.primary }]}>Recents</Text>
+            </Pressable>
+          </View>
         </View>
         <View
           style={[

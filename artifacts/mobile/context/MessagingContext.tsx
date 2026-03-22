@@ -302,6 +302,7 @@ interface MessagingContextValue {
   addMemberToCheckIn: (groupId: string, memberId: string) => Promise<void>;
   removeMemberFromCheckIn: (groupId: string, memberId: string) => Promise<void>;
   getContactById: (id: string) => Contact | undefined;
+  updateContacts: (contacts: Contact[]) => Promise<void>;
   getChatMessages: (chatId: string) => Message[];
   getBroadcastsForGroup: (groupId: string) => CheckInBroadcast[];
   setChatPasscode: (chatId: string, passcode: string, recoveryEmail?: string, hint?: string) => Promise<void>;
@@ -322,7 +323,7 @@ function genId(): string {
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const myId = "me";
-  const [contacts] = useState<Contact[]>(SAMPLE_CONTACTS);
+  const [contacts, setContactsState] = useState<Contact[]>(SAMPLE_CONTACTS);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [checkInGroups, setCheckInGroups] = useState<CheckInGroup[]>([]);
@@ -335,14 +336,21 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   async function loadData() {
     try {
-      const [chatsStr, messagesStr, groupsStr, broadcastsStr, sortStr] =
+      const [chatsStr, messagesStr, groupsStr, broadcastsStr, sortStr, contactsStr] =
         await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.CHATS),
           AsyncStorage.getItem(STORAGE_KEYS.MESSAGES),
           AsyncStorage.getItem(STORAGE_KEYS.CHECKIN_GROUPS),
           AsyncStorage.getItem(STORAGE_KEYS.BROADCASTS),
           AsyncStorage.getItem(STORAGE_KEYS.SORT_MODE),
+          AsyncStorage.getItem(STORAGE_KEYS.CONTACTS),
         ]);
+
+      if (contactsStr) {
+        const saved: Contact[] = JSON.parse(contactsStr);
+        const hasMe = saved.some((c) => c.id === "me");
+        setContactsState(hasMe ? saved : [SAMPLE_CONTACTS[0], ...saved]);
+      }
 
       if (chatsStr) setChats(JSON.parse(chatsStr));
       if (messagesStr) setMessages(JSON.parse(messagesStr));
@@ -406,6 +414,13 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     (id: string) => contacts.find((c) => c.id === id),
     [contacts]
   );
+
+  const updateContacts = useCallback(async (newContacts: Contact[]) => {
+    const hasMe = newContacts.some((c) => c.id === "me");
+    const final = hasMe ? newContacts : [SAMPLE_CONTACTS[0], ...newContacts];
+    setContactsState(final);
+    await AsyncStorage.setItem(STORAGE_KEYS.CONTACTS, JSON.stringify(final));
+  }, []);
 
   const getChatMessages = useCallback(
     (chatId: string) => messages[chatId] || [],
@@ -1073,6 +1088,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,
+      updateContacts,
       getChatMessages,
       getBroadcastsForGroup,
       setChatPasscode,
@@ -1113,6 +1129,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,
+      updateContacts,
       getChatMessages,
       getBroadcastsForGroup,
       setChatPasscode,

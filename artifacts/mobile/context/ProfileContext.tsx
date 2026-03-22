@@ -58,20 +58,23 @@ export type ProfileSettings = {
   captureGuardImageUri?: string;
   captureGuardText: string;
   captureGuardSoundUri?: string;
+  onboardingComplete: boolean;
 };
 
 const DEFAULT_SETTINGS: ProfileSettings = {
-  displayName: "Me",
-  statusMessage: "Available",
+  displayName: "",
+  statusMessage: "Hey there! I'm on VibeMsg",
   captureGuardEnabled: true,
   captureGuardType: "ai_gradient",
   captureGuardGradientId: 1,
   captureGuardText: "🔒 Screen capture blocked",
   captureGuardSoundUri: undefined,
+  onboardingComplete: false,
 };
 
 interface ProfileContextValue {
   profile: ProfileSettings;
+  profileLoaded: boolean;
   updateProfile: (updates: Partial<ProfileSettings>) => Promise<void>;
 }
 
@@ -81,10 +84,19 @@ const STORAGE_KEY = "@vibemsg_profile";
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<ProfileSettings>(DEFAULT_SETTINGS);
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then((s) => {
-      if (s) setProfile({ ...DEFAULT_SETTINGS, ...JSON.parse(s) });
+      if (s) {
+        const saved = JSON.parse(s) as Partial<ProfileSettings>;
+        const merged = { ...DEFAULT_SETTINGS, ...saved };
+        if (!merged.onboardingComplete && saved.displayName && saved.displayName.trim() !== "") {
+          merged.onboardingComplete = true;
+        }
+        setProfile(merged);
+      }
+      setProfileLoaded(true);
     });
   }, []);
 
@@ -98,7 +110,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <ProfileContext.Provider value={{ profile, updateProfile }}>
+    <ProfileContext.Provider value={{ profile, profileLoaded, updateProfile }}>
       {children}
     </ProfileContext.Provider>
   );

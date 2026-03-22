@@ -34,6 +34,12 @@
         {
           "iCloudContainerEnvironment": "Production"
         }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "VibeMsg needs access to your contacts to find who's on the app."
+        }
       ]
     ],
     "experiments": {
