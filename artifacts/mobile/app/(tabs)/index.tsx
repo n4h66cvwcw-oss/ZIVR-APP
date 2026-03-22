@@ -21,6 +21,8 @@ import { useMessaging, type Chat, type ChatSortMode } from "@/context/MessagingC
 import { ChatListItem } from "@/components/ChatListItem";
 import { SwipeableRow } from "@/components/SwipeableRow";
 import { PasscodeModal } from "@/components/PasscodeModal";
+import { ManageGroupsModal } from "@/components/ManageGroupsModal";
+import { useContactGroups } from "@/hooks/useContactGroups";
 
 type FilterTab = "all" | "direct" | "groups" | "pinned" | "unread" | "encrypted";
 
@@ -30,9 +32,12 @@ export default function ChatsScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { chats, deleteChat, pinChat, muteChat, sortMode, setSortMode, verifyChatPasscode } = useMessaging();
+  const { groups } = useContactGroups();
   const [search, setSearch] = useState("");
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [showSortModal, setShowSortModal] = useState(false);
+  const [showGroupManager, setShowGroupManager] = useState(false);
   const [pendingChat, setPendingChat] = useState<Chat | null>(null);
   const [showPasscode, setShowPasscode] = useState(false);
 
@@ -43,6 +48,11 @@ export default function ChatsScreen() {
 
     if (search.trim()) {
       list = list.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()));
+    }
+
+    if (activeGroupId) {
+      const group = groups.find((g) => g.id === activeGroupId);
+      if (group) list = list.filter((c) => group.chatIds.includes(c.id));
     }
 
     switch (filterTab) {
@@ -84,7 +94,7 @@ export default function ChatsScreen() {
           return (b.lastMessageTime || b.createdAt) - (a.lastMessageTime || a.createdAt);
       }
     });
-  }, [chats, search, filterTab, sortMode]);
+  }, [chats, search, filterTab, sortMode, activeGroupId, groups]);
 
   const handlePress = useCallback((chat: Chat) => {
     if (chat.passcodeHash) {
@@ -264,6 +274,53 @@ export default function ChatsScreen() {
           })}
         </ScrollView>
 
+        {groups.length > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.groupsRow} contentContainerStyle={styles.groupsRowContent}>
+            {groups.map((group) => {
+              const active = activeGroupId === group.id;
+              return (
+                <Pressable
+                  key={group.id}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    setActiveGroupId(active ? null : group.id);
+                  }}
+                  onLongPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    setShowGroupManager(true);
+                  }}
+                  style={[
+                    styles.groupChip,
+                    {
+                      backgroundColor: active ? group.color : colors.surfaceSecondary,
+                      borderColor: active ? group.color : colors.border,
+                    },
+                  ]}
+                >
+                  <Text style={styles.groupChipEmoji}>{group.emoji}</Text>
+                  <Text style={[styles.groupChipText, { color: active ? "#fff" : colors.textSecondary }]}>
+                    {group.name}
+                  </Text>
+                  {group.chatIds.length > 0 && (
+                    <View style={[styles.groupChipBadge, { backgroundColor: active ? "rgba(255,255,255,0.3)" : group.color + "30" }]}>
+                      <Text style={[styles.groupChipBadgeText, { color: active ? "#fff" : group.color }]}>
+                        {group.chatIds.length}
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
+              );
+            })}
+            <Pressable
+              onPress={() => setShowGroupManager(true)}
+              style={[styles.groupChip, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            >
+              <Ionicons name="settings-outline" size={13} color={colors.textSecondary} />
+              <Text style={[styles.groupChipText, { color: colors.textSecondary }]}>Manage</Text>
+            </Pressable>
+          </ScrollView>
+        )}
+
         <View style={styles.sortRow}>
           <Pressable onPress={() => setShowSortModal(true)} style={styles.sortBtn}>
             <Ionicons name="swap-vertical" size={14} color={colors.textSecondary} />
@@ -405,6 +462,12 @@ export default function ChatsScreen() {
           }}
         />
       )}
+
+      <ManageGroupsModal
+        visible={showGroupManager}
+        onClose={() => setShowGroupManager(false)}
+        chats={chats}
+      />
     </View>
   );
 }
@@ -434,6 +497,28 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontSize: 15, fontFamily: "Inter_400Regular" },
   filterTabsRow: { flexGrow: 0 },
+  groupsRow: { flexGrow: 0 },
+  groupsRowContent: { paddingRight: 4, gap: 8, alignItems: "center" },
+  groupChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  groupChipEmoji: { fontSize: 14 },
+  groupChipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+  groupChipBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  groupChipBadgeText: { fontSize: 10, fontFamily: "Inter_700Bold" },
   filterTab: {
     flexDirection: "row",
     alignItems: "center",
