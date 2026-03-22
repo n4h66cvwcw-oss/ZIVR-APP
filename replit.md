@@ -1,3 +1,50 @@
+# VibeMsg — Expo React Native Messaging App
+
+## App Overview
+VibeMsg is a feature-rich iOS-style messaging app with two unique innovations:
+1. **Broadcast Check-In Groups** — members can't see each other, only sender sees replies, sender can reply to all or start private 1-on-1 side chats
+2. **Musical Messages** — attach MP3/WAV/audio files to any message that display a waveform player in the message bubble
+
+### Key Features
+- End-to-end AES-256 encryption (via crypto-js) per chat — encrypted on device, stored ciphertext in AsyncStorage
+- Per-chat passcode lock (4-6 digit PIN) with hint and recovery email option
+- Encrypted chats show no message preview on the main list ("🔐 Encrypted message")
+- Export any chat thread to PDF (expo-print + expo-sharing) with full dates/times
+- Advanced search: keyword, exact date, date range, time range, by sender — with highlighted results
+- Multiple organize modes: Most Recent, Unread First, Alphabetical, Oldest First, Pinned First
+- Filter tabs: All, Unread, Direct, Groups, Pinned, Encrypted
+- Home screen widget configuration (Small/Medium/Large, up to 4 chat shortcuts)
+- Swipe-to-pin, swipe-to-mute, swipe-to-delete, swipe to Chat Settings
+- Check-In broadcast groups with per-member reply panels and private side chats
+- Audio message player with waveform visualization and pulse animation
+- Emoji reactions on any message via long-press
+- Read receipts, online status, "last seen" indicators
+- Dark/light mode, Inter fonts, iOS-native design language
+
+### Architecture
+- `artifacts/mobile/context/MessagingContext.tsx` — all state, AsyncStorage persistence, encryption, search, PDF gen
+- `artifacts/mobile/utils/crypto.ts` — AES encrypt/decrypt, PBKDF2, SHA-256 via crypto-js
+- `artifacts/mobile/app/(tabs)/index.tsx` — main chats screen with all filter/sort/organize features
+- `artifacts/mobile/app/search.tsx` — advanced multi-mode search screen
+- `artifacts/mobile/app/chat-settings/[id].tsx` — encryption toggle, passcode, PDF export, delete
+- `artifacts/mobile/app/widget-settings.tsx` — home screen widget configuration
+- `artifacts/mobile/components/PasscodeModal.tsx` — 6-dot PIN entry with shake animation and hint/recovery
+- `artifacts/mobile/components/MessageBubble.tsx` — message with audio player (expo-audio)
+- `artifacts/mobile/components/ChatInput.tsx` — music note button for audio attachment
+
+### Key packages
+- expo-audio ~1.1.1 (replaces deprecated expo-av)
+- crypto-js (AES encryption)
+- expo-print ~15.0.8 (PDF generation)
+- expo-mail-composer ~15.0.8 (recovery email)
+- expo-sharing (share PDF files)
+- expo-document-picker (attach audio files)
+- @react-native-async-storage/async-storage (local persistence)
+- react-native-keyboard-controller (keyboard avoidance)
+- expo-haptics (tactile feedback)
+
+---
+
 # Workspace
 
 ## Overview

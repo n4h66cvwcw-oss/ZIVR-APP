@@ -56,9 +56,12 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
-    "expo-audio": "^55.0.9",
+    "crypto-js": "^4.2.0",
+    "expo-audio": "^1.1.1",
     "expo-document-picker": "^14.0.8",
     "expo-file-system": "^19.0.21",
+    "expo-mail-composer": "^15.0.8",
+    "expo-print": "^15.0.8",
     "expo-sharing": "^14.0.8"
   }
 }

@@ -30,7 +30,7 @@ export default function ChatScreen() {
   const {
     chats,
     myId,
-    getChatMessages,
+    getDecryptedMessages,
     sendMessage,
     addReaction,
     markChatRead,
@@ -38,7 +38,7 @@ export default function ChatScreen() {
   } = useMessaging();
 
   const chat = chats.find((c) => c.id === id);
-  const messages = getChatMessages(id);
+  const messages = getDecryptedMessages(id);
 
   useEffect(() => {
     if (id) markChatRead(id);
@@ -142,11 +142,21 @@ export default function ChatScreen() {
         </Pressable>
 
         <View style={styles.headerActions}>
+          {chat.isEncrypted && (
+            <Ionicons name="shield-checkmark" size={16} color={colors.secondary} style={{ marginRight: 2 }} />
+          )}
           <Pressable hitSlop={10} style={styles.headerActionBtn}>
             <Feather name="video" size={20} color={colors.primary} />
           </Pressable>
           <Pressable hitSlop={10} style={styles.headerActionBtn}>
             <Feather name="phone" size={20} color={colors.primary} />
+          </Pressable>
+          <Pressable
+            hitSlop={10}
+            style={styles.headerActionBtn}
+            onPress={() => router.push(`/chat-settings/${id}`)}
+          >
+            <Feather name="more-horizontal" size={20} color={colors.primary} />
           </Pressable>
         </View>
       </View>

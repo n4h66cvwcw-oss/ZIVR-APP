@@ -82,7 +82,14 @@ export function ChatListItem({
     ? colors.secondary
     : colors.primary;
 
-  const previewText = chat.lastAudio
+  const isLocked = !!chat.passcodeHash;
+  const isEncrypted = !!chat.isEncrypted;
+
+  const previewText = isEncrypted
+    ? "🔐 Encrypted message"
+    : isLocked
+    ? "🔒 Locked chat"
+    : chat.lastAudio
     ? "Audio message"
     : chat.lastMessage || subtitle || "Start a conversation";
 
@@ -122,12 +129,13 @@ export function ChatListItem({
           <View style={styles.headerRow}>
             <View style={styles.nameRow}>
               {chat.isPinned && (
-                <Ionicons
-                  name="pin"
-                  size={12}
-                  color={colors.textTertiary}
-                  style={styles.pinIcon}
-                />
+                <Ionicons name="pin" size={12} color={colors.textTertiary} style={styles.pinIcon} />
+              )}
+              {isLocked && (
+                <Ionicons name="lock-closed" size={12} color={colors.textTertiary} style={styles.pinIcon} />
+              )}
+              {isEncrypted && (
+                <Ionicons name="shield-checkmark" size={12} color={colors.secondary} style={styles.pinIcon} />
               )}
               <Text
                 style={[

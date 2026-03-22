@@ -7,6 +7,12 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import {
+  encryptMessage,
+  decryptMessage,
+  hashPasscode,
+  generateEncryptionKey,
+} from "@/utils/crypto";
 
 export type AudioAttachment = {
   uri: string;
@@ -24,7 +30,15 @@ export type Message = {
   reactions?: Record<string, string[]>;
   read?: boolean;
   deliveredAt?: number;
+  deleted?: boolean;
 };
+
+export type ChatSortMode =
+  | "recent"
+  | "unread"
+  | "alphabetical"
+  | "oldest"
+  | "pinned-first";
 
 export type Chat = {
   id: string;
@@ -40,6 +54,12 @@ export type Chat = {
   unreadCount?: number;
   avatar?: string;
   description?: string;
+  isEncrypted?: boolean;
+  encryptionKey?: string;
+  passcodeHash?: string;
+  passcodeSalt?: string;
+  recoveryEmail?: string;
+  passcodeHint?: string;
 };
 
 export type CheckInGroup = {
@@ -81,6 +101,16 @@ export type Contact = {
   isOnline?: boolean;
 };
 
+export type SearchFilter = {
+  query?: string;
+  startDate?: number;
+  endDate?: number;
+  startTime?: string;
+  endTime?: string;
+  chatId?: string;
+  senderId?: string;
+};
+
 const STORAGE_KEYS = {
   CHATS: "@vibemsg_chats",
   MESSAGES: "@vibemsg_messages",
@@ -88,6 +118,7 @@ const STORAGE_KEYS = {
   BROADCASTS: "@vibemsg_broadcasts",
   CONTACTS: "@vibemsg_contacts",
   ME: "@vibemsg_me",
+  SORT_MODE: "@vibemsg_sort_mode",
 };
 
 const SAMPLE_CONTACTS: Contact[] = [
@@ -150,55 +181,34 @@ interface MessagingContextValue {
   messages: Record<string, Message[]>;
   checkInGroups: CheckInGroup[];
   broadcasts: CheckInBroadcast[];
-  sendMessage: (
-    chatId: string,
-    text: string,
-    audio?: AudioAttachment
-  ) => Promise<void>;
+  sortMode: ChatSortMode;
+  setSortMode: (mode: ChatSortMode) => Promise<void>;
+  sendMessage: (chatId: string, text: string, audio?: AudioAttachment) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
-  createGroupChat: (
-    name: string,
-    participantIds: string[],
-    description?: string
-  ) => Promise<string>;
-  createCheckInGroup: (
-    name: string,
-    memberIds: string[],
-    anonymous?: boolean
-  ) => Promise<string>;
-  sendBroadcast: (
-    groupId: string,
-    text: string,
-    audio?: AudioAttachment
-  ) => Promise<string>;
-  replyToBroadcast: (
-    broadcastId: string,
-    text: string,
-    audio?: AudioAttachment
-  ) => Promise<void>;
-  sendPrivateSideChat: (
-    broadcastId: string,
-    memberId: string,
-    text: string,
-    audio?: AudioAttachment
-  ) => Promise<void>;
-  addReaction: (
-    chatId: string,
-    messageId: string,
-    emoji: string
-  ) => Promise<void>;
+  createGroupChat: (name: string, participantIds: string[], description?: string) => Promise<string>;
+  createCheckInGroup: (name: string, memberIds: string[], anonymous?: boolean) => Promise<string>;
+  sendBroadcast: (groupId: string, text: string, audio?: AudioAttachment) => Promise<string>;
+  replyToBroadcast: (broadcastId: string, text: string, audio?: AudioAttachment) => Promise<void>;
+  sendPrivateSideChat: (broadcastId: string, memberId: string, text: string, audio?: AudioAttachment) => Promise<void>;
+  addReaction: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   markChatRead: (chatId: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
+  deleteMessage: (chatId: string, messageId: string) => Promise<void>;
   pinChat: (chatId: string) => Promise<void>;
   muteChat: (chatId: string) => Promise<void>;
   addMemberToCheckIn: (groupId: string, memberId: string) => Promise<void>;
-  removeMemberFromCheckIn: (
-    groupId: string,
-    memberId: string
-  ) => Promise<void>;
+  removeMemberFromCheckIn: (groupId: string, memberId: string) => Promise<void>;
   getContactById: (id: string) => Contact | undefined;
   getChatMessages: (chatId: string) => Message[];
   getBroadcastsForGroup: (groupId: string) => CheckInBroadcast[];
+  setChatPasscode: (chatId: string, passcode: string, recoveryEmail?: string, hint?: string) => Promise<void>;
+  removeChatPasscode: (chatId: string) => Promise<void>;
+  verifyChatPasscode: (chatId: string, passcode: string) => boolean;
+  enableChatEncryption: (chatId: string) => Promise<string>;
+  disableChatEncryption: (chatId: string) => Promise<void>;
+  getDecryptedMessages: (chatId: string) => Message[];
+  searchMessages: (filter: SearchFilter) => Array<Message & { chatName: string }>;
+  generateChatPdfHtml: (chatId: string) => string;
 }
 
 const MessagingContext = createContext<MessagingContextValue | null>(null);
@@ -209,11 +219,12 @@ function genId(): string {
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const myId = "me";
-  const [contacts, setContacts] = useState<Contact[]>(SAMPLE_CONTACTS);
+  const [contacts] = useState<Contact[]>(SAMPLE_CONTACTS);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
   const [checkInGroups, setCheckInGroups] = useState<CheckInGroup[]>([]);
   const [broadcasts, setBroadcasts] = useState<CheckInBroadcast[]>([]);
+  const [sortMode, setSortModeState] = useState<ChatSortMode>("recent");
 
   useEffect(() => {
     loadData();
@@ -221,18 +232,20 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   async function loadData() {
     try {
-      const [chatsStr, messagesStr, groupsStr, broadcastsStr] =
+      const [chatsStr, messagesStr, groupsStr, broadcastsStr, sortStr] =
         await Promise.all([
           AsyncStorage.getItem(STORAGE_KEYS.CHATS),
           AsyncStorage.getItem(STORAGE_KEYS.MESSAGES),
           AsyncStorage.getItem(STORAGE_KEYS.CHECKIN_GROUPS),
           AsyncStorage.getItem(STORAGE_KEYS.BROADCASTS),
+          AsyncStorage.getItem(STORAGE_KEYS.SORT_MODE),
         ]);
 
       if (chatsStr) setChats(JSON.parse(chatsStr));
       if (messagesStr) setMessages(JSON.parse(messagesStr));
       if (groupsStr) setCheckInGroups(JSON.parse(groupsStr));
       if (broadcastsStr) setBroadcasts(JSON.parse(broadcastsStr));
+      if (sortStr) setSortModeState(sortStr as ChatSortMode);
     } catch (e) {
       console.error("Error loading data:", e);
     }
@@ -250,19 +263,18 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   async function saveCheckInGroups(updated: CheckInGroup[]) {
     setCheckInGroups(updated);
-    await AsyncStorage.setItem(
-      STORAGE_KEYS.CHECKIN_GROUPS,
-      JSON.stringify(updated)
-    );
+    await AsyncStorage.setItem(STORAGE_KEYS.CHECKIN_GROUPS, JSON.stringify(updated));
   }
 
   async function saveBroadcasts(updated: CheckInBroadcast[]) {
     setBroadcasts(updated);
-    await AsyncStorage.setItem(
-      STORAGE_KEYS.BROADCASTS,
-      JSON.stringify(updated)
-    );
+    await AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify(updated));
   }
+
+  const setSortMode = useCallback(async (mode: ChatSortMode) => {
+    setSortModeState(mode);
+    await AsyncStorage.setItem(STORAGE_KEYS.SORT_MODE, mode);
+  }, []);
 
   const getContactById = useCallback(
     (id: string) => contacts.find((c) => c.id === id),
@@ -274,9 +286,143 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [messages]
   );
 
+  const getDecryptedMessages = useCallback(
+    (chatId: string): Message[] => {
+      const chat = chats.find((c) => c.id === chatId);
+      const msgs = messages[chatId] || [];
+      if (!chat?.isEncrypted || !chat.encryptionKey) return msgs;
+      return msgs.map((m) => ({
+        ...m,
+        text: decryptMessage(m.text, chat.encryptionKey!),
+      }));
+    },
+    [chats, messages]
+  );
+
   const getBroadcastsForGroup = useCallback(
     (groupId: string) => broadcasts.filter((b) => b.groupId === groupId),
     [broadcasts]
+  );
+
+  const searchMessages = useCallback(
+    (filter: SearchFilter): Array<Message & { chatName: string }> => {
+      const results: Array<Message & { chatName: string }> = [];
+      for (const [chatId, msgs] of Object.entries(messages)) {
+        const chat = chats.find((c) => c.id === chatId);
+        if (!chat) continue;
+        if (filter.chatId && filter.chatId !== chatId) continue;
+
+        for (const msg of msgs) {
+          if (msg.deleted) continue;
+
+          const decryptedText =
+            chat.isEncrypted && chat.encryptionKey
+              ? decryptMessage(msg.text, chat.encryptionKey)
+              : msg.text;
+
+          if (filter.query) {
+            const q = filter.query.toLowerCase();
+            if (!decryptedText.toLowerCase().includes(q)) continue;
+          }
+
+          if (filter.startDate && msg.timestamp < filter.startDate) continue;
+          if (filter.endDate && msg.timestamp > filter.endDate) continue;
+
+          if (filter.startTime || filter.endTime) {
+            const msgDate = new Date(msg.timestamp);
+            const msgMinutes = msgDate.getHours() * 60 + msgDate.getMinutes();
+            if (filter.startTime) {
+              const [h, m] = filter.startTime.split(":").map(Number);
+              if (msgMinutes < h * 60 + m) continue;
+            }
+            if (filter.endTime) {
+              const [h, m] = filter.endTime.split(":").map(Number);
+              if (msgMinutes > h * 60 + m) continue;
+            }
+          }
+
+          if (filter.senderId && msg.senderId !== filter.senderId) continue;
+
+          results.push({ ...msg, text: decryptedText, chatName: chat.name });
+        }
+      }
+      return results.sort((a, b) => b.timestamp - a.timestamp);
+    },
+    [messages, chats]
+  );
+
+  const generateChatPdfHtml = useCallback(
+    (chatId: string): string => {
+      const chat = chats.find((c) => c.id === chatId);
+      if (!chat) return "<p>Chat not found</p>";
+      const msgs = getDecryptedMessages(chatId);
+
+      const rows = msgs
+        .map((m) => {
+          const sender = contacts.find((c) => c.id === m.senderId);
+          const name = sender?.name || m.senderId;
+          const date = new Date(m.timestamp);
+          const dateStr = date.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+          const timeStr = date.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+          const isMe = m.senderId === myId;
+          const audioNote = m.audioAttachment
+            ? `<div style="color:#FF9F0A;font-size:12px;margin-top:4px;">🎵 ${m.audioAttachment.name}</div>`
+            : "";
+          return `
+          <tr style="background:${isMe ? "#EEF4FF" : "#FFFFFF"};">
+            <td style="padding:10px 14px;font-size:12px;color:#666;white-space:nowrap;border-bottom:1px solid #E5E5EA;">${dateStr}</td>
+            <td style="padding:10px 14px;font-size:12px;color:#666;white-space:nowrap;border-bottom:1px solid #E5E5EA;">${timeStr}</td>
+            <td style="padding:10px 14px;font-size:13px;font-weight:600;color:${isMe ? "#0A84FF" : "#333"};border-bottom:1px solid #E5E5EA;">${name}</td>
+            <td style="padding:10px 14px;font-size:14px;color:#111;border-bottom:1px solid #E5E5EA;">${m.text || ""}${audioNote}</td>
+          </tr>`;
+        })
+        .join("");
+
+      return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${chat.name} — Message Thread</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; margin: 0; padding: 24px; background: #F2F2F7; }
+  .header { background: linear-gradient(135deg, #0A84FF, #5E5CE6); color: white; padding: 24px; border-radius: 12px; margin-bottom: 24px; }
+  .header h1 { margin: 0 0 4px; font-size: 22px; }
+  .header p { margin: 0; opacity: 0.85; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  th { background: #F2F2F7; padding: 10px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; text-align: left; border-bottom: 2px solid #E5E5EA; }
+  .footer { text-align: center; margin-top: 24px; font-size: 11px; color: #999; }
+  .lock { display: inline-block; margin-left: 8px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>${chat.name} ${chat.isEncrypted ? '<span class="lock">🔐</span>' : ""}</h1>
+    <p>Exported on ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} &bull; ${msgs.length} messages &bull; ${chat.participantIds.length} participants</p>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Sender</th>
+        <th>Message</th>
+      </tr>
+    </thead>
+    <tbody>${rows || '<tr><td colspan="4" style="text-align:center;padding:32px;color:#999;">No messages</td></tr>'}</tbody>
+  </table>
+  <div class="footer">Generated by VibeMsg &bull; ${chat.isEncrypted ? "🔐 E2E Encrypted Thread" : "Standard Thread"}</div>
+</body>
+</html>`;
+    },
+    [chats, contacts, myId, getDecryptedMessages]
   );
 
   const createDirectChat = useCallback(
@@ -306,11 +452,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createGroupChat = useCallback(
-    async (
-      name: string,
-      participantIds: string[],
-      description?: string
-    ): Promise<string> => {
+    async (name: string, participantIds: string[], description?: string): Promise<string> => {
       const id = genId();
       const newChat: Chat = {
         id,
@@ -328,11 +470,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createCheckInGroup = useCallback(
-    async (
-      name: string,
-      memberIds: string[],
-      anonymous = false
-    ): Promise<string> => {
+    async (name: string, memberIds: string[], anonymous = false): Promise<string> => {
       const id = genId();
       const group: CheckInGroup = {
         id,
@@ -350,10 +488,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const sendMessage = useCallback(
     async (chatId: string, text: string, audio?: AudioAttachment) => {
       const id = genId();
+      const chat = chats.find((c) => c.id === chatId);
+      const storedText =
+        chat?.isEncrypted && chat.encryptionKey
+          ? encryptMessage(text, chat.encryptionKey)
+          : text;
+
       const msg: Message = {
         id,
         chatId,
-        text,
+        text: storedText,
         senderId: myId,
         timestamp: Date.now(),
         audioAttachment: audio,
@@ -363,22 +507,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       const updatedMessages = { ...messages, [chatId]: [...chatMessages, msg] };
       await saveMessages(updatedMessages);
 
+      const previewText = chat?.isEncrypted ? "🔐 Encrypted message" : text || (audio ? "Audio message" : "");
       const updatedChats = chats.map((c) =>
         c.id === chatId
-          ? {
-              ...c,
-              lastMessage: text || (audio ? "Audio message" : ""),
-              lastMessageTime: msg.timestamp,
-              lastAudio: audio,
-            }
+          ? { ...c, lastMessage: previewText, lastMessageTime: msg.timestamp, lastAudio: audio }
           : c
       );
       await saveChats(updatedChats);
 
-      // Simulate reply after 2-4s for direct chats
-      const chat = chats.find((c) => c.id === chatId);
       if (chat?.type === "direct") {
-        const otherId = chat.participantIds.find((id) => id !== myId);
+        const otherId = chat.participantIds.find((pid) => pid !== myId);
         if (otherId) {
           const delay = 2000 + Math.random() * 2000;
           setTimeout(async () => {
@@ -393,31 +531,36 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
               "Let's do it! ",
               "Perfect timing! ",
             ];
+            const replyText = replies[Math.floor(Math.random() * replies.length)];
+            const storedReply =
+              chat.isEncrypted && chat.encryptionKey
+                ? encryptMessage(replyText, chat.encryptionKey)
+                : replyText;
+
             const replyMsg: Message = {
               id: replyId,
               chatId,
-              text: replies[Math.floor(Math.random() * replies.length)],
+              text: storedReply,
               senderId: otherId,
               timestamp: Date.now(),
               read: false,
             };
-            const currentMsgs = messages[chatId] || [];
-            const newMsgs = {
-              ...messages,
-              [chatId]: [...currentMsgs, msg, replyMsg],
-            };
-            await saveMessages(newMsgs);
-            const newChats = chats.map((c) =>
-              c.id === chatId
-                ? {
-                    ...c,
-                    lastMessage: replyMsg.text,
-                    lastMessageTime: replyMsg.timestamp,
-                    unreadCount: (c.unreadCount || 0) + 1,
-                  }
-                : c
+            setMessages((prev) => {
+              const current = prev[chatId] || [];
+              return { ...prev, [chatId]: [...current, replyMsg] };
+            });
+            setChats((prev) =>
+              prev.map((c) =>
+                c.id === chatId
+                  ? {
+                      ...c,
+                      lastMessage: chat.isEncrypted ? "🔐 Encrypted message" : replyText,
+                      lastMessageTime: replyMsg.timestamp,
+                      unreadCount: (c.unreadCount || 0) + 1,
+                    }
+                  : c
+              )
             );
-            await saveChats(newChats);
           }, delay);
         }
       }
@@ -426,11 +569,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const sendBroadcast = useCallback(
-    async (
-      groupId: string,
-      text: string,
-      audio?: AudioAttachment
-    ): Promise<string> => {
+    async (groupId: string, text: string, audio?: AudioAttachment): Promise<string> => {
       const id = genId();
       const broadcast: CheckInBroadcast = {
         id,
@@ -461,13 +600,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       };
       const updatedBroadcasts = broadcasts.map((b) =>
         b.id === broadcastId
-          ? {
-              ...b,
-              replies: {
-                ...b.replies,
-                [myId]: [...(b.replies[myId] || []), reply],
-              },
-            }
+          ? { ...b, replies: { ...b.replies, [myId]: [...(b.replies[myId] || []), reply] } }
           : b
       );
       await saveBroadcasts(updatedBroadcasts);
@@ -476,12 +609,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const sendPrivateSideChat = useCallback(
-    async (
-      broadcastId: string,
-      memberId: string,
-      text: string,
-      audio?: AudioAttachment
-    ) => {
+    async (broadcastId: string, memberId: string, text: string, audio?: AudioAttachment) => {
       const id = genId();
       const msg: Message = {
         id,
@@ -497,10 +625,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
               ...b,
               privateSideChats: {
                 ...b.privateSideChats,
-                [memberId]: [
-                  ...(b.privateSideChats[memberId] || []),
-                  msg,
-                ],
+                [memberId]: [...(b.privateSideChats[memberId] || []), msg],
               },
             }
           : b
@@ -550,6 +675,17 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [chats, messages]
   );
 
+  const deleteMessage = useCallback(
+    async (chatId: string, messageId: string) => {
+      const chatMessages = messages[chatId] || [];
+      const updated = chatMessages.map((m) =>
+        m.id === messageId ? { ...m, text: "", deleted: true } : m
+      );
+      await saveMessages({ ...messages, [chatId]: updated });
+    },
+    [messages]
+  );
+
   const pinChat = useCallback(
     async (chatId: string) => {
       const updatedChats = chats.map((c) =>
@@ -570,16 +706,86 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [chats]
   );
 
+  const setChatPasscode = useCallback(
+    async (chatId: string, passcode: string, recoveryEmail?: string, hint?: string) => {
+      const salt = genId();
+      const hash = hashPasscode(passcode + salt);
+      const updatedChats = chats.map((c) =>
+        c.id === chatId
+          ? { ...c, passcodeHash: hash, passcodeSalt: salt, recoveryEmail, passcodeHint: hint }
+          : c
+      );
+      await saveChats(updatedChats);
+    },
+    [chats]
+  );
+
+  const removeChatPasscode = useCallback(
+    async (chatId: string) => {
+      const updatedChats = chats.map((c) =>
+        c.id === chatId
+          ? { ...c, passcodeHash: undefined, passcodeSalt: undefined, recoveryEmail: undefined, passcodeHint: undefined }
+          : c
+      );
+      await saveChats(updatedChats);
+    },
+    [chats]
+  );
+
+  const verifyChatPasscode = useCallback(
+    (chatId: string, passcode: string): boolean => {
+      const chat = chats.find((c) => c.id === chatId);
+      if (!chat?.passcodeHash || !chat.passcodeSalt) return true;
+      const hash = hashPasscode(passcode + chat.passcodeSalt);
+      return hash === chat.passcodeHash;
+    },
+    [chats]
+  );
+
+  const enableChatEncryption = useCallback(
+    async (chatId: string): Promise<string> => {
+      const key = generateEncryptionKey();
+      const updatedChats = chats.map((c) =>
+        c.id === chatId ? { ...c, isEncrypted: true, encryptionKey: key } : c
+      );
+      await saveChats(updatedChats);
+
+      const chatMessages = messages[chatId] || [];
+      const encryptedMessages = chatMessages.map((m) => ({
+        ...m,
+        text: m.text ? encryptMessage(m.text, key) : m.text,
+      }));
+      await saveMessages({ ...messages, [chatId]: encryptedMessages });
+      return key;
+    },
+    [chats, messages]
+  );
+
+  const disableChatEncryption = useCallback(
+    async (chatId: string) => {
+      const chat = chats.find((c) => c.id === chatId);
+      if (!chat?.encryptionKey) return;
+
+      const chatMessages = messages[chatId] || [];
+      const decryptedMessages = chatMessages.map((m) => ({
+        ...m,
+        text: m.text ? decryptMessage(m.text, chat.encryptionKey!) : m.text,
+      }));
+      await saveMessages({ ...messages, [chatId]: decryptedMessages });
+
+      const updatedChats = chats.map((c) =>
+        c.id === chatId ? { ...c, isEncrypted: false, encryptionKey: undefined } : c
+      );
+      await saveChats(updatedChats);
+    },
+    [chats, messages]
+  );
+
   const addMemberToCheckIn = useCallback(
     async (groupId: string, memberId: string) => {
       const updated = checkInGroups.map((g) =>
         g.id === groupId
-          ? {
-              ...g,
-              memberIds: g.memberIds.includes(memberId)
-                ? g.memberIds
-                : [...g.memberIds, memberId],
-            }
+          ? { ...g, memberIds: g.memberIds.includes(memberId) ? g.memberIds : [...g.memberIds, memberId] }
           : g
       );
       await saveCheckInGroups(updated);
@@ -607,6 +813,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       messages,
       checkInGroups,
       broadcasts,
+      sortMode,
+      setSortMode,
       sendMessage,
       createDirectChat,
       createGroupChat,
@@ -617,6 +825,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       addReaction,
       markChatRead,
       deleteChat,
+      deleteMessage,
       pinChat,
       muteChat,
       addMemberToCheckIn,
@@ -624,6 +833,14 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       getContactById,
       getChatMessages,
       getBroadcastsForGroup,
+      setChatPasscode,
+      removeChatPasscode,
+      verifyChatPasscode,
+      enableChatEncryption,
+      disableChatEncryption,
+      getDecryptedMessages,
+      searchMessages,
+      generateChatPdfHtml,
     }),
     [
       contacts,
@@ -631,6 +848,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       messages,
       checkInGroups,
       broadcasts,
+      sortMode,
+      setSortMode,
       sendMessage,
       createDirectChat,
       createGroupChat,
@@ -641,6 +860,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       addReaction,
       markChatRead,
       deleteChat,
+      deleteMessage,
       pinChat,
       muteChat,
       addMemberToCheckIn,
@@ -648,6 +868,14 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       getContactById,
       getChatMessages,
       getBroadcastsForGroup,
+      setChatPasscode,
+      removeChatPasscode,
+      verifyChatPasscode,
+      enableChatEncryption,
+      disableChatEncryption,
+      getDecryptedMessages,
+      searchMessages,
+      generateChatPdfHtml,
     ]
   );
 
