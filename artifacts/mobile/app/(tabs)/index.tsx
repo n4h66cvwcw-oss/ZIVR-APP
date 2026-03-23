@@ -33,7 +33,7 @@ export default function ChatsScreen() {
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
-  const { chats, deleteChat, pinChat, muteChat, sortMode, setSortMode, verifyChatPasscode } = useMessaging();
+  const { chats, deleteChat, pinChat, muteChat, sortMode, setSortMode, verifyChatPasscode, removeChatPasscode } = useMessaging();
   const { profile } = useProfile();
   const { groups } = useContactGroups();
   const [search, setSearch] = useState("");
@@ -473,6 +473,11 @@ export default function ChatsScreen() {
             setShowPasscode(false);
             setPendingChat(null);
           }}
+          onRemove={pendingChat ? () => {
+            removeChatPasscode(pendingChat.id);
+            setShowPasscode(false);
+            setPendingChat(null);
+          } : undefined}
         />
       )}
 

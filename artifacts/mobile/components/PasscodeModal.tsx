@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Modal,
   Pressable,
@@ -16,6 +17,7 @@ interface PasscodeModalProps {
   visible: boolean;
   onSuccess: () => void;
   onCancel: () => void;
+  onRemove?: () => void;
   title?: string;
   subtitle?: string;
   hint?: string;
@@ -33,6 +35,7 @@ export function PasscodeModal({
   visible,
   onSuccess,
   onCancel,
+  onRemove,
   title = "Enter Passcode",
   subtitle,
   hint,
@@ -86,7 +89,26 @@ export function PasscodeModal({
     setCode((prev) => prev + d);
   };
 
+  const handleRemovePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      "Remove Passcode",
+      "This will remove the passcode lock from this chat. Anyone with access to your phone will be able to open it.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove Lock",
+          style: "destructive",
+          onPress: () => {
+            onRemove?.();
+          },
+        },
+      ]
+    );
+  };
+
   const dotColor = error ? "#FF453A" : colors.primary;
+  const hasFooterContent = hint || recoveryEmail || onRemove;
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
@@ -172,7 +194,7 @@ export function PasscodeModal({
             ))}
           </View>
 
-          {(hint || recoveryEmail) && (
+          {hasFooterContent && (
             <View style={styles.footer}>
               {hint && (
                 <Pressable onPress={() => setShowHint((v) => !v)}>
@@ -183,8 +205,14 @@ export function PasscodeModal({
               )}
               {recoveryEmail && (
                 <Text style={[styles.footerNote, { color: colors.textTertiary }]}>
-                  Recovery email: {recoveryEmail.replace(/(.{2}).*(@.*)/, "$1***$2")}
+                  Recovery: {recoveryEmail.replace(/(.{2}).*(@.*)/, "$1***$2")}
                 </Text>
+              )}
+              {onRemove && (
+                <Pressable onPress={handleRemovePress} style={styles.removeBtn} hitSlop={8}>
+                  <Ionicons name="lock-open-outline" size={13} color="#FF453A" />
+                  <Text style={styles.removeText}>Remove Passcode</Text>
+                </Pressable>
               )}
             </View>
           )}
@@ -280,7 +308,7 @@ const styles = StyleSheet.create({
   },
   footer: {
     alignItems: "center",
-    gap: 6,
+    gap: 8,
   },
   footerLink: {
     fontSize: 14,
@@ -289,5 +317,16 @@ const styles = StyleSheet.create({
   footerNote: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
+  },
+  removeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 4,
+  },
+  removeText: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: "#FF453A",
   },
 });
