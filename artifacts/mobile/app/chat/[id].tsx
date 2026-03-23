@@ -192,15 +192,6 @@ export default function ChatScreen() {
           },
         ]}
       >
-        <Pressable
-          onPress={() => router.back()}
-          hitSlop={12}
-          style={styles.backBtn}
-        >
-          <Ionicons name="chevron-back" size={26} color={colors.primary} />
-          <Text style={[styles.backText, { color: colors.primary }]}>Back</Text>
-        </Pressable>
-
         <Pressable style={styles.headerCenter}>
           <Avatar
             name={chat.name}
@@ -337,8 +328,17 @@ export default function ChatScreen() {
             </View>
           }
         />
-        <View style={{ paddingBottom: insets.bottom }}>
-          <ChatInput onSend={handleSend} onTextChange={handleTypingChange} />
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom, backgroundColor: colors.background }]}>
+          <Pressable
+            onPress={() => router.back()}
+            hitSlop={12}
+            style={[styles.floatingBackBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
+            <Ionicons name="chevron-back" size={22} color={colors.primary} />
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <ChatInput onSend={handleSend} onTextChange={handleTypingChange} />
+          </View>
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -355,13 +355,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
-  backBtn: {
+  bottomBar: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-end",
   },
-  backText: {
-    fontSize: 16,
-    fontFamily: "Inter_400Regular",
+  floatingBackBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 10,
+    marginBottom: 10,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   headerCenter: {
     flex: 1,
