@@ -27,7 +27,6 @@ function mapDeviceContact(dc: Contacts.Contact, index: number): Contact | null {
     name,
     phone,
     avatar: dc.imageAvailable && dc.image?.uri ? dc.image.uri : undefined,
-    status: "On VibeMsg",
     isOnline: false,
     lastSeen: undefined,
   };

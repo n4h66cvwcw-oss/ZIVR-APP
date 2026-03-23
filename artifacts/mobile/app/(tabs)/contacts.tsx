@@ -1,12 +1,14 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Platform,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -19,6 +21,9 @@ import { useMessaging, type Contact } from "@/context/MessagingContext";
 import { useCall } from "@/context/CallContext";
 import { Avatar } from "@/components/Avatar";
 import { useContactSync } from "@/hooks/useContactSync";
+
+const INVITE_LINK = "https://vibemsg.app/join";
+const INVITE_MESSAGE = `Hey! I'm using VibeMsg to send musical messages and more. Join me here: ${INVITE_LINK}`;
 
 function ContactRow({
   contact,
@@ -102,6 +107,170 @@ function ContactRow({
   );
 }
 
+function InviteRow({
+  contact,
+  selected,
+  onToggle,
+}: {
+  contact: Contact;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const colorScheme = useColorScheme();
+  const isDark = colorScheme === "dark";
+  const colors = isDark ? Colors.dark : Colors.light;
+
+  return (
+    <Pressable
+      onPress={onToggle}
+      style={[styles.inviteRow, { backgroundColor: selected ? colors.primary + "12" : colors.surface }]}
+    >
+      <Avatar name={contact.name} size={44} />
+      <View style={styles.inviteInfo}>
+        <Text style={[styles.inviteName, { color: colors.text }]}>{contact.name}</Text>
+        {contact.phone && (
+          <Text style={[styles.invitePhone, { color: colors.textSecondary }]} numberOfLines={1}>
+            {contact.phone}
+          </Text>
+        )}
+      </View>
+      <View
+        style={[
+          styles.inviteCheck,
+          {
+            backgroundColor: selected ? colors.primary : "transparent",
+            borderColor: selected ? colors.primary : colors.border,
+          },
+        ]}
+      >
+        {selected && <Ionicons name="checkmark" size={14} color="#FFF" />}
+      </View>
+    </Pressable>
+  );
+}
+
+function InviteModal({
+  visible,
+  contacts,
+  onClose,
+  colors,
+  insets,
+}: {
+  visible: boolean;
+  contacts: Contact[];
+  onClose: () => void;
+  colors: typeof Colors.light;
+  insets: { top: number; bottom: number };
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [inviteSearch, setInviteSearch] = useState("");
+
+  const phoneContacts = contacts.filter((c) => c.id !== "me" && c.phone);
+  const filtered = phoneContacts.filter((c) =>
+    c.name.toLowerCase().includes(inviteSearch.toLowerCase())
+  );
+
+  const toggle = (id: string) => {
+    Haptics.selectionAsync();
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleInvite = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await Share.share(
+        Platform.OS === "ios"
+          ? { message: INVITE_MESSAGE, url: INVITE_LINK }
+          : { message: INVITE_MESSAGE }
+      );
+    } catch (e) {
+      console.log("Share error:", e);
+    }
+    onClose();
+    setSelected(new Set());
+    setInviteSearch("");
+  };
+
+  const handleClose = () => {
+    onClose();
+    setSelected(new Set());
+    setInviteSearch("");
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={handleClose}
+    >
+      <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+        <View style={[styles.modalHeader, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
+          <Pressable onPress={handleClose} hitSlop={12}>
+            <Text style={[styles.modalCancel, { color: colors.primary }]}>Cancel</Text>
+          </Pressable>
+          <Text style={[styles.modalTitle, { color: colors.text }]}>Invite Contacts</Text>
+          <Pressable
+            onPress={handleInvite}
+            style={[
+              styles.inviteActionBtn,
+              { backgroundColor: selected.size > 0 ? colors.primary : colors.surfaceSecondary },
+            ]}
+          >
+            <Text style={[styles.inviteActionText, { color: selected.size > 0 ? "#FFF" : colors.textTertiary }]}>
+              {selected.size > 0 ? `Invite ${selected.size}` : "Invite"}
+            </Text>
+          </Pressable>
+        </View>
+
+        <View style={[styles.inviteSearchContainer, { backgroundColor: colors.surfaceSecondary, margin: 16, marginTop: 12 }]}>
+          <Feather name="search" size={16} color={colors.textTertiary} />
+          <TextInput
+            style={[styles.searchInput, { color: colors.text }]}
+            placeholder="Search contacts..."
+            placeholderTextColor={colors.textTertiary}
+            value={inviteSearch}
+            onChangeText={setInviteSearch}
+          />
+        </View>
+
+        <Text style={[styles.inviteHint, { color: colors.textSecondary }]}>
+          Select contacts to send them an invite link via your messaging app.
+        </Text>
+
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <InviteRow
+              contact={item}
+              selected={selected.has(item.id)}
+              onToggle={() => toggle(item.id)}
+            />
+          )}
+          ItemSeparatorComponent={() => (
+            <View style={[styles.separator, { backgroundColor: colors.border, marginLeft: 72 }]} />
+          )}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 20 }}
+          ListEmptyComponent={
+            <View style={styles.inviteEmpty}>
+              <Ionicons name="people-outline" size={40} color={colors.textTertiary} />
+              <Text style={[styles.inviteEmptyText, { color: colors.textSecondary }]}>
+                {inviteSearch ? "No matching contacts" : "Sync your contacts first to invite friends"}
+              </Text>
+            </View>
+          }
+        />
+      </View>
+    </Modal>
+  );
+}
+
 function formatLastSeen(ts: number): string {
   const diff = Date.now() - ts;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
@@ -117,6 +286,7 @@ export default function ContactsScreen() {
   const { contacts, createDirectChat, updateContacts } = useMessaging();
   const { startCall } = useCall();
   const [search, setSearch] = useState("");
+  const [showInvite, setShowInvite] = useState(false);
   const { status: syncStatus, syncedCount, syncContacts } = useContactSync();
 
   const isSyncing = syncStatus === "requesting" || syncStatus === "syncing";
@@ -130,21 +300,15 @@ export default function ContactsScreen() {
     }
   };
 
+  const handleInvitePress = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setShowInvite(true);
+  }, []);
+
   const otherContacts = contacts.filter((c) => c.id !== "me");
   const filtered = otherContacts.filter((c) =>
     c.name.toLowerCase().includes(search.toLowerCase())
   );
-  const online = filtered.filter((c) => c.isOnline);
-  const offline = filtered.filter((c) => !c.isOnline);
-
-  const sections = [
-    ...(online.length > 0
-      ? [{ title: "Online", data: online, isSection: true }]
-      : []),
-    ...(offline.length > 0
-      ? [{ title: "Contacts", data: offline, isSection: true }]
-      : []),
-  ];
 
   const handleMessage = async (contactId: string) => {
     const chatId = await createDirectChat(contactId);
@@ -169,34 +333,43 @@ export default function ContactsScreen() {
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Contacts
           </Text>
-          <Pressable
-            onPress={handleSync}
-            disabled={isSyncing}
-            style={[
-              styles.recentsBtn,
-              {
-                backgroundColor:
-                  syncStatus === "done"
-                    ? "#34C75920"
-                    : syncStatus === "denied" || syncStatus === "error"
-                    ? "#FF453A20"
-                    : colors.primary + "15",
-              },
-            ]}
-          >
-            {isSyncing ? (
-              <ActivityIndicator size="small" color={colors.primary} style={{ width: 16, height: 16 }} />
-            ) : (
-              <Ionicons
-                name={syncStatus === "done" ? "checkmark-circle" : syncStatus === "denied" || syncStatus === "error" ? "alert-circle" : "sync"}
-                size={16}
-                color={syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary}
-              />
-            )}
-            <Text style={[styles.recentsBtnText, { color: syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary }]}>
-              {syncStatus === "done" ? `${syncedCount} synced` : syncStatus === "requesting" || syncStatus === "syncing" ? "Syncing…" : "Sync"}
-            </Text>
-          </Pressable>
+          <View style={styles.headerButtons}>
+            <Pressable
+              onPress={handleInvitePress}
+              style={[styles.inviteBtn, { backgroundColor: colors.primary + "15" }]}
+            >
+              <Ionicons name="person-add" size={15} color={colors.primary} />
+              <Text style={[styles.inviteBtnText, { color: colors.primary }]}>Invite</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSync}
+              disabled={isSyncing}
+              style={[
+                styles.syncBtn,
+                {
+                  backgroundColor:
+                    syncStatus === "done"
+                      ? "#34C75920"
+                      : syncStatus === "denied" || syncStatus === "error"
+                      ? "#FF453A20"
+                      : colors.primary + "15",
+                },
+              ]}
+            >
+              {isSyncing ? (
+                <ActivityIndicator size="small" color={colors.primary} style={{ width: 16, height: 16 }} />
+              ) : (
+                <Ionicons
+                  name={syncStatus === "done" ? "checkmark-circle" : syncStatus === "denied" || syncStatus === "error" ? "alert-circle" : "sync"}
+                  size={16}
+                  color={syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary}
+                />
+              )}
+              <Text style={[styles.syncBtnText, { color: syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary }]}>
+                {syncStatus === "done" ? `${syncedCount} synced` : isSyncing ? "Syncing…" : "Sync"}
+              </Text>
+            </Pressable>
+          </View>
         </View>
         <View
           style={[
@@ -274,23 +447,40 @@ export default function ContactsScreen() {
                 : "Sync your phone contacts to find friends on VibeMsg"}
             </Text>
             {!search && (
-              <Pressable
-                onPress={handleSync}
-                disabled={isSyncing}
-                style={[styles.emptyButton, { backgroundColor: colors.primary }]}
-              >
-                {isSyncing ? (
-                  <ActivityIndicator color="#FFF" size="small" />
-                ) : (
-                  <Ionicons name="sync" size={16} color="#FFF" />
-                )}
-                <Text style={styles.emptyButtonText}>
-                  {isSyncing ? "Syncing…" : syncStatus === "done" ? "Sync Again" : "Sync Contacts"}
-                </Text>
-              </Pressable>
+              <View style={styles.emptyActions}>
+                <Pressable
+                  onPress={handleSync}
+                  disabled={isSyncing}
+                  style={[styles.emptyButton, { backgroundColor: colors.primary }]}
+                >
+                  {isSyncing ? (
+                    <ActivityIndicator color="#FFF" size="small" />
+                  ) : (
+                    <Ionicons name="sync" size={16} color="#FFF" />
+                  )}
+                  <Text style={styles.emptyButtonText}>
+                    {isSyncing ? "Syncing…" : syncStatus === "done" ? "Sync Again" : "Sync Contacts"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleInvitePress}
+                  style={[styles.emptyButton, { backgroundColor: colors.primary + "15" }]}
+                >
+                  <Ionicons name="person-add" size={16} color={colors.primary} />
+                  <Text style={[styles.emptyButtonText, { color: colors.primary }]}>Invite Friends</Text>
+                </Pressable>
+              </View>
             )}
           </View>
         }
+      />
+
+      <InviteModal
+        visible={showInvite}
+        contacts={contacts}
+        onClose={() => setShowInvite(false)}
+        colors={colors}
+        insets={{ top: insets.top, bottom: insets.bottom }}
       />
     </View>
   );
@@ -308,6 +498,40 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontFamily: "Inter_700Bold",
     letterSpacing: -0.5,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  inviteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  inviteBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
+  },
+  syncBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  syncBtnText: {
+    fontSize: 14,
+    fontFamily: "Inter_500Medium",
   },
   searchContainer: {
     flexDirection: "row",
@@ -352,23 +576,6 @@ const styles = StyleSheet.create({
   lastSeen: {
     fontSize: 12,
     fontFamily: "Inter_400Regular",
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  recentsBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  recentsBtnText: {
-    fontSize: 14,
-    fontFamily: "Inter_500Medium",
   },
   contactActions: {
     flexDirection: "row",
@@ -417,6 +624,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: -4,
   },
+  emptyActions: {
+    gap: 10,
+    alignItems: "center",
+    marginTop: 4,
+  },
   emptyButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -424,11 +636,92 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingVertical: 12,
     borderRadius: 12,
-    marginTop: 4,
   },
   emptyButtonText: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
     color: "#FFF",
+  },
+  modalContainer: {
+    flex: 1,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  modalCancel: {
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+  },
+  inviteActionBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 16,
+  },
+  inviteActionText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+  inviteSearchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  inviteHint: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    paddingHorizontal: 16,
+    marginBottom: 4,
+    lineHeight: 18,
+  },
+  inviteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  inviteInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  inviteName: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+  },
+  invitePhone: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+  },
+  inviteCheck: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inviteEmpty: {
+    alignItems: "center",
+    paddingTop: 60,
+    gap: 12,
+    paddingHorizontal: 40,
+  },
+  inviteEmptyText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    lineHeight: 20,
   },
 });

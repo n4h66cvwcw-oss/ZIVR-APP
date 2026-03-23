@@ -690,13 +690,16 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     maxHeight: 120,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    overflow: "hidden",
+    justifyContent: "center",
   },
   input: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     lineHeight: 22,
     minHeight: 22,
+    flexGrow: 1,
   },
   sendBtn: {
     width: 38,
