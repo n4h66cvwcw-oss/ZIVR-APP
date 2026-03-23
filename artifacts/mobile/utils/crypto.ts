@@ -2,7 +2,11 @@ import CryptoJS from "crypto-js";
 
 export function encryptMessage(text: string, key: string): string {
   if (!text || !key) return text;
-  return CryptoJS.AES.encrypt(text, key).toString();
+  try {
+    return CryptoJS.AES.encrypt(text, key).toString();
+  } catch {
+    return text;
+  }
 }
 
 export function decryptMessage(ciphertext: string, key: string): string {
@@ -20,7 +24,20 @@ export function hashPasscode(passcode: string): string {
 }
 
 export function generateEncryptionKey(): string {
-  return CryptoJS.lib.WordArray.random(32).toString();
+  try {
+    if (typeof globalThis !== "undefined" && globalThis.crypto?.getRandomValues) {
+      const arr = new Uint8Array(32);
+      globalThis.crypto.getRandomValues(arr);
+      return Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
+    }
+    return CryptoJS.lib.WordArray.random(32).toString();
+  } catch {
+    let key = "";
+    for (let i = 0; i < 64; i++) {
+      key += Math.floor(Math.random() * 16).toString(16);
+    }
+    return key;
+  }
 }
 
 export function deriveKeyFromPasscode(passcode: string, salt: string): string {

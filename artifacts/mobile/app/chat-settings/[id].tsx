@@ -80,13 +80,17 @@ export default function ChatSettingsScreen() {
         ]
       );
     } else {
-      await enableChatEncryption(id);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        "🔐 Encryption Enabled",
-        "All messages in this chat are now end-to-end encrypted. The encryption key is stored locally on your device.",
-        [{ text: "Got it" }]
-      );
+      try {
+        await enableChatEncryption(id);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert(
+          "🔐 Encryption Enabled",
+          "All messages in this chat are now end-to-end encrypted. The encryption key is stored locally on your device.",
+          [{ text: "Got it" }]
+        );
+      } catch (e: any) {
+        Alert.alert("Encryption Error", e?.message || "Could not enable encryption. Please try again.");
+      }
     }
   };
 
