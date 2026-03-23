@@ -1,6 +1,7 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import Constants from "expo-constants";
 import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -232,6 +233,14 @@ export default function SkinStoreScreen() {
           <Text style={[styles.coinModalSub, { color: colors.textSecondary }]}>
             Use VibeCoins to unlock skins & AI Lab
           </Text>
+          {Constants.appOwnership === "expo" && (
+            <View style={[styles.iapNotice, { backgroundColor: colors.surfaceSecondary }]}>
+              <Ionicons name="information-circle-outline" size={14} color={colors.textSecondary} />
+              <Text style={[styles.iapNoticeText, { color: colors.textSecondary }]}>
+                Purchases require the full app build, not Expo Go
+              </Text>
+            </View>
+          )}
           <Text style={[styles.coinModalBalance, { color: colors.primary }]}>
             Your balance: {coinBalance.toLocaleString()} 🪙
           </Text>
@@ -1031,6 +1040,16 @@ const styles = StyleSheet.create({
   coinModalTitle: { fontSize: 22, fontFamily: "Inter_700Bold", textAlign: "center" },
   coinModalSub: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center", marginBottom: 4 },
   coinModalBalance: { fontSize: 15, fontFamily: "Inter_600SemiBold", textAlign: "center", marginBottom: 4 },
+  iapNotice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  iapNoticeText: { fontSize: 12, fontFamily: "Inter_400Regular", flex: 1 },
   coinPkgRow: {
     flexDirection: "row",
     alignItems: "center",

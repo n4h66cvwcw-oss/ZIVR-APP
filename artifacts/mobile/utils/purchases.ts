@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 export type VibeCoinPackage = {
@@ -57,8 +58,15 @@ type IAPModule = typeof import("expo-in-app-purchases");
 let _iap: IAPModule | null = null;
 let connected = false;
 
+function isIAPSupported(): boolean {
+  if (Platform.OS === "web") return false;
+  const ownership = Constants.appOwnership;
+  if (ownership === "expo") return false;
+  return true;
+}
+
 async function getIAP(): Promise<IAPModule | null> {
-  if (Platform.OS === "web") return null;
+  if (!isIAPSupported()) return null;
   if (_iap) return _iap;
   try {
     _iap = await import("expo-in-app-purchases");
@@ -110,7 +118,11 @@ export async function purchaseVibeCoinPackage(
 ): Promise<PurchaseResult> {
   const IAP = await getIAP();
   if (!IAP) {
-    return { success: false, reason: "error", message: "IAP not supported on this platform" };
+    return {
+      success: false,
+      reason: "error",
+      message: "In-app purchases require the full app build (not Expo Go)",
+    };
   }
 
   try {
