@@ -25,6 +25,7 @@
     },
     "production": {
       "autoIncrement": true,
+      "distribution": "store",
       "env": {
         "APP_ENV": "production"
       },
@@ -39,9 +40,10 @@
   "submit": {
     "production": {
       "ios": {
-        "appleId": "YOUR_APPLE_ID@example.com",
-        "ascAppId": "YOUR_APP_STORE_CONNECT_APP_ID",
-        "appleTeamId": "YOUR_APPLE_TEAM_ID"
+        "language": "en-US",
+        "appleId": "$APPLE_ID",
+        "ascAppId": "$ASC_APP_ID",
+        "appleTeamId": "$APPLE_TEAM_ID"
       },
       "android": {
         "serviceAccountKeyPath": "./google-play-key.json",
