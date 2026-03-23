@@ -291,6 +291,127 @@ const photoStyles = StyleSheet.create({
 });
 
 function MusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
+  if (music.uri) {
+    return <ItunesMusicReelBar music={music} isMine={isMine} />;
+  }
+  return <VibeBeatsMusicReelBar music={music} isMine={isMine} />;
+}
+
+function ItunesMusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
+  const [playing, setPlaying] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const spinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+  const stopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { saveClip, recentClips } = useRecentClips();
+
+  const player = useAudioPlayer({ uri: music.uri! });
+  const clipDuration = (music.clipEnd ?? music.duration) - (music.clipStart ?? 0);
+
+  const alreadySaved = recentClips.some(
+    (c) => c.id === music.id && c.clipStart === music.clipStart && c.clipEnd === music.clipEnd && c.playMode === music.playMode
+  );
+  useEffect(() => { if (alreadySaved) setSaved(true); }, [alreadySaved]);
+
+  const startSpin = () => {
+    spinLoopRef.current?.stop();
+    spinLoopRef.current = Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 2000, useNativeDriver: true })
+    );
+    spinLoopRef.current.start();
+  };
+  const stopSpin = () => {
+    spinLoopRef.current?.stop();
+    Animated.timing(spinAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
+  };
+
+  const handlePlayPause = () => {
+    if (playing) {
+      player.pause();
+      setPlaying(false);
+      stopSpin();
+      if (stopRef.current) clearTimeout(stopRef.current);
+    } else {
+      try {
+        player.seekTo(music.clipStart ?? 0);
+        player.play();
+        setPlaying(true);
+        startSpin();
+        if (music.playMode !== "loop") {
+          stopRef.current = setTimeout(() => {
+            player.pause();
+            setPlaying(false);
+            stopSpin();
+          }, clipDuration * 1000);
+        }
+      } catch { setPlaying(false); }
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (stopRef.current) clearTimeout(stopRef.current);
+      spinLoopRef.current?.stop();
+      try { player.pause(); } catch {}
+    };
+  }, []);
+
+  const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+
+  function fmtTime(s: number) {
+    const m = Math.floor(s / 60);
+    const sec = Math.round(s) % 60;
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  }
+
+  return (
+    <View style={styles.reelBar}>
+      <Pressable onPress={handlePlayPause} hitSlop={6}>
+        {music.artworkUrl ? (
+          <Animated.View style={[styles.reelDisc, { transform: [{ rotate: spin }], overflow: "hidden", borderRadius: 14 }]}>
+            <Image source={{ uri: music.artworkUrl }} style={{ width: 28, height: 28 }} />
+            {!playing && (
+              <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(0,0,0,0.45)", alignItems: "center", justifyContent: "center", borderRadius: 14 }]}>
+                <Ionicons name="play" size={10} color="#fff" />
+              </View>
+            )}
+          </Animated.View>
+        ) : (
+          <Animated.View style={{ transform: [{ rotate: spin }] }}>
+            <View style={[styles.reelDisc, { backgroundColor: "rgba(255,255,255,0.22)" }]}>
+              <Ionicons name={playing ? "pause" : "play"} size={10} color="#fff" />
+            </View>
+          </Animated.View>
+        )}
+      </Pressable>
+      <View style={styles.reelInfo}>
+        <Text style={styles.reelTitle} numberOfLines={1}>
+          {music.emoji} {music.title} — {music.artist}
+        </Text>
+        <Text style={styles.reelClip}>
+          {playing ? "▶ Playing" : "Tap to play"} · {Math.round(clipDuration)}s · iTunes
+        </Text>
+      </View>
+      <View style={styles.reelModeTag}>
+        <Ionicons name="logo-apple" size={10} color="rgba(255,255,255,0.85)" />
+        <Text style={styles.reelModeText}>Preview</Text>
+      </View>
+      {playing && (
+        <View style={styles.reelEqRow}>
+          {[220, 300, 180].map((d, i) => (<ReelEqBar key={i} duration={d} />))}
+        </View>
+      )}
+      {!isMine && (
+        <Pressable onPress={() => { if (!saved) { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); saveClip(music); setSaved(true); } }} hitSlop={8} style={styles.reelSaveBtn}>
+          <Ionicons name={saved ? "bookmark" : "bookmark-outline"} size={14} color={saved ? "#FFD60A" : "rgba(255,255,255,0.7)"} />
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+function VibeBeatsMusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
   const [playing, setPlaying] = useState(false);
   const [saved, setSaved] = useState(false);
   const spinAnim = useRef(new Animated.Value(0)).current;
@@ -366,11 +487,7 @@ function MusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boole
   const spin = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
 
   const modeIcon: Record<string, any> = { once: "play-circle-outline", loop: "repeat", delayed: "timer-outline" };
-  const modeLabel: Record<string, string> = {
-    once: "Once",
-    loop: "Loop",
-    delayed: `+${music.delaySeconds ?? 0}s`,
-  };
+  const modeLabel: Record<string, string> = { once: "Once", loop: "Loop", delayed: `+${music.delaySeconds ?? 0}s` };
 
   return (
     <View style={styles.reelBar}>
@@ -393,18 +510,12 @@ function MusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boole
       </View>
       {playing && (
         <View style={styles.reelEqRow}>
-          {[220, 300, 180].map((d, i) => (
-            <ReelEqBar key={i} duration={d} />
-          ))}
+          {[220, 300, 180].map((d, i) => (<ReelEqBar key={i} duration={d} />))}
         </View>
       )}
       {!isMine && (
         <Pressable onPress={handleSave} hitSlop={8} style={styles.reelSaveBtn}>
-          <Ionicons
-            name={saved ? "bookmark" : "bookmark-outline"}
-            size={14}
-            color={saved ? "#FFD60A" : "rgba(255,255,255,0.7)"}
-          />
+          <Ionicons name={saved ? "bookmark" : "bookmark-outline"} size={14} color={saved ? "#FFD60A" : "rgba(255,255,255,0.7)"} />
         </Pressable>
       )}
     </View>

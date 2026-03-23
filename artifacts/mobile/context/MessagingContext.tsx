@@ -56,6 +56,7 @@ export type MusicAttachment = {
   emoji: string;
   duration: number;
   uri?: string;
+  artworkUrl?: string;
   clipStart: number;
   clipEnd: number;
   playMode: MusicPlayMode;
