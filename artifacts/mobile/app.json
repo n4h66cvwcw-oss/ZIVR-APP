@@ -131,8 +131,7 @@
       "reactCompiler": true
     },
     "updates": {
-      "fallbackToCacheTimeout": 0,
-      "url": "https://u.expo.dev/YOUR_EAS_PROJECT_ID"
+      "enabled": false
     }
   }
 }
