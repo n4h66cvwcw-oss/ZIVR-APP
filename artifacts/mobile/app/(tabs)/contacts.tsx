@@ -169,43 +169,34 @@ export default function ContactsScreen() {
           <Text style={[styles.headerTitle, { color: colors.text }]}>
             Contacts
           </Text>
-          <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-            <Pressable
-              onPress={handleSync}
-              disabled={isSyncing}
-              style={[
-                styles.recentsBtn,
-                {
-                  backgroundColor:
-                    syncStatus === "done"
-                      ? "#34C75920"
-                      : syncStatus === "denied" || syncStatus === "error"
-                      ? "#FF453A20"
-                      : colors.primary + "15",
-                },
-              ]}
-            >
-              {isSyncing ? (
-                <ActivityIndicator size="small" color={colors.primary} style={{ width: 16, height: 16 }} />
-              ) : (
-                <Ionicons
-                  name={syncStatus === "done" ? "checkmark-circle" : syncStatus === "denied" || syncStatus === "error" ? "alert-circle" : "sync"}
-                  size={16}
-                  color={syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary}
-                />
-              )}
-              <Text style={[styles.recentsBtnText, { color: syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary }]}>
-                {syncStatus === "done" ? `${syncedCount} synced` : syncStatus === "requesting" || syncStatus === "syncing" ? "Syncing…" : "Sync"}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => router.push("/call-history")}
-              style={[styles.recentsBtn, { backgroundColor: colors.primary + "15" }]}
-            >
-              <Ionicons name="time-outline" size={16} color={colors.primary} />
-              <Text style={[styles.recentsBtnText, { color: colors.primary }]}>Recents</Text>
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={handleSync}
+            disabled={isSyncing}
+            style={[
+              styles.recentsBtn,
+              {
+                backgroundColor:
+                  syncStatus === "done"
+                    ? "#34C75920"
+                    : syncStatus === "denied" || syncStatus === "error"
+                    ? "#FF453A20"
+                    : colors.primary + "15",
+              },
+            ]}
+          >
+            {isSyncing ? (
+              <ActivityIndicator size="small" color={colors.primary} style={{ width: 16, height: 16 }} />
+            ) : (
+              <Ionicons
+                name={syncStatus === "done" ? "checkmark-circle" : syncStatus === "denied" || syncStatus === "error" ? "alert-circle" : "sync"}
+                size={16}
+                color={syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary}
+              />
+            )}
+            <Text style={[styles.recentsBtnText, { color: syncStatus === "done" ? "#34C759" : syncStatus === "denied" || syncStatus === "error" ? "#FF453A" : colors.primary }]}>
+              {syncStatus === "done" ? `${syncedCount} synced` : syncStatus === "requesting" || syncStatus === "syncing" ? "Syncing…" : "Sync"}
+            </Text>
+          </Pressable>
         </View>
         <View
           style={[
@@ -269,10 +260,35 @@ export default function ContactsScreen() {
         contentInsetAdjustmentBehavior="automatic"
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Ionicons name="people-outline" size={64} color={colors.textTertiary} />
+            <View style={[styles.emptyIconWrap, { backgroundColor: colors.primary + "12" }]}>
+              <Ionicons name="people-outline" size={48} color={colors.primary} />
+            </View>
             <Text style={[styles.emptyTitle, { color: colors.text }]}>
-              No contacts found
+              {search ? "No contacts found" : "No contacts yet"}
             </Text>
+            <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+              {search
+                ? "Try a different name or spelling"
+                : syncStatus === "denied"
+                ? "Allow contacts access in Settings to find people on VibeMsg"
+                : "Sync your phone contacts to find friends on VibeMsg"}
+            </Text>
+            {!search && (
+              <Pressable
+                onPress={handleSync}
+                disabled={isSyncing}
+                style={[styles.emptyButton, { backgroundColor: colors.primary }]}
+              >
+                {isSyncing ? (
+                  <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                  <Ionicons name="sync" size={16} color="#FFF" />
+                )}
+                <Text style={styles.emptyButtonText}>
+                  {isSyncing ? "Syncing…" : syncStatus === "done" ? "Sync Again" : "Sync Contacts"}
+                </Text>
+              </Pressable>
+            )}
           </View>
         }
       />
@@ -379,10 +395,40 @@ const styles = StyleSheet.create({
   emptyState: {
     alignItems: "center",
     paddingTop: 80,
+    paddingHorizontal: 40,
     gap: 12,
   },
+  emptyIconWrap: {
+    width: 88,
+    height: 88,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
   emptyTitle: {
-    fontSize: 18,
-    fontFamily: "Inter_500Medium",
+    fontSize: 20,
+    fontFamily: "Inter_700Bold",
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    lineHeight: 20,
+    marginTop: -4,
+  },
+  emptyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  emptyButtonText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: "#FFF",
   },
 });

@@ -5,6 +5,7 @@ import React, { useState, useCallback, useMemo } from "react";
 import {
   Alert,
   FlatList,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -18,6 +19,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging, type Chat, type ChatSortMode } from "@/context/MessagingContext";
+import { useProfile } from "@/context/ProfileContext";
 import { ChatListItem } from "@/components/ChatListItem";
 import { SwipeableRow } from "@/components/SwipeableRow";
 import { PasscodeModal } from "@/components/PasscodeModal";
@@ -32,6 +34,7 @@ export default function ChatsScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { chats, deleteChat, pinChat, muteChat, sortMode, setSortMode, verifyChatPasscode } = useMessaging();
+  const { profile } = useProfile();
   const { groups } = useContactGroups();
   const [search, setSearch] = useState("");
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
@@ -164,9 +167,19 @@ export default function ChatsScreen() {
       >
         <View style={styles.headerTop}>
           <Pressable onPress={() => router.push("/profile")} hitSlop={8} style={styles.profileBtn}>
-            <View style={[styles.profileAvatar, { backgroundColor: colors.primary }]}>
-              <Ionicons name="person" size={18} color="#FFF" />
-            </View>
+            {profile.avatar ? (
+              <Image source={{ uri: profile.avatar }} style={styles.profileAvatarImg} />
+            ) : (
+              <View style={[styles.profileAvatar, { backgroundColor: colors.primary }]}>
+                {profile.displayName ? (
+                  <Text style={styles.profileAvatarInitial}>
+                    {profile.displayName.charAt(0).toUpperCase()}
+                  </Text>
+                ) : (
+                  <Ionicons name="person" size={18} color="#FFF" />
+                )}
+              </View>
+            )}
           </Pressable>
           <View style={{ flex: 1 }}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Messages</Text>
@@ -483,6 +496,8 @@ const styles = StyleSheet.create({
   headerTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   profileBtn: { marginTop: 2 },
   profileAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  profileAvatarImg: { width: 36, height: 36, borderRadius: 18 },
+  profileAvatarInitial: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#FFF" },
   headerTitle: { fontSize: 28, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
   headerSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   headerActions: { flexDirection: "row", gap: 8, marginTop: 4 },

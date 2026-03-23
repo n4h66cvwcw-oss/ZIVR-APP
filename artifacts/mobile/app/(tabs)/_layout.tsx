@@ -3,7 +3,7 @@ import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { Tabs } from "expo-router";
 import { Icon, Label, NativeTabs } from "expo-router/unstable-native-tabs";
 import { SymbolView } from "expo-symbols";
-import { Feather, Ionicons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 import Colors from "@/constants/colors";
@@ -14,6 +14,10 @@ function NativeTabLayout() {
       <NativeTabs.Trigger name="index">
         <Icon sf={{ default: "message", selected: "message.fill" }} />
         <Label>Chats</Label>
+      </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="calls">
+        <Icon sf={{ default: "phone", selected: "phone.fill" }} />
+        <Label>Calls</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="checkins">
         <Icon sf={{ default: "antenna.radiowaves.left.and.right", selected: "antenna.radiowaves.left.and.right" }} />
@@ -74,6 +78,18 @@ function ClassicTabLayout() {
               <SymbolView name="message.fill" tintColor={color} size={24} />
             ) : (
               <Ionicons name="chatbubbles" size={22} color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="calls"
+        options={{
+          title: "Calls",
+          tabBarIcon: ({ color }) =>
+            isIOS ? (
+              <SymbolView name="phone.fill" tintColor={color} size={24} />
+            ) : (
+              <Ionicons name="call" size={22} color={color} />
             ),
         }}
       />
