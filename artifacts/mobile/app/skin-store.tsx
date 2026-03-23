@@ -26,7 +26,6 @@ import {
   purchaseVibeCoinPackage,
   type VibeCoinPackage,
 } from "@/utils/purchases";
-import type { IAPItemDetails } from "expo-in-app-purchases";
 
 type Tab = "store" | "my-skins" | "ai-lab";
 
@@ -54,7 +53,7 @@ export default function SkinStoreScreen() {
   const [previewSkin, setPreviewSkin] = useState<SkinTheme | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showCoinModal, setShowCoinModal] = useState(false);
-  const [storeProducts, setStoreProducts] = useState<IAPItemDetails[]>([]);
+  const [storeProducts, setStoreProducts] = useState<{ productId: string; price: string }[]>([]);
   const [purchasing, setPurchasing] = useState<string | null>(null);
 
   useEffect(() => {

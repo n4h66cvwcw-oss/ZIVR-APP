@@ -1,4 +1,3 @@
-import * as InAppPurchases from "expo-in-app-purchases";
 import { Platform } from "react-native";
 
 export type VibeCoinPackage = {
@@ -53,13 +52,28 @@ export type PurchaseResult =
   | { success: true; coins: number; packageId: string }
   | { success: false; reason: "cancelled" | "error"; message?: string };
 
+type IAPModule = typeof import("expo-in-app-purchases");
+
+let _iap: IAPModule | null = null;
 let connected = false;
 
+async function getIAP(): Promise<IAPModule | null> {
+  if (Platform.OS === "web") return null;
+  if (_iap) return _iap;
+  try {
+    _iap = await import("expo-in-app-purchases");
+    return _iap;
+  } catch {
+    return null;
+  }
+}
+
 export async function connectIAP(): Promise<boolean> {
-  if (Platform.OS === "web") return false;
+  const IAP = await getIAP();
+  if (!IAP) return false;
   if (connected) return true;
   try {
-    await InAppPurchases.connectAsync();
+    await IAP.connectAsync();
     connected = true;
     return true;
   } catch {
@@ -68,21 +82,23 @@ export async function connectIAP(): Promise<boolean> {
 }
 
 export async function disconnectIAP(): Promise<void> {
-  if (!connected) return;
+  const IAP = await getIAP();
+  if (!IAP || !connected) return;
   try {
-    await InAppPurchases.disconnectAsync();
+    await IAP.disconnectAsync();
   } catch {}
   connected = false;
 }
 
-export async function fetchProducts(): Promise<InAppPurchases.IAPItemDetails[]> {
-  if (Platform.OS === "web") return [];
+export async function fetchProducts(): Promise<{ productId: string; price: string }[]> {
+  const IAP = await getIAP();
+  if (!IAP) return [];
   try {
     const ok = await connectIAP();
     if (!ok) return [];
     const productIds = VIBECOIN_PACKAGES.map((p) => p.productId);
-    const { results } = await InAppPurchases.getProductsAsync(productIds);
-    return results ?? [];
+    const { results } = await IAP.getProductsAsync(productIds);
+    return (results ?? []).map((r) => ({ productId: r.productId, price: r.price }));
   } catch {
     return [];
   }
@@ -92,8 +108,9 @@ export async function purchaseVibeCoinPackage(
   pkg: VibeCoinPackage,
   onCoinsAwarded: (coins: number) => void
 ): Promise<PurchaseResult> {
-  if (Platform.OS === "web") {
-    return { success: false, reason: "error", message: "IAP not supported on web" };
+  const IAP = await getIAP();
+  if (!IAP) {
+    return { success: false, reason: "error", message: "IAP not supported on this platform" };
   }
 
   try {
@@ -101,11 +118,11 @@ export async function purchaseVibeCoinPackage(
     if (!ok) return { success: false, reason: "error", message: "Could not connect to store" };
 
     return new Promise<PurchaseResult>((resolve) => {
-      InAppPurchases.setPurchaseListener(async ({ responseCode, results, errorCode }) => {
-        if (responseCode === InAppPurchases.IAPResponseCode.OK && results?.length) {
+      IAP.setPurchaseListener(async ({ responseCode, results, errorCode }) => {
+        if (responseCode === IAP.IAPResponseCode.OK && results?.length) {
           for (const purchase of results) {
             if (!purchase.acknowledged) {
-              await InAppPurchases.finishTransactionAsync(purchase, false);
+              await IAP.finishTransactionAsync(purchase, false);
             }
             if (purchase.productId === pkg.productId) {
               onCoinsAwarded(pkg.coins);
@@ -113,7 +130,7 @@ export async function purchaseVibeCoinPackage(
               return;
             }
           }
-        } else if (responseCode === InAppPurchases.IAPResponseCode.USER_CANCELED) {
+        } else if (responseCode === IAP.IAPResponseCode.USER_CANCELED) {
           resolve({ success: false, reason: "cancelled" });
         } else {
           resolve({
@@ -124,7 +141,7 @@ export async function purchaseVibeCoinPackage(
         }
       });
 
-      InAppPurchases.purchaseItemAsync(pkg.productId).catch((err: unknown) => {
+      IAP.purchaseItemAsync(pkg.productId).catch((err: unknown) => {
         resolve({
           success: false,
           reason: "error",
