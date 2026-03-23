@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import { useAudioPlayer } from "expo-audio";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
   Modal,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -137,6 +139,103 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
   const [itunesSearched, setItunesSearched] = useState(false);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [barWidth, setBarWidth] = useState(0);
+
+  const [lyrics, setLyrics] = useState<string[]>([]);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const barWidthRef = useRef(0);
+  const clipStartAtGestureRef = useRef(0);
+  const clipEndAtGestureRef = useRef(0);
+  const selectedTrackRef = useRef<BaseTrack | null>(null);
+  const clipStartRef = useRef(0);
+  const clipLengthRef = useRef(20);
+
+  const player = useAudioPlayer(selectedTrack?.uri ? { uri: selectedTrack.uri } : { uri: "" });
+
+  useEffect(() => { selectedTrackRef.current = selectedTrack; }, [selectedTrack]);
+  useEffect(() => { clipStartRef.current = clipStart; }, [clipStart]);
+  useEffect(() => { clipLengthRef.current = clipLength; }, [clipLength]);
+
+  useEffect(() => {
+    if (!selectedTrack) { setLyrics([]); return; }
+    setLyrics([]);
+    setLyricsLoading(true);
+    const artist = encodeURIComponent(selectedTrack.artist);
+    const title = encodeURIComponent(selectedTrack.title);
+    fetch(`https://api.lyrics.ovh/v1/${artist}/${title}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.lyrics) {
+          const words = data.lyrics.replace(/\n/g, " ").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+          setLyrics(words);
+        } else {
+          setLyrics([]);
+        }
+      })
+      .catch(() => setLyrics([]))
+      .finally(() => setLyricsLoading(false));
+  }, [selectedTrack?.id]);
+
+  const stopPreview = useCallback(() => {
+    if (previewTimerRef.current) { clearTimeout(previewTimerRef.current); previewTimerRef.current = null; }
+    try { player.pause(); } catch {}
+    setIsPreviewPlaying(false);
+  }, [player]);
+
+  const playPreview = useCallback(async () => {
+    if (!selectedTrack?.uri) return;
+    stopPreview();
+    try {
+      await player.seekTo(clipStartRef.current);
+      player.play();
+      setIsPreviewPlaying(true);
+      const dur = clipLengthRef.current * 1000;
+      previewTimerRef.current = setTimeout(() => {
+        try { player.pause(); } catch {}
+        setIsPreviewPlaying(false);
+      }, Math.min(dur, 30000));
+    } catch {
+      setIsPreviewPlaying(false);
+    }
+  }, [selectedTrack, player, stopPreview]);
+
+  const startThumbPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        clipStartAtGestureRef.current = clipStartRef.current;
+      },
+      onPanResponderMove: (_, g) => {
+        const track = selectedTrackRef.current;
+        if (!track || !barWidthRef.current) return;
+        const delta = (g.dx / barWidthRef.current) * track.duration;
+        const maxS = Math.max(0, track.duration - Math.max(5, clipLengthRef.current));
+        const newStart = Math.max(0, Math.min(maxS, clipStartAtGestureRef.current + delta));
+        setClipStart(Math.round(newStart));
+      },
+      onPanResponderRelease: () => { Haptics.selectionAsync(); },
+    })
+  ).current;
+
+  const endThumbPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        clipEndAtGestureRef.current = clipStartRef.current + clipLengthRef.current;
+      },
+      onPanResponderMove: (_, g) => {
+        const track = selectedTrackRef.current;
+        if (!track || !barWidthRef.current) return;
+        const delta = (g.dx / barWidthRef.current) * track.duration;
+        const rawEnd = Math.max(0, Math.min(track.duration, clipEndAtGestureRef.current + delta));
+        const newLength = Math.max(5, Math.min(60, rawEnd - clipStartRef.current));
+        setClipLength(Math.round(newLength));
+      },
+      onPanResponderRelease: () => { Haptics.selectionAsync(); },
+    })
+  ).current;
 
   const filtered = activeMood === "All" ? MUSIC_LIBRARY : MUSIC_LIBRARY.filter((t) => t.mood === activeMood);
 
@@ -553,20 +652,33 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
             )}
 
             <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Clip Selection</Text>
-              <Text style={[styles.sectionSub, { color: colors.textSecondary }]}>
-                Tap the bar to set start · Adjust length with presets
-              </Text>
+              <View style={styles.clipSectionHeader}>
+                <View>
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Clip Selection</Text>
+                  <Text style={[styles.sectionSub, { color: colors.textSecondary }]}>
+                    Drag handles to trim · {fmtTime(clipStart)} — {fmtTime(clipEnd)}
+                  </Text>
+                </View>
+                {selectedTrack.uri ? (
+                  <Pressable
+                    onPress={() => isPreviewPlaying ? stopPreview() : playPreview()}
+                    style={[styles.previewPlayBtn, { backgroundColor: isPreviewPlaying ? selectedTrack.colors[0] : colors.surfaceSecondary, borderColor: selectedTrack.colors[0] }]}
+                    hitSlop={8}
+                  >
+                    <Ionicons
+                      name={isPreviewPlaying ? "stop" : "play"}
+                      size={18}
+                      color={isPreviewPlaying ? "#fff" : selectedTrack.colors[0]}
+                    />
+                    <Text style={[styles.previewPlayText, { color: isPreviewPlaying ? "#fff" : selectedTrack.colors[0] }]}>
+                      {isPreviewPlaying ? "Stop" : "Preview"}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
 
-              <Pressable
-                onPress={(e) => {
-                  if (!selectedTrack || !barWidth) return;
-                  const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / barWidth));
-                  const newStart = Math.round(ratio * selectedTrack.duration);
-                  setClipStart(Math.min(newStart, maxStart));
-                  Haptics.selectionAsync();
-                }}
-                onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+              <View
+                onLayout={(e) => { setBarWidth(e.nativeEvent.layout.width); barWidthRef.current = e.nativeEvent.layout.width; }}
                 style={[styles.timelineBar, { backgroundColor: colors.surfaceSecondary }]}
               >
                 <View
@@ -575,42 +687,40 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
                     {
                       left: `${startRatio * 100}%` as any,
                       width: `${Math.min(lengthRatio, 1 - startRatio) * 100}%` as any,
-                      backgroundColor: selectedTrack.colors[0],
+                      backgroundColor: selectedTrack.colors[0] + "AA",
                     },
                   ]}
                 />
-                <View style={[styles.timelineThumb, { left: `${startRatio * 100}%` as any, backgroundColor: "#fff", borderColor: selectedTrack.colors[0] }]} />
-                <View style={[styles.timelineThumb, { left: `${Math.min((startRatio + lengthRatio) * 100, 100)}%` as any, backgroundColor: "#fff", borderColor: selectedTrack.colors[1] }]} />
-              </Pressable>
+                <View
+                  {...startThumbPan.panHandlers}
+                  style={[styles.timelineThumb, styles.timelineThumbLarge, { left: `${startRatio * 100}%` as any, backgroundColor: selectedTrack.colors[0], borderColor: "#fff" }]}
+                >
+                  <View style={styles.thumbLine} />
+                  <View style={styles.thumbLine} />
+                </View>
+                <View
+                  {...endThumbPan.panHandlers}
+                  style={[styles.timelineThumb, styles.timelineThumbLarge, { left: `${Math.min((startRatio + lengthRatio) * 100, 99.5)}%` as any, backgroundColor: selectedTrack.colors[1], borderColor: "#fff" }]}
+                >
+                  <View style={styles.thumbLine} />
+                  <View style={styles.thumbLine} />
+                </View>
+              </View>
 
               <View style={styles.clipTimeRow}>
                 <Text style={[styles.clipTimeLabel, { color: colors.textSecondary }]}>
-                  {fmtTime(clipStart)} — {fmtTime(clipEnd)}
+                  Start: {fmtTime(clipStart)}
                 </Text>
                 <Text style={[styles.clipDurationBadge, { backgroundColor: selectedTrack.colors[0] + "22", color: selectedTrack.colors[0] }]}>
                   {actualClipLen}s clip
                 </Text>
+                <Text style={[styles.clipTimeLabel, { color: colors.textSecondary }]}>
+                  End: {fmtTime(clipEnd)}
+                </Text>
               </View>
 
-              <View style={styles.startAdjustRow}>
-                <Text style={[styles.adjLabel, { color: colors.textSecondary }]}>Start at</Text>
-                <View style={styles.stepperRow}>
-                  {[-10, -5].map((d) => (
-                    <Pressable key={d} onPress={() => nudgeStart(d)} style={[styles.stepperBtn, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Text style={[styles.stepperBtnText, { color: colors.text }]}>{d}s</Text>
-                    </Pressable>
-                  ))}
-                  <Text style={[styles.stepperValue, { color: colors.text }]}>{fmtTime(clipStart)}</Text>
-                  {[5, 10].map((d) => (
-                    <Pressable key={d} onPress={() => nudgeStart(d)} style={[styles.stepperBtn, { backgroundColor: colors.surfaceSecondary }]}>
-                      <Text style={[styles.stepperBtnText, { color: colors.text }]}>+{d}s</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-
-              <View style={[styles.startAdjustRow, { marginTop: 12 }]}>
-                <Text style={[styles.adjLabel, { color: colors.textSecondary }]}>Clip length</Text>
+              <View style={[styles.startAdjustRow, { marginTop: 4 }]}>
+                <Text style={[styles.adjLabel, { color: colors.textSecondary }]}>Length</Text>
                 <View style={styles.presetRow}>
                   {CLIP_PRESETS.map((p) => {
                     const maxLen = Math.min(p, (selectedTrack.duration - clipStart));
@@ -628,6 +738,46 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
                 </View>
               </View>
             </View>
+
+            {(lyrics.length > 0 || lyricsLoading) && (
+              <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>Lyrics</Text>
+                <Text style={[styles.sectionSub, { color: colors.textSecondary }]}>
+                  Words highlighted at your clip position ({fmtTime(clipStart)})
+                </Text>
+                {lyricsLoading ? (
+                  <ActivityIndicator size="small" color={selectedTrack.colors[0]} />
+                ) : (
+                  <View style={styles.lyricsContainer}>
+                    {(() => {
+                      const totalWords = lyrics.length;
+                      const highlightIdx = selectedTrack
+                        ? Math.floor((clipStart / selectedTrack.duration) * totalWords)
+                        : 0;
+                      const windowStart = Math.max(0, highlightIdx - 20);
+                      const windowEnd = Math.min(totalWords, highlightIdx + 40);
+                      return lyrics.slice(windowStart, windowEnd).map((word, i) => {
+                        const absIdx = windowStart + i;
+                        const isActive = absIdx >= highlightIdx && absIdx < highlightIdx + 4;
+                        return (
+                          <Text
+                            key={absIdx}
+                            style={[
+                              styles.lyricsWord,
+                              isActive
+                                ? { color: selectedTrack.colors[0], fontFamily: "Inter_700Bold", backgroundColor: selectedTrack.colors[0] + "22", borderRadius: 4, overflow: "hidden" }
+                                : { color: colors.textSecondary },
+                            ]}
+                          >
+                            {word}{" "}
+                          </Text>
+                        );
+                      });
+                    })()}
+                  </View>
+                )}
+              </View>
+            )}
 
             <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>Playback</Text>
@@ -772,9 +922,16 @@ const styles = StyleSheet.create({
   section: { borderRadius: 18, padding: 16, borderWidth: StyleSheet.hairlineWidth, gap: 12 },
   sectionTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
   sectionSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  timelineBar: { height: 36, borderRadius: 18, overflow: "hidden", position: "relative" },
-  timelineClip: { position: "absolute", top: 0, bottom: 0, opacity: 0.7 },
-  timelineThumb: { position: "absolute", top: "50%", marginTop: -8, width: 16, height: 16, borderRadius: 8, borderWidth: 2, marginLeft: -8 },
+  timelineBar: { height: 44, borderRadius: 22, overflow: "visible", position: "relative", marginVertical: 8 },
+  timelineClip: { position: "absolute", top: 0, bottom: 0, borderRadius: 22, opacity: 0.8 },
+  timelineThumb: { position: "absolute", top: "50%", marginTop: -14, width: 28, height: 28, borderRadius: 14, borderWidth: 2.5, marginLeft: -14, alignItems: "center", justifyContent: "center", gap: 3, zIndex: 10 },
+  timelineThumbLarge: {},
+  thumbLine: { width: 2, height: 12, borderRadius: 1, backgroundColor: "rgba(255,255,255,0.9)" },
+  clipSectionHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
+  previewPlayBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5 },
+  previewPlayText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  lyricsContainer: { flexDirection: "row", flexWrap: "wrap", gap: 2 },
+  lyricsWord: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 24, paddingHorizontal: 2, paddingVertical: 1 },
   clipTimeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   clipTimeLabel: { fontSize: 13, fontFamily: "Inter_400Regular" },
   clipDurationBadge: { fontSize: 12, fontFamily: "Inter_600SemiBold", paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 },
