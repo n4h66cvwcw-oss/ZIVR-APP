@@ -57,8 +57,7 @@
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT"
       ],
-      "allowBackup": false,
-      "googleServicesFile": "./google-services.json"
+      "allowBackup": false
     },
     "web": {
       "favicon": "./assets/images/icon.png"
