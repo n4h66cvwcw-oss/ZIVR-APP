@@ -171,7 +171,7 @@ export const OFFICIAL_SKINS: SkinTheme[] = [
     emoji: "⚾",
     price: 0,
     category: "sports",
-    creator: "ai",
+    creator: "official",
     tags: ["baseball", "giants", "sports", "sf", "bonds"],
     sentBubble: ["#FD5A1E", "#E8490C"],
     receivedBubble: "#1D1D1D",

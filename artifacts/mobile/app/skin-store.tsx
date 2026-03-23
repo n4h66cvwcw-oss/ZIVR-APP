@@ -297,14 +297,22 @@ function StoreTab({
   onPreview: (s: SkinTheme) => void;
   colors: typeof Colors.light;
 }) {
-  const featured = skins.find((s) => s.id === "barry-bonds")!;
-  const rest = skins.filter((s) => s.id !== "barry-bonds");
+  const featured = skins.find((s) => s.id === "barry-bonds") ?? skins[0];
+  const rest = skins.filter((s) => s.id !== featured?.id);
+
+  if (!featured) {
+    return (
+      <View style={{ paddingBottom: 40, alignItems: "center", paddingTop: 60 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 15 }}>No skins available</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={{ paddingBottom: 40 }}>
       <View style={styles.sectionHeader}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>⭐ Featured</Text>
-        <Text style={[styles.sectionSub, { color: colors.textSecondary }]}>AI-Generated</Text>
+        <Text style={[styles.sectionSub, { color: colors.textSecondary }]}>Official Skin</Text>
       </View>
       <Pressable onPress={() => onPreview(featured)} style={styles.featuredCard}>
         <LinearGradient
