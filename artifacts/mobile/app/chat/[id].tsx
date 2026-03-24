@@ -40,6 +40,7 @@ export default function ChatScreen() {
     sendMessage,
     markImageViewed,
     editMessage,
+    deleteMessage,
     addReaction,
     markChatRead,
     muteChat,
@@ -175,6 +176,7 @@ export default function ChatScreen() {
         activeSkin={activeSkin}
         onReact={(emoji) => handleReact(item.id, emoji)}
         onEdit={isMine ? (newText) => editMessage(id, item.id, newText) : undefined}
+        onDelete={isMine ? () => deleteMessage(id, item.id) : undefined}
         onVoiceCall={!isMine ? () => handleCallFromMessage(item.senderId, "voice") : undefined}
         onVideoCall={!isMine ? () => handleCallFromMessage(item.senderId, "video") : undefined}
         onImageViewed={handleImageViewed}

@@ -152,6 +152,7 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
   const selectedTrackRef = useRef<BaseTrack | null>(null);
   const clipStartRef = useRef(0);
   const clipLengthRef = useRef(20);
+  const playPreviewRef = useRef<() => void>(() => {});
 
   const player = useAudioPlayer(selectedTrack?.uri ? { uri: selectedTrack.uri } : { uri: "" });
 
@@ -202,6 +203,8 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
     }
   }, [selectedTrack, player, stopPreview]);
 
+  useEffect(() => { playPreviewRef.current = playPreview; }, [playPreview]);
+
   const startThumbPan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -217,7 +220,10 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
         const snapped = Math.round(raw * 2) / 2; // 0.5s precision
         setClipStart(Math.max(0, Math.min(maxS, snapped)));
       },
-      onPanResponderRelease: () => { Haptics.selectionAsync(); },
+      onPanResponderRelease: () => {
+        Haptics.selectionAsync();
+        playPreviewRef.current();
+      },
     })
   ).current;
 
@@ -237,7 +243,10 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
         const newLength = Math.max(3, Math.min(60, clampedEnd - clipStartRef.current));
         setClipLength(newLength);
       },
-      onPanResponderRelease: () => { Haptics.selectionAsync(); },
+      onPanResponderRelease: () => {
+        Haptics.selectionAsync();
+        playPreviewRef.current();
+      },
     })
   ).current;
 

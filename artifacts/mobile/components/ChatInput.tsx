@@ -688,7 +688,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
-    maxHeight: 120,
+    maxHeight: 200,
     paddingHorizontal: 14,
     paddingVertical: 10,
     overflow: "hidden",
@@ -698,7 +698,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     lineHeight: 22,
-    minHeight: 22,
+    minHeight: 48,
     flexGrow: 1,
   },
   sendBtn: {

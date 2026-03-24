@@ -30,6 +30,7 @@ interface MessageBubbleProps {
   onLongPress?: () => void;
   onReact?: (emoji: string) => void;
   onEdit?: (newText: string) => void;
+  onDelete?: () => void;
   onVoiceCall?: () => void;
   onVideoCall?: () => void;
   onImageViewed?: (messageId: string) => void;
@@ -778,6 +779,7 @@ export function MessageBubble({
   onLongPress,
   onReact,
   onEdit,
+  onDelete,
   onVoiceCall,
   onVideoCall,
   onImageViewed,
@@ -794,6 +796,7 @@ export function MessageBubble({
   const editInputRef = useRef<any>(null);
   const EDIT_WINDOW_MS = 90000;
   const canEdit = isMine && !message.deleted && !!onEdit && (Date.now() - message.timestamp <= EDIT_WINDOW_MS);
+  const canUnsend = isMine && !message.deleted && !!onDelete;
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const bubbleScale = useRef(new Animated.Value(0.9)).current;
   const bubbleOpacity = useRef(new Animated.Value(0)).current;
@@ -932,12 +935,13 @@ export function MessageBubble({
         delayLongPress={300}
       >
         {hasMusicBg ? (
-          <LinearGradient
-            colors={musicBubbleColors as [string, string]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[styles.bubble, isMine ? styles.myBubble : styles.theirBubble]}
-          >
+          <View style={[styles.bubble, isMine ? styles.myBubble : styles.theirBubble, { overflow: "hidden" }]}>
+            <LinearGradient
+              colors={musicBubbleColors as [string, string]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
             {message.imageAttachment && (
               <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
             )}
@@ -959,14 +963,15 @@ export function MessageBubble({
                 )}
               </View>
             </View>
-          </LinearGradient>
+          </View>
         ) : isMine && sentBubbleColors && !hasGifBg ? (
-          <LinearGradient
-            colors={sentBubbleColors as [string, string]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={[styles.bubble, styles.myBubble]}
-          >
+          <View style={[styles.bubble, styles.myBubble, { overflow: "hidden" }]}>
+            <LinearGradient
+              colors={sentBubbleColors as [string, string]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
             {message.imageAttachment && (
               <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
             )}
@@ -984,7 +989,7 @@ export function MessageBubble({
                 <Ionicons name="checkmark-done" size={14} color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"} style={{ marginLeft: 4 }} />
               </View>
             </View>
-          </LinearGradient>
+          </View>
         ) : (
         <View
           style={[
@@ -1116,6 +1121,19 @@ export function MessageBubble({
             >
               <Ionicons name="pencil-outline" size={16} color={colors.primary} />
               <Text style={[styles.editActionText, { color: colors.primary }]}>Edit</Text>
+            </Pressable>
+          )}
+          {canUnsend && (
+            <Pressable
+              onPress={() => {
+                setShowReactions(false);
+                scaleAnim.setValue(0);
+                onDelete?.();
+              }}
+              style={[styles.reactionOption, styles.editActionBtn, { borderTopColor: colors.border }]}
+            >
+              <Ionicons name="trash-outline" size={16} color="#FF3B30" />
+              <Text style={[styles.editActionText, { color: "#FF3B30" }]}>Unsend</Text>
             </Pressable>
           )}
         </Animated.View>
