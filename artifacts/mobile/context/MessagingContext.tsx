@@ -77,6 +77,7 @@ export type Message = {
   read?: boolean;
   deliveredAt?: number;
   deleted?: boolean;
+  editedAt?: number;
 };
 
 export type ChatSortMode =
@@ -301,6 +302,7 @@ interface MessagingContextValue {
   markBroadcastRepliesRead: (broadcastId: string) => Promise<void>;
   getReceivedBroadcasts: () => Array<{ broadcast: CheckInBroadcast; group: CheckInGroup; sender: Contact | undefined }>;
   getBroadcastReplyStats: (broadcastId: string) => { total: number; replied: number; pending: string[] };
+  editMessage: (chatId: string, messageId: string, newText: string) => Promise<void>;
   addReaction: (chatId: string, messageId: string, emoji: string) => Promise<void>;
   markChatRead: (chatId: string) => Promise<void>;
   deleteChat: (chatId: string) => Promise<void>;
@@ -1034,6 +1036,28 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [messages, myId]
   );
 
+  const editMessage = useCallback(
+    async (chatId: string, messageId: string, newText: string) => {
+      const chatMessages = messages[chatId] || [];
+      const now = Date.now();
+      const updated = chatMessages.map((m) => {
+        if (m.id !== messageId) return m;
+        if (m.senderId !== myId) return m;
+        if (now - m.timestamp > 90000) return m;
+        return { ...m, text: newText.trim(), editedAt: now };
+      });
+      const editedMsg = updated.find((m) => m.id === messageId);
+      const updatedChats = chats.map((c) => {
+        if (c.id !== chatId) return c;
+        const isLast = chatMessages[chatMessages.length - 1]?.id === messageId;
+        return isLast ? { ...c, lastMessage: editedMsg?.text ?? c.lastMessage } : c;
+      });
+      await saveMessages({ ...messages, [chatId]: updated });
+      await saveChats(updatedChats);
+    },
+    [messages, chats, myId]
+  );
+
   const markChatRead = useCallback(
     async (chatId: string) => {
       const updatedChats = chats.map((c) =>
@@ -1228,6 +1252,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       markBroadcastRepliesRead,
       getReceivedBroadcasts,
       getBroadcastReplyStats,
+      editMessage,
       addReaction,
       markChatRead,
       deleteChat,
@@ -1272,6 +1297,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       markBroadcastRepliesRead,
       getReceivedBroadcasts,
       getBroadcastReplyStats,
+      editMessage,
       addReaction,
       markChatRead,
       deleteChat,

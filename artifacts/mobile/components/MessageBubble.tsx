@@ -29,6 +29,7 @@ interface MessageBubbleProps {
   senderName?: string;
   onLongPress?: () => void;
   onReact?: (emoji: string) => void;
+  onEdit?: (newText: string) => void;
   onVoiceCall?: () => void;
   onVideoCall?: () => void;
   onImageViewed?: (messageId: string) => void;
@@ -776,6 +777,7 @@ export function MessageBubble({
   senderName,
   onLongPress,
   onReact,
+  onEdit,
   onVoiceCall,
   onVideoCall,
   onImageViewed,
@@ -787,6 +789,11 @@ export function MessageBubble({
   const colors = isDark ? Colors.dark : Colors.light;
   const [showReactions, setShowReactions] = useState(false);
   const [showCallBar, setShowCallBar] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const editInputRef = useRef<any>(null);
+  const EDIT_WINDOW_MS = 90000;
+  const canEdit = isMine && !message.deleted && !!onEdit && (Date.now() - message.timestamp <= EDIT_WINDOW_MS);
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const bubbleScale = useRef(new Animated.Value(0.9)).current;
   const bubbleOpacity = useRef(new Animated.Value(0)).current;
@@ -886,6 +893,39 @@ export function MessageBubble({
         </Text>
       )}
 
+      {isEditing ? (
+        <View style={[styles.bubble, styles.myBubble, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.primary + "66" }]}>
+          <TextInput
+            ref={editInputRef}
+            value={editText}
+            onChangeText={setEditText}
+            multiline
+            autoFocus
+            style={[styles.messageText, { color: colors.text, minHeight: 36 }]}
+            returnKeyType="default"
+            blurOnSubmit={false}
+          />
+          <View style={styles.editBtnRow}>
+            <Pressable
+              onPress={() => setIsEditing(false)}
+              style={[styles.editBtn, { backgroundColor: colors.surfaceSecondary }]}
+            >
+              <Text style={[styles.editBtnText, { color: colors.textSecondary }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                const trimmed = editText.trim();
+                if (trimmed) { onEdit!(trimmed); }
+                setIsEditing(false);
+              }}
+              style={[styles.editBtn, { backgroundColor: colors.primary }]}
+            >
+              <Ionicons name="checkmark" size={14} color="#fff" />
+              <Text style={[styles.editBtnText, { color: "#fff" }]}>Save</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
       <Pressable
         onPress={handlePress}
         onLongPress={handleLongPress}
@@ -1012,6 +1052,13 @@ export function MessageBubble({
           </View>
         )}
       </Pressable>
+      )}
+
+      {!isEditing && !!message.editedAt && (
+        <Text style={[styles.editedLabel, { color: colors.textTertiary, alignSelf: isMine ? "flex-end" : "flex-start" }]}>
+          edited
+        </Text>
+      )}
 
       {hasCallHandlers && (
         <CallActionBar
@@ -1056,6 +1103,21 @@ export function MessageBubble({
               <Text style={styles.reactionOptionEmoji}>{emoji}</Text>
             </Pressable>
           ))}
+          {canEdit && (
+            <Pressable
+              onPress={() => {
+                setShowReactions(false);
+                scaleAnim.setValue(0);
+                setEditText(message.text);
+                setIsEditing(true);
+                setTimeout(() => editInputRef.current?.focus(), 100);
+              }}
+              style={[styles.reactionOption, styles.editActionBtn, { borderTopColor: colors.border }]}
+            >
+              <Ionicons name="pencil-outline" size={16} color={colors.primary} />
+              <Text style={[styles.editActionText, { color: colors.primary }]}>Edit</Text>
+            </Pressable>
+          )}
         </Animated.View>
       )}
     </Animated.View>
@@ -1328,5 +1390,43 @@ const styles = StyleSheet.create({
   reelSaveBtn: {
     padding: 4,
     flexShrink: 0,
+  },
+  editBtnRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8,
+    justifyContent: "flex-end",
+  },
+  editBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 14,
+  },
+  editBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+  },
+  editedLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    marginTop: 1,
+    marginHorizontal: 14,
+    marginBottom: 2,
+  },
+  editActionBtn: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 4,
+    paddingTop: 8,
+    width: "100%",
+    justifyContent: "center",
+  },
+  editActionText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
   },
 });
