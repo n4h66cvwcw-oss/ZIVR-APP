@@ -126,6 +126,7 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
   const [source, setSource] = useState<"vibebeats" | "itunes">("itunes");
   const [step, setStep] = useState<"pick" | "configure">("pick");
   const [activeMood, setActiveMood] = useState("All");
+  const [vibebeatsQuery, setVibebeatsQuery] = useState("");
   const [selectedTrack, setSelectedTrack] = useState<BaseTrack | null>(null);
 
   const [clipStart, setClipStart] = useState(0);
@@ -212,8 +213,9 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
         if (!track || !barWidthRef.current) return;
         const delta = (g.dx / barWidthRef.current) * track.duration;
         const maxS = Math.max(0, track.duration - Math.max(5, clipLengthRef.current));
-        const newStart = Math.max(0, Math.min(maxS, clipStartAtGestureRef.current + delta));
-        setClipStart(Math.round(newStart));
+        const raw = clipStartAtGestureRef.current + delta;
+        const snapped = Math.round(raw * 2) / 2; // 0.5s precision
+        setClipStart(Math.max(0, Math.min(maxS, snapped)));
       },
       onPanResponderRelease: () => { Haptics.selectionAsync(); },
     })
@@ -229,15 +231,22 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
         const track = selectedTrackRef.current;
         if (!track || !barWidthRef.current) return;
         const delta = (g.dx / barWidthRef.current) * track.duration;
-        const rawEnd = Math.max(0, Math.min(track.duration, clipEndAtGestureRef.current + delta));
-        const newLength = Math.max(5, Math.min(60, rawEnd - clipStartRef.current));
-        setClipLength(Math.round(newLength));
+        const rawEnd = clipEndAtGestureRef.current + delta;
+        const snappedEnd = Math.round(rawEnd * 2) / 2; // 0.5s precision
+        const clampedEnd = Math.max(0, Math.min(track.duration, snappedEnd));
+        const newLength = Math.max(3, Math.min(60, clampedEnd - clipStartRef.current));
+        setClipLength(newLength);
       },
       onPanResponderRelease: () => { Haptics.selectionAsync(); },
     })
   ).current;
 
-  const filtered = activeMood === "All" ? MUSIC_LIBRARY : MUSIC_LIBRARY.filter((t) => t.mood === activeMood);
+  const filtered = MUSIC_LIBRARY.filter((t) => {
+    const moodOk = activeMood === "All" || t.mood === activeMood;
+    const q = vibebeatsQuery.trim().toLowerCase();
+    const textOk = !q || t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q) || t.genre.toLowerCase().includes(q);
+    return moodOk && textOk;
+  });
 
   const clipEnd = Math.min(clipStart + clipLength, selectedTrack?.duration ?? 9999);
   const actualClipLen = clipEnd - clipStart;
@@ -348,13 +357,17 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
   };
 
   const resetAndClose = () => {
+    stopPreview();
     setStep("pick");
     setSelectedTrack(null);
     setActiveMood("All");
+    setVibebeatsQuery("");
     setClipStart(0);
     setClipLength(20);
     setPlayMode("once");
     setDelaySeconds(3);
+    setLyrics([]);
+    setIsPreviewPlaying(false);
     onClose();
   };
 
@@ -578,6 +591,23 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
               </View>
             ) : (
               <>
+                <View style={[styles.itunesSearchBar, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                  <Ionicons name="search" size={16} color={colors.textSecondary} />
+                  <TextInput
+                    style={[styles.itunesInput, { color: colors.text }]}
+                    placeholder="Search title or artist…"
+                    placeholderTextColor={colors.textTertiary}
+                    value={vibebeatsQuery}
+                    onChangeText={setVibebeatsQuery}
+                    autoCorrect={false}
+                    returnKeyType="search"
+                  />
+                  {vibebeatsQuery.length > 0 && (
+                    <Pressable onPress={() => setVibebeatsQuery("")} hitSlop={8}>
+                      <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+                    </Pressable>
+                  )}
+                </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.moodBar} contentContainerStyle={styles.moodBarContent}>
                   {MOODS.map((mood) => (
                     <Pressable
@@ -922,11 +952,11 @@ const styles = StyleSheet.create({
   section: { borderRadius: 18, padding: 16, borderWidth: StyleSheet.hairlineWidth, gap: 12 },
   sectionTitle: { fontSize: 15, fontFamily: "Inter_700Bold" },
   sectionSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  timelineBar: { height: 44, borderRadius: 22, overflow: "visible", position: "relative", marginVertical: 8 },
-  timelineClip: { position: "absolute", top: 0, bottom: 0, borderRadius: 22, opacity: 0.8 },
-  timelineThumb: { position: "absolute", top: "50%", marginTop: -14, width: 28, height: 28, borderRadius: 14, borderWidth: 2.5, marginLeft: -14, alignItems: "center", justifyContent: "center", gap: 3, zIndex: 10 },
+  timelineBar: { height: 34, borderRadius: 17, overflow: "visible", position: "relative", marginVertical: 10 },
+  timelineClip: { position: "absolute", top: 0, bottom: 0, borderRadius: 17, opacity: 0.85 },
+  timelineThumb: { position: "absolute", top: "50%", marginTop: -17, width: 14, height: 34, borderRadius: 7, borderWidth: 2, marginLeft: -7, alignItems: "center", justifyContent: "center", gap: 2.5, zIndex: 10 },
   timelineThumbLarge: {},
-  thumbLine: { width: 2, height: 12, borderRadius: 1, backgroundColor: "rgba(255,255,255,0.9)" },
+  thumbLine: { width: 1.5, height: 10, borderRadius: 1, backgroundColor: "rgba(255,255,255,0.9)" },
   clipSectionHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 8 },
   previewPlayBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5 },
   previewPlayText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
