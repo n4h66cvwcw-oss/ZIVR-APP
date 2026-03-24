@@ -34,8 +34,8 @@ export type SkinTheme = {
 export const OFFICIAL_SKINS: SkinTheme[] = [
   {
     id: "default",
-    name: "VibeMsg Default",
-    description: "The classic VibeMsg blue. Clean, sharp, reliable.",
+    name: "ZIVR Default",
+    description: "The classic ZIVR blue. Clean, sharp, reliable.",
     emoji: "💬",
     price: 0,
     category: "minimal",
@@ -187,10 +187,10 @@ export const OFFICIAL_SKINS: SkinTheme[] = [
 ];
 
 const STORAGE_KEYS = {
-  owned: "vibemsg_owned_skins",
-  active: "vibemsg_active_skin",
-  ai: "vibemsg_ai_skins",
-  balance: "vibemsg_coin_balance",
+  owned: "zivr_owned_skins",
+  active: "zivr_active_skin",
+  ai: "zivr_ai_skins",
+  balance: "zivr_coin_balance",
 };
 
 const FREE_SKIN_IDS = new Set(
@@ -271,7 +271,7 @@ export function SkinProvider({ children }: { children: React.ReactNode }) {
       const priceCoins = Math.ceil(priceCents / 10);
 
       if (coinBalance < priceCoins) {
-        return { success: false, message: "Not enough VibeCoins" };
+        return { success: false, message: "Not enough ZivCoins" };
       }
 
       const newBalance = coinBalance - priceCoins;

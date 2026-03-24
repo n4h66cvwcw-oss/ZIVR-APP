@@ -8,7 +8,7 @@ const anthropic = new Anthropic({
   apiKey: process.env["AI_INTEGRATIONS_ANTHROPIC_API_KEY"] ?? "dummy",
 });
 
-const SKIN_SYSTEM_PROMPT = `You are a creative skin designer for a messaging app called VibeMsg. When given a theme prompt, you generate a JSON skin configuration.
+const SKIN_SYSTEM_PROMPT = `You are a creative skin designer for a messaging app called ZIVR. When given a theme prompt, you generate a JSON skin configuration.
 
 A skin defines the visual theme of the chat interface including bubble colors, background, and accents.
 

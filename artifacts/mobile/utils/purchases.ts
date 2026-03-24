@@ -1,7 +1,7 @@
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 
-export type VibeCoinPackage = {
+export type ZivCoinPackage = {
   id: string;
   productId: string;
   coins: number;
@@ -11,38 +11,38 @@ export type VibeCoinPackage = {
   bonus?: number;
 };
 
-export const VIBECOIN_PACKAGES: VibeCoinPackage[] = [
+export const VIBECOIN_PACKAGES: ZivCoinPackage[] = [
   {
     id: "coins_100",
-    productId: "com.vibemsg.app.coins.100",
+    productId: "com.zivr.app.coins.100",
     coins: 100,
-    label: "100 VibeCoins",
+    label: "100 ZivCoins",
     emoji: "🪙",
     fallbackPrice: "$0.99",
   },
   {
     id: "coins_500",
-    productId: "com.vibemsg.app.coins.500",
+    productId: "com.zivr.app.coins.500",
     coins: 500,
-    label: "500 VibeCoins",
+    label: "500 ZivCoins",
     emoji: "💰",
     fallbackPrice: "$3.99",
     bonus: 50,
   },
   {
     id: "coins_1000",
-    productId: "com.vibemsg.app.coins.1000",
+    productId: "com.zivr.app.coins.1000",
     coins: 1000,
-    label: "1000 VibeCoins",
+    label: "1000 ZivCoins",
     emoji: "💎",
     fallbackPrice: "$6.99",
     bonus: 200,
   },
   {
     id: "coins_2500",
-    productId: "com.vibemsg.app.coins.2500",
+    productId: "com.zivr.app.coins.2500",
     coins: 2500,
-    label: "2500 VibeCoins",
+    label: "2500 ZivCoins",
     emoji: "🏆",
     fallbackPrice: "$14.99",
     bonus: 750,
@@ -112,8 +112,8 @@ export async function fetchProducts(): Promise<{ productId: string; price: strin
   }
 }
 
-export async function purchaseVibeCoinPackage(
-  pkg: VibeCoinPackage,
+export async function purchaseZivCoinPackage(
+  pkg: ZivCoinPackage,
   onCoinsAwarded: (coins: number) => void
 ): Promise<PurchaseResult> {
   const IAP = await getIAP();

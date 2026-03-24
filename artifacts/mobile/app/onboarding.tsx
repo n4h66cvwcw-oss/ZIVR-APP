@@ -97,7 +97,7 @@ export default function OnboardingScreen() {
       displayName,
       username: username.trim() || undefined,
       phone: phone.trim() || undefined,
-      statusMessage: "Hey there! I'm on VibeMsg",
+      statusMessage: "Hey there! I'm on ZIVR",
     }).catch(() => {});
     router.replace("/(tabs)");
   }
@@ -140,7 +140,7 @@ export default function OnboardingScreen() {
               <LinearGradient colors={["#0A84FF", "#5E5CE6"]} style={styles.logoCircle}>
                 <Ionicons name="chatbubbles" size={32} color="#fff" />
               </LinearGradient>
-              <Text style={[styles.appName, { color: colors.text }]}>VibeMsg</Text>
+              <Text style={[styles.appName, { color: colors.text }]}>ZIVR</Text>
             </View>
 
             <View style={styles.stepIndicator}>
@@ -230,7 +230,7 @@ export default function OnboardingScreen() {
                     <Text style={[styles.syncTitle, { color: colors.text }]}>
                       {status === "requesting" ? "Requesting permission…" : status === "syncing" ? "Reading contacts…" : status === "done" ? `${syncedCount} contacts synced` : status === "denied" ? "Permission denied — tap to retry" : status === "error" ? "Sync failed — tap to retry" : "Sync with phone contacts"}
                     </Text>
-                    {status === "idle" && <Text style={[styles.syncSub, { color: colors.textSecondary }]}>Automatically finds who's on VibeMsg</Text>}
+                    {status === "idle" && <Text style={[styles.syncSub, { color: colors.textSecondary }]}>Automatically finds who's on ZIVR</Text>}
                     {status === "done" && <Text style={[styles.syncSub, { color: "#34C759" }]}>Tap to sync again</Text>}
                   </View>
                   {status === "idle" && (
@@ -268,7 +268,7 @@ export default function OnboardingScreen() {
                     phone: phone.trim() || undefined,
                     username: username.trim() || undefined,
                     avatarUri,
-                    statusMessage: "Hey there! I'm on VibeMsg",
+                    statusMessage: "Hey there! I'm on ZIVR",
                   }}
                 />
 
@@ -280,7 +280,7 @@ export default function OnboardingScreen() {
                   <LinearGradient colors={["#0A84FF", "#5E5CE6"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.continueBtnGrad}>
                     {saving ? <ActivityIndicator color="#fff" /> : (
                       <>
-                        <Text style={styles.continueBtnText}>Enter VibeMsg</Text>
+                        <Text style={styles.continueBtnText}>Enter ZIVR</Text>
                         <Ionicons name="arrow-forward" size={18} color="#fff" />
                       </>
                     )}

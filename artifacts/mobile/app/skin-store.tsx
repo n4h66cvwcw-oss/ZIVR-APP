@@ -24,8 +24,8 @@ import { useSkin, type SkinTheme } from "@/context/SkinContext";
 import {
   VIBECOIN_PACKAGES,
   fetchProducts,
-  purchaseVibeCoinPackage,
-  type VibeCoinPackage,
+  purchaseZivCoinPackage,
+  type ZivCoinPackage,
 } from "@/utils/purchases";
 
 type Tab = "store" | "my-skins" | "ai-lab";
@@ -79,7 +79,7 @@ export default function SkinStoreScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       showSuccess(`✨ ${skin.name} unlocked!`);
     } else {
-      Alert.alert("Not Enough VibeCoins", result.message, [{ text: "OK" }]);
+      Alert.alert("Not Enough ZivCoins", result.message, [{ text: "OK" }]);
     }
   };
 
@@ -94,18 +94,18 @@ export default function SkinStoreScreen() {
     }
   };
 
-  const handleBuyCoins = async (pkg: VibeCoinPackage) => {
+  const handleBuyCoins = async (pkg: ZivCoinPackage) => {
     if (purchasing) return;
     setPurchasing(pkg.id);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const result = await purchaseVibeCoinPackage(pkg, async (coins) => {
+    const result = await purchaseZivCoinPackage(pkg, async (coins) => {
       await addCoins(coins);
     });
     setPurchasing(null);
     if (result.success) {
       setShowCoinModal(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      showSuccess(`🪙 +${result.coins} VibeCoins added!`);
+      showSuccess(`🪙 +${result.coins} ZivCoins added!`);
     } else if (result.reason !== "cancelled") {
       Alert.alert("Purchase Failed", result.message ?? "Please try again.");
     }
@@ -228,10 +228,10 @@ export default function SkinStoreScreen() {
         <View style={[styles.coinModalSheet, { backgroundColor: colors.surface }]}>
           <View style={[styles.previewHandle, { backgroundColor: colors.border }]} />
           <Text style={[styles.coinModalTitle, { color: colors.text }]}>
-            🪙 Buy VibeCoins
+            🪙 Buy ZivCoins
           </Text>
           <Text style={[styles.coinModalSub, { color: colors.textSecondary }]}>
-            Use VibeCoins to unlock skins & AI Lab
+            Use ZivCoins to unlock skins & AI Lab
           </Text>
           {Constants.appOwnership === "expo" && (
             <View style={[styles.iapNotice, { backgroundColor: colors.surfaceSecondary }]}>
@@ -260,7 +260,7 @@ export default function SkinStoreScreen() {
                 <Text style={styles.coinPkgEmoji}>{pkg.emoji}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.coinPkgName, { color: colors.text }]}>
-                    {pkg.coins.toLocaleString()} VibeCoins
+                    {pkg.coins.toLocaleString()} ZivCoins
                     {pkg.bonus ? (
                       <Text style={{ color: "#32D74B" }}> +{pkg.bonus} bonus</Text>
                     ) : null}
@@ -742,7 +742,7 @@ function SkinPreviewModal({
               style={[styles.applyBtn, { backgroundColor: skin.accentColor }]}
             >
               <Text style={styles.applyBtnText}>
-                🪙 {Math.ceil(skin.price / 10)} VibeCoins — Unlock
+                🪙 {Math.ceil(skin.price / 10)} ZivCoins — Unlock
               </Text>
             </Pressable>
           )}

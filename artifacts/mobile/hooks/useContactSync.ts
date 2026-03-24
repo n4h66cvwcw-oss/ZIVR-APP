@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useState, useCallback } from "react";
 import type { Contact } from "@/context/MessagingContext";
 
-const CONTACTS_KEY = "@vibemsg_contacts";
+const CONTACTS_KEY = "@zivr_contacts";
 
 export type SyncStatus = "idle" | "requesting" | "syncing" | "done" | "denied" | "error";
 

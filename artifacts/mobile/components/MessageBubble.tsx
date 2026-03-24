@@ -296,7 +296,7 @@ function MusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boole
   if (music.uri) {
     return <ItunesMusicReelBar music={music} isMine={isMine} />;
   }
-  return <VibeBeatsMusicReelBar music={music} isMine={isMine} />;
+  return <ZivBeatsMusicReelBar music={music} isMine={isMine} />;
 }
 
 function ItunesMusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
@@ -413,7 +413,7 @@ function ItunesMusicReelBar({ music, isMine }: { music: MusicAttachment; isMine:
   );
 }
 
-function VibeBeatsMusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
+function ZivBeatsMusicReelBar({ music, isMine }: { music: MusicAttachment; isMine: boolean }) {
   const [playing, setPlaying] = useState(false);
   const [saved, setSaved] = useState(false);
   const spinAnim = useRef(new Animated.Value(0)).current;

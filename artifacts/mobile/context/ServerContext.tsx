@@ -65,7 +65,7 @@ interface ServerContextValue {
 
 const ServerContext = createContext<ServerContextValue | null>(null);
 
-const SERVER_USER_KEY = "@vibemsg_server_user_id";
+const SERVER_USER_KEY = "@zivr_server_user_id";
 
 function getApiBase(): string {
   const domain = process.env["EXPO_PUBLIC_DOMAIN"];

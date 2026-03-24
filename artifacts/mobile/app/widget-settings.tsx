@@ -92,7 +92,7 @@ export default function WidgetSettingsScreen() {
           <View style={[styles.infoBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
             <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
             <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-              Widgets require a custom development build. Configure your selections here, then follow the setup guide after installing a VibeMsg development build.
+              Widgets require a custom development build. Configure your selections here, then follow the setup guide after installing a ZIVR development build.
             </Text>
           </View>
         )}
@@ -219,7 +219,7 @@ export default function WidgetSettingsScreen() {
         </Pressable>
 
         <Text style={[styles.helpText, { color: colors.textTertiary }]}>
-          After saving, go to your home screen → long press → Add Widget → VibeMsg to place your shortcuts.
+          After saving, go to your home screen → long press → Add Widget → ZIVR to place your shortcuts.
         </Text>
       </ScrollView>
     </View>

@@ -47,7 +47,7 @@ function buildShareUrl(data: ContactCardData): string {
   params.set("n", data.name);
   if (data.phone) params.set("p", data.phone);
   if (data.username) params.set("u", data.username);
-  return `vibemsg://contact?${params.toString()}`;
+  return `zivr://contact?${params.toString()}`;
 }
 
 export function ContactCardWidget({ data, compact = false }: { data: ContactCardData; compact?: boolean }) {
@@ -93,7 +93,7 @@ export function ContactCardWidget({ data, compact = false }: { data: ContactCard
     setSharing(true);
     try {
       const vcard = buildVCard(data);
-      const fileName = `${data.name.replace(/\s+/g, "_")}_VibeMsg.vcf`;
+      const fileName = `${data.name.replace(/\s+/g, "_")}_ZIVR.vcf`;
       const uri = FileSystem.cacheDirectory + fileName;
       await FileSystem.writeAsStringAsync(uri, vcard, { encoding: FileSystem.EncodingType.UTF8 });
       const canShare = await Sharing.isAvailableAsync();
@@ -155,7 +155,7 @@ export function ContactCardWidget({ data, compact = false }: { data: ContactCard
             </View>
             <View style={styles.vibeMsgBadge}>
               <Ionicons name="chatbubbles" size={12} color="#fff" />
-              <Text style={styles.vibeMsgBadgeText}>VibeMsg</Text>
+              <Text style={styles.vibeMsgBadgeText}>ZIVR</Text>
             </View>
           </View>
 
@@ -170,7 +170,7 @@ export function ContactCardWidget({ data, compact = false }: { data: ContactCard
             <View style={styles.cardFooter}>
               <View style={styles.qrWrap}>
                 <QRCode
-                  value={qrValue || "vibemsg://contact"}
+                  value={qrValue || "zivr://contact"}
                   size={72}
                   color="#fff"
                   backgroundColor="transparent"
@@ -238,7 +238,7 @@ export function ContactCardWidget({ data, compact = false }: { data: ContactCard
               {data.phone ? <Text style={styles.qrModalPhone}>{data.phone}</Text> : null}
             </LinearGradient>
             <View style={styles.qrModalBody}>
-              <QRCode value={qrValue || "vibemsg://contact"} size={220} />
+              <QRCode value={qrValue || "zivr://contact"} size={220} />
               <Text style={[styles.qrModalSub, { color: colors.textSecondary }]}>
                 Scan with any camera app to add this contact
               </Text>

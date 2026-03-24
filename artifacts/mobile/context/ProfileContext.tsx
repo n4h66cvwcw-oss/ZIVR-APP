@@ -68,7 +68,7 @@ const DEFAULT_SETTINGS: ProfileSettings = {
   displayName: "",
   phone: "",
   username: "",
-  statusMessage: "Hey there! I'm on VibeMsg",
+  statusMessage: "Hey there! I'm on ZIVR",
   captureGuardEnabled: true,
   captureGuardType: "ai_gradient",
   captureGuardGradientId: 1,
@@ -85,7 +85,7 @@ interface ProfileContextValue {
 
 const ProfileContext = createContext<ProfileContextValue | null>(null);
 
-const STORAGE_KEY = "@vibemsg_profile";
+const STORAGE_KEY = "@zivr_profile";
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<ProfileSettings>(DEFAULT_SETTINGS);

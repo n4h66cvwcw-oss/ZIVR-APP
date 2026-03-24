@@ -22,7 +22,7 @@ import type { MusicAttachment, MusicPlayMode } from "@/context/MessagingContext"
 import { useRecentClips } from "@/hooks/useRecentClips";
 
 export const MUSIC_LIBRARY: Omit<MusicAttachment, "clipStart" | "clipEnd" | "playMode" | "delaySeconds">[] = [
-  { id: "m1",  title: "On Fire",       artist: "VibeBeats",    genre: "Hip-Hop",  mood: "Energy",    colors: ["#FF6B35", "#FF3B30"], emoji: "🔥", duration: 185 },
+  { id: "m1",  title: "On Fire",       artist: "ZivBeats",    genre: "Hip-Hop",  mood: "Energy",    colors: ["#FF6B35", "#FF3B30"], emoji: "🔥", duration: 185 },
   { id: "m2",  title: "Level Up",      artist: "DriveWave",    genre: "Trap",     mood: "Energy",    colors: ["#FF9F0A", "#FF6B35"], emoji: "⚡", duration: 212 },
   { id: "m3",  title: "Beast Mode",    artist: "PulseRiot",    genre: "EDM",      mood: "Energy",    colors: ["#BF5AF2", "#FF375F"], emoji: "💪", duration: 198 },
   { id: "m4",  title: "Late Night",    artist: "LoLux",        genre: "R&B",      mood: "Vibe",      colors: ["#5E5CE6", "#0A84FF"], emoji: "🌙", duration: 224 },
@@ -441,7 +441,7 @@ export function MusicalMessageModal({ visible, onClose, onSelect }: Props) {
               >
                 <Ionicons name="musical-notes" size={15} color={source === "vibebeats" ? "#BF5AF2" : colors.textSecondary} />
                 <Text style={[styles.sourceTabText, { color: source === "vibebeats" ? "#BF5AF2" : colors.textSecondary }]}>
-                  VibeBeats
+                  ZivBeats
                 </Text>
               </Pressable>
             </View>

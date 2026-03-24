@@ -1,10 +1,10 @@
-# VibeMsg — Expo React Native Messaging App
+# ZIVR — Expo React Native Messaging App
 
 ## App Overview
-VibeMsg is a feature-rich iOS-style messaging app with unique innovations:
+ZIVR is a feature-rich iOS-style messaging app with unique innovations:
 1. **Broadcast Check-In Groups** — members can't see each other, only sender sees replies, live reply progress bars, auto member reply simulation
 2. **Musical Messages (two tiers)** — (a) raw audio clips via file picker shown as waveform player bubbles; (b) Music Card messages — 18 curated tracks across 6 moods (Energy/Vibe/Chill/Love/Good Mood/Attitude) rendered as gradient mini-player bubbles with animated EQ bars and play/pause
-3. **Skin Store** — 3-tab (Store/AI Lab/My Skins) with VibeCoin purchases, AI-generated skins, gradient chat/bubble theming
+3. **Skin Store** — 3-tab (Store/AI Lab/My Skins) with ZivCoin purchases, AI-generated skins, gradient chat/bubble theming
 
 ### Key Features
 - End-to-end AES-256 encryption (via crypto-js) per chat — encrypted on device, stored ciphertext in AsyncStorage
@@ -22,11 +22,11 @@ VibeMsg is a feature-rich iOS-style messaging app with unique innovations:
 - Read receipts, online status, "last seen" indicators
 - Dark/light mode, Inter fonts, iOS-native design language
 
-### VibeCoin In-App Purchases (IAP)
-- `utils/purchases.ts` — `VibeCoinPackage` type with `emoji`, `fallbackPrice`, `bonus` fields; `VIBECOIN_PACKAGES` (100/500/1000/2500 coins); `fetchProducts()`, `purchaseVibeCoinPackage()` using `expo-in-app-purchases`
+### ZivCoin In-App Purchases (IAP)
+- `utils/purchases.ts` — `ZivCoinPackage` type with `emoji`, `fallbackPrice`, `bonus` fields; `VIBECOIN_PACKAGES` (100/500/1000/2500 coins); `fetchProducts()`, `purchaseZivCoinPackage()` using `expo-in-app-purchases`
 - `context/SkinContext.tsx` — `addCoins(amount)` function to credit coin balance + persist to AsyncStorage; exposed in context
-- `app/skin-store.tsx` — coin badge is now tappable, opens "Buy VibeCoins" bottom-sheet modal with 4 IAP packages, live store prices from IAP API (fallback to hardcoded), purchase spinner, success/failure handling
-- **IAP product IDs**: `com.vibemsg.app.coins.100/500/1000/2500` (must be created in App Store Connect + Play Console before publishing)
+- `app/skin-store.tsx` — coin badge is now tappable, opens "Buy ZivCoins" bottom-sheet modal with 4 IAP packages, live store prices from IAP API (fallback to hardcoded), purchase spinner, success/failure handling
+- **IAP product IDs**: `com.zivr.app.coins.100/500/1000/2500` (must be created in App Store Connect + Play Console before publishing)
 - `expo-in-app-purchases` has no `app.plugin.js` config plugin — it is **not** listed in `app.json` plugins; native setup is handled automatically by EAS build
 
 ### Real-Time Backend (NEW)

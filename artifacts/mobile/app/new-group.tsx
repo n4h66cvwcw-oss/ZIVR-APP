@@ -178,7 +178,7 @@ export default function NewGroupScreen() {
         <Feather name="search" size={16} color={colors.textTertiary} />
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}
-          placeholder={isServerGroup ? "Search VibeMsg users..." : "Add people..."}
+          placeholder={isServerGroup ? "Search ZIVR users..." : "Add people..."}
           placeholderTextColor={colors.textTertiary}
           value={search}
           onChangeText={isServerGroup ? handleSearchServer : setSearch}
@@ -231,7 +231,7 @@ export default function NewGroupScreen() {
               ) : search.length === 0 ? (
                 <>
                   <Ionicons name="search-outline" size={40} color={colors.textTertiary} />
-                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Search for VibeMsg users to add</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Search for ZIVR users to add</Text>
                 </>
               ) : (
                 <>

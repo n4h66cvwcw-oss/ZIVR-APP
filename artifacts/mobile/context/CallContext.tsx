@@ -59,7 +59,7 @@ interface CallContextValue {
 
 const CallContext = createContext<CallContextValue | null>(null);
 
-const STORAGE_KEY = "@vibemsg_call_history";
+const STORAGE_KEY = "@zivr_call_history";
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);

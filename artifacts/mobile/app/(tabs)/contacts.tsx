@@ -22,8 +22,8 @@ import { useCall } from "@/context/CallContext";
 import { Avatar } from "@/components/Avatar";
 import { useContactSync } from "@/hooks/useContactSync";
 
-const INVITE_LINK = "https://vibemsg.app/join";
-const INVITE_MESSAGE = `Hey! I'm using VibeMsg to send musical messages and more. Join me here: ${INVITE_LINK}`;
+const INVITE_LINK = "https://zivr.app/join";
+const INVITE_MESSAGE = `Hey! I'm using ZIVR to send musical messages and more. Join me here: ${INVITE_LINK}`;
 
 function ContactRow({
   contact,
@@ -443,8 +443,8 @@ export default function ContactsScreen() {
               {search
                 ? "Try a different name or spelling"
                 : syncStatus === "denied"
-                ? "Allow contacts access in Settings to find people on VibeMsg"
-                : "Sync your phone contacts to find friends on VibeMsg"}
+                ? "Allow contacts access in Settings to find people on ZIVR"
+                : "Sync your phone contacts to find friends on ZIVR"}
             </Text>
             {!search && (
               <View style={styles.emptyActions}>

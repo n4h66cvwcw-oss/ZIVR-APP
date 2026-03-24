@@ -27,7 +27,7 @@ import { Avatar } from "@/components/Avatar";
 type Tab = "contacts" | "find" | "invite";
 
 const INVITE_MSG = (senderName: string) =>
-  `Hey! I've been using VibeMsg — it has real-time messaging, music messages, E2E encryption, and more. Come chat with me!\n\nDownload VibeMsg and look up @${senderName || "me"} to connect.`;
+  `Hey! I've been using ZIVR — it has real-time messaging, music messages, E2E encryption, and more. Come chat with me!\n\nDownload ZIVR and look up @${senderName || "me"} to connect.`;
 
 export default function NewChatScreen() {
   const colorScheme = useColorScheme();
@@ -93,7 +93,7 @@ export default function NewChatScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const msg = INVITE_MSG(profile.username || profile.displayName);
     try {
-      await Share.share({ message: msg, title: "Join me on VibeMsg!" });
+      await Share.share({ message: msg, title: "Join me on ZIVR!" });
     } catch {
       Alert.alert("Could not open share sheet");
     }
@@ -239,7 +239,7 @@ export default function NewChatScreen() {
         <View style={styles.nameRow}>
           <Text style={[styles.contactName, { color: colors.text }]}>{item.displayName}</Text>
           <View style={[styles.serverBadge, { backgroundColor: "#0A84FF20" }]}>
-            <Text style={[styles.serverBadgeText, { color: "#0A84FF" }]}>VibeMsg</Text>
+            <Text style={[styles.serverBadgeText, { color: "#0A84FF" }]}>ZIVR</Text>
           </View>
         </View>
         {item.username ? (
@@ -277,7 +277,7 @@ export default function NewChatScreen() {
             <Ionicons name="share-social" size={24} color="#fff" />
           </View>
           <View style={styles.inviteBannerText}>
-            <Text style={styles.inviteBannerTitle}>Share VibeMsg</Text>
+            <Text style={styles.inviteBannerTitle}>Share ZIVR</Text>
             <Text style={styles.inviteBannerSub}>
               Invite anyone — even without their number
             </Text>
@@ -289,7 +289,7 @@ export default function NewChatScreen() {
         <Text
           style={[styles.sectionLabel, { color: colors.textSecondary, backgroundColor: colors.background }]}
         >
-          FROM YOUR CONTACTS ({invitableContacts.filter((c) => !invitedIds.has(c.id)).length} not yet on VibeMsg)
+          FROM YOUR CONTACTS ({invitableContacts.filter((c) => !invitedIds.has(c.id)).length} not yet on ZIVR)
         </Text>
       )}
     </View>
@@ -414,7 +414,7 @@ export default function NewChatScreen() {
                 <>
                   <Ionicons name="search-outline" size={48} color={colors.textTertiary} />
                   <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    Search for VibeMsg users by name or @username
+                    Search for ZIVR users by name or @username
                   </Text>
                 </>
               ) : (
@@ -429,7 +429,7 @@ export default function NewChatScreen() {
                   >
                     <Ionicons name="paper-plane-outline" size={16} color="#0A84FF" />
                     <Text style={[styles.inviteFromSearchText, { color: "#0A84FF" }]}>
-                      Invite "{search}" to VibeMsg
+                      Invite "{search}" to ZIVR
                     </Text>
                   </Pressable>
                 </>

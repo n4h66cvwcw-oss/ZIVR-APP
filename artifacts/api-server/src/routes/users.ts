@@ -34,7 +34,7 @@ router.post("/register", async (req, res) => {
       `INSERT INTO vm_users (display_name, username, phone, avatar, status_message)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [clean(displayName), clean(username), clean(phone), clean(avatar), clean(statusMessage) ?? "Hey there! I'm on VibeMsg"]
+      [clean(displayName), clean(username), clean(phone), clean(avatar), clean(statusMessage) ?? "Hey there! I'm on ZIVR"]
     );
 
     res.json({ user: { id: user!.id, displayName, username, phone } });

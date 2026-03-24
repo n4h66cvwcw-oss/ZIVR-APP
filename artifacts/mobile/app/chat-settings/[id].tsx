@@ -160,8 +160,8 @@ export default function ChatSettingsScreen() {
     }
     await MailComposer.composeAsync({
       recipients: [chat.recoveryEmail],
-      subject: "VibeMsg — Chat Passcode Recovery",
-      body: `Hi,\n\nYou requested passcode recovery for your VibeMsg chat "${chat.name}".\n\nYour passcode hint: ${chat.passcodeHint || "No hint set."}\n\nIf you cannot remember your passcode, open VibeMsg → Chat Settings → Reset Passcode.\n\nVibeMsg Team`,
+      subject: "ZIVR — Chat Passcode Recovery",
+      body: `Hi,\n\nYou requested passcode recovery for your ZIVR chat "${chat.name}".\n\nYour passcode hint: ${chat.passcodeHint || "No hint set."}\n\nIf you cannot remember your passcode, open ZIVR → Chat Settings → Reset Passcode.\n\nZIVR Team`,
     });
   };
 
