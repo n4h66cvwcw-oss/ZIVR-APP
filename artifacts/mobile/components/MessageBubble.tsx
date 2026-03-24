@@ -11,11 +11,13 @@ import {
   Modal,
   Platform,
   Pressable,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
   useColorScheme,
+  useWindowDimensions,
 } from "react-native";
 import Colors from "@/constants/colors";
 import type { AudioAttachment, ImageAttachment, Message, MessageFormatting, MusicAttachment } from "@/context/MessagingContext";
@@ -802,6 +804,45 @@ export function MessageBubble({
   const bubbleOpacity = useRef(new Animated.Value(0)).current;
 
   const hasCallHandlers = !isMine && (onVoiceCall || onVideoCall);
+  const { width: screenW, height: screenH } = useWindowDimensions();
+  const [gifExpanded, setGifExpanded] = useState(false);
+  const gifLightboxScale = useRef(new Animated.Value(0.85)).current;
+  const gifLightboxOpacity = useRef(new Animated.Value(0)).current;
+
+  const openGifLightbox = useCallback(() => {
+    setGifExpanded(true);
+    gifLightboxScale.setValue(0.85);
+    gifLightboxOpacity.setValue(0);
+    Animated.parallel([
+      Animated.spring(gifLightboxScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 120,
+        friction: 8,
+      }),
+      Animated.timing(gifLightboxOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [gifLightboxScale, gifLightboxOpacity]);
+
+  const closeGifLightbox = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(gifLightboxScale, {
+        toValue: 0.85,
+        useNativeDriver: true,
+        tension: 120,
+        friction: 8,
+      }),
+      Animated.timing(gifLightboxOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start(() => setGifExpanded(false));
+  }, [gifLightboxScale, gifLightboxOpacity]);
 
   useEffect(() => {
     Animated.parallel([
@@ -820,10 +861,14 @@ export function MessageBubble({
   }, []);
 
   const handlePress = useCallback(() => {
+    if (message.formatting?.backgroundGifUrl) {
+      openGifLightbox();
+      return;
+    }
     if (!hasCallHandlers) return;
     setShowCallBar((v) => !v);
     if (showReactions) setShowReactions(false);
-  }, [hasCallHandlers, showReactions]);
+  }, [message.formatting?.backgroundGifUrl, hasCallHandlers, showReactions, openGifLightbox]);
 
   const handleLongPress = useCallback(() => {
     setShowReactions(true);
@@ -1003,6 +1048,11 @@ export function MessageBubble({
             <ExpoImage source={{ uri: fmt.backgroundGifUrl }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" />
           )}
           {hasGifBg && <View style={styles.gifOverlay} />}
+          {hasGifBg && (
+            <View style={styles.gifExpandHint} pointerEvents="none">
+              <Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.7)" />
+            </View>
+          )}
           {message.imageAttachment && (
             <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
           )}
@@ -1080,6 +1130,41 @@ export function MessageBubble({
           colors={colors}
         />
       )}
+
+      {/* GIF Lightbox */}
+      <Modal
+        visible={gifExpanded}
+        transparent
+        statusBarTranslucent
+        animationType="none"
+        onRequestClose={closeGifLightbox}
+      >
+        <Pressable style={styles.gifLightboxBackdrop} onPress={closeGifLightbox}>
+          <StatusBar hidden />
+          <Animated.View
+            style={[
+              styles.gifLightboxContainer,
+              {
+                width: screenW - 24,
+                transform: [{ scale: gifLightboxScale }],
+                opacity: gifLightboxOpacity,
+              },
+            ]}
+          >
+            <ExpoImage
+              source={{ uri: fmt?.backgroundGifUrl ?? "" }}
+              style={{ width: screenW - 24, height: (screenW - 24) * 0.75, borderRadius: 16 }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+            <Pressable style={styles.gifLightboxCloseBtn} onPress={closeGifLightbox} hitSlop={12}>
+              <View style={styles.gifLightboxCloseCircle}>
+                <Ionicons name="close" size={18} color="#fff" />
+              </View>
+            </Pressable>
+          </Animated.View>
+        </Pressable>
+      </Modal>
 
       {showReactions && (
         <Animated.View
@@ -1408,6 +1493,37 @@ const styles = StyleSheet.create({
   reelSaveBtn: {
     padding: 4,
     flexShrink: 0,
+  },
+  gifExpandHint: {
+    position: "absolute",
+    top: 6,
+    right: 8,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    borderRadius: 8,
+    padding: 3,
+  },
+  gifLightboxBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.88)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  gifLightboxContainer: {
+    alignItems: "center",
+    position: "relative",
+  },
+  gifLightboxCloseBtn: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+  },
+  gifLightboxCloseCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   editBtnRow: {
     flexDirection: "row",
