@@ -911,14 +911,10 @@ export function MessageBubble({
       openGifLightbox();
       return;
     }
-    if (!isMine && hasText && !hasCallHandlers) {
-      handleReadAloud();
-      return;
-    }
     if (!hasCallHandlers) return;
     setShowCallBar((v) => !v);
     if (showReactions) setShowReactions(false);
-  }, [message.formatting?.backgroundGifUrl, isMine, hasText, hasCallHandlers, showReactions, openGifLightbox, handleReadAloud]);
+  }, [message.formatting?.backgroundGifUrl, hasCallHandlers, showReactions, openGifLightbox]);
 
   const handleLongPress = useCallback(() => {
     setShowReactions(true);
@@ -1024,6 +1020,7 @@ export function MessageBubble({
           </View>
         </View>
       ) : (
+      <View style={!isMine && hasText ? styles.bubbleWrapper : undefined}>
       <Pressable
         onPress={handlePress}
         onLongPress={handleLongPress}
@@ -1157,6 +1154,20 @@ export function MessageBubble({
           </View>
         )}
       </Pressable>
+      {!isMine && hasText && (
+        <Pressable
+          style={[styles.readAloudBtn, isSpeaking && styles.readAloudBtnActive]}
+          onPress={handleReadAloud}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons
+            name={isSpeaking ? "stop-circle" : "volume-high-outline"}
+            size={12}
+            color="#fff"
+          />
+        </Pressable>
+      )}
+      </View>
       )}
 
       {!isEditing && !!message.editedAt && (
@@ -1648,6 +1659,29 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600",
     fontFamily: "Inter_600SemiBold",
+  },
+  bubbleWrapper: {
+    position: "relative",
+  },
+  readAloudBtn: {
+    position: "absolute",
+    top: -9,
+    left: -9,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#5E6AD2",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.22,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  readAloudBtnActive: {
+    backgroundColor: "#FF453A",
   },
   editActionBtn: {
     borderTopWidth: StyleSheet.hairlineWidth,
