@@ -3,6 +3,7 @@ import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import * as Speech from "expo-speech";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -804,6 +805,51 @@ export function MessageBubble({
   const bubbleOpacity = useRef(new Animated.Value(0)).current;
 
   const hasCallHandlers = !isMine && (onVoiceCall || onVideoCall);
+  const hasText = !!(message.text && message.text.trim().length > 0);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const speakingPulse = useRef(new Animated.Value(1)).current;
+  const speakingLoop = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    if (isSpeaking) {
+      speakingLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(speakingPulse, { toValue: 1.18, duration: 550, useNativeDriver: true }),
+          Animated.timing(speakingPulse, { toValue: 0.88, duration: 550, useNativeDriver: true }),
+        ])
+      );
+      speakingLoop.current.start();
+    } else {
+      speakingLoop.current?.stop();
+      Animated.timing(speakingPulse, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+    }
+  }, [isSpeaking, speakingPulse]);
+
+  useEffect(() => {
+    return () => {
+      if (isSpeaking) Speech.stop();
+    };
+  }, []);
+
+  const handleReadAloud = useCallback(() => {
+    if (!hasText) return;
+    if (isSpeaking) {
+      Speech.stop();
+      setIsSpeaking(false);
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsSpeaking(true);
+    Speech.speak(message.text!, {
+      language: "en-US",
+      pitch: 1.0,
+      rate: 0.95,
+      onDone: () => setIsSpeaking(false),
+      onStopped: () => setIsSpeaking(false),
+      onError: () => setIsSpeaking(false),
+    });
+  }, [hasText, isSpeaking, message.text]);
+
   const { width: screenW, height: screenH } = useWindowDimensions();
   const [gifExpanded, setGifExpanded] = useState(false);
   const gifLightboxScale = useRef(new Animated.Value(0.85)).current;
@@ -865,10 +911,14 @@ export function MessageBubble({
       openGifLightbox();
       return;
     }
+    if (!isMine && hasText && !hasCallHandlers) {
+      handleReadAloud();
+      return;
+    }
     if (!hasCallHandlers) return;
     setShowCallBar((v) => !v);
     if (showReactions) setShowReactions(false);
-  }, [message.formatting?.backgroundGifUrl, hasCallHandlers, showReactions, openGifLightbox]);
+  }, [message.formatting?.backgroundGifUrl, isMine, hasText, hasCallHandlers, showReactions, openGifLightbox, handleReadAloud]);
 
   const handleLongPress = useCallback(() => {
     setShowReactions(true);
@@ -1115,6 +1165,18 @@ export function MessageBubble({
         </Text>
       )}
 
+      {isSpeaking && (
+        <Animated.View
+          style={[
+            styles.speakingBadge,
+            { alignSelf: isMine ? "flex-end" : "flex-start", transform: [{ scale: speakingPulse }] },
+          ]}
+        >
+          <Ionicons name="volume-high" size={11} color="#fff" />
+          <Text style={styles.speakingBadgeText}>Reading…</Text>
+        </Animated.View>
+      )}
+
       {hasCallHandlers && (
         <CallActionBar
           visible={showCallBar}
@@ -1193,6 +1255,25 @@ export function MessageBubble({
               <Text style={styles.reactionOptionEmoji}>{emoji}</Text>
             </Pressable>
           ))}
+          {hasText && (
+            <Pressable
+              onPress={() => {
+                setShowReactions(false);
+                scaleAnim.setValue(0);
+                handleReadAloud();
+              }}
+              style={[styles.reactionOption, styles.editActionBtn, { borderTopColor: colors.border }]}
+            >
+              <Ionicons
+                name={isSpeaking ? "stop-circle-outline" : "volume-high-outline"}
+                size={16}
+                color="#5E6AD2"
+              />
+              <Text style={[styles.editActionText, { color: "#5E6AD2" }]}>
+                {isSpeaking ? "Stop" : "Read Aloud"}
+              </Text>
+            </Pressable>
+          )}
           {canEdit && (
             <Pressable
               onPress={() => {
@@ -1549,6 +1630,24 @@ const styles = StyleSheet.create({
     marginTop: 1,
     marginHorizontal: 14,
     marginBottom: 2,
+  },
+  speakingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#5E6AD2",
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginTop: 3,
+    marginHorizontal: 14,
+    marginBottom: 2,
+  },
+  speakingBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
   },
   editActionBtn: {
     borderTopWidth: StyleSheet.hairlineWidth,
