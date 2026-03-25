@@ -1157,7 +1157,9 @@ export function MessageBubble({
       {!isMine && hasText && (
         <Pressable
           style={[styles.readAloudBtn, isSpeaking && styles.readAloudBtnActive]}
-          onPress={handleReadAloud}
+          onLongPress={handleReadAloud}
+          delayLongPress={2000}
+          onPress={isSpeaking ? handleReadAloud : undefined}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
