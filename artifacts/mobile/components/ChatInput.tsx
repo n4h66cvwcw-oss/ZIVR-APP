@@ -25,6 +25,8 @@ import { AudioClipEditor } from "@/components/AudioClipEditor";
 import { GifPickerModal } from "@/components/GifPickerModal";
 import { SecurePictureModal } from "@/components/SecurePictureModal";
 import { MusicalMessageModal } from "@/components/MusicalMessageModal";
+import { SelfDestructPicker } from "@/components/SelfDestructPicker";
+import type { SelfDestructConfig } from "@/context/MessagingContext";
 
 interface ChatInputProps {
   onSend: (
@@ -32,7 +34,8 @@ interface ChatInputProps {
     audio?: AudioAttachment,
     image?: ImageAttachment,
     formatting?: MessageFormatting,
-    music?: MusicAttachment
+    music?: MusicAttachment,
+    selfDestruct?: SelfDestructConfig
   ) => void;
   placeholder?: string;
   onTextChange?: (text: string) => void;
@@ -72,6 +75,8 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange }: 
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showFormatBar, setShowFormatBar] = useState(false);
   const [showMusicModal, setShowMusicModal] = useState(false);
+  const [showSelfDestructPicker, setShowSelfDestructPicker] = useState(false);
+  const [selfDestructConfig, setSelfDestructConfig] = useState<SelfDestructConfig | null>(null);
 
   const [bold, setBold] = useState(false);
   const [italic, setItalic] = useState(false);
@@ -103,10 +108,11 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange }: 
       Animated.timing(sendScale, { toValue: 0.85, duration: 80, useNativeDriver: true }),
       Animated.spring(sendScale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }),
     ]).start();
-    onSend(text.trim(), attachedAudio || undefined, undefined, buildFormatting(), attachedMusic || undefined);
+    onSend(text.trim(), attachedAudio || undefined, undefined, buildFormatting(), attachedMusic || undefined, selfDestructConfig || undefined);
     setText("");
     setAttachedAudio(null);
     setAttachedMusic(null);
+    setSelfDestructConfig(null);
   };
 
   const pickAudio = async () => {
@@ -418,6 +424,20 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange }: 
           {hasFormatting && <View style={[styles.formatDot, { backgroundColor: colors.secondary }]} />}
         </Pressable>
 
+        <Pressable
+          onPress={() => setShowSelfDestructPicker(true)}
+          style={[
+            styles.iconBtn,
+            { backgroundColor: selfDestructConfig ? "#FF3B3022" : colors.surfaceSecondary },
+          ]}
+          hitSlop={8}
+        >
+          <Text style={{ fontSize: 18 }}>{selfDestructConfig ? "💣" : "💣"}</Text>
+          {selfDestructConfig && (
+            <View style={[styles.formatDot, { backgroundColor: "#FF3B30" }]} />
+          )}
+        </Pressable>
+
         <View
           style={[
             styles.inputContainer,
@@ -498,6 +518,12 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange }: 
         visible={showMusicModal}
         onClose={() => setShowMusicModal(false)}
         onSelect={(track) => setAttachedMusic(track)}
+      />
+
+      <SelfDestructPicker
+        visible={showSelfDestructPicker}
+        onClose={() => setShowSelfDestructPicker(false)}
+        onConfirm={(config) => setSelfDestructConfig(config)}
       />
     </View>
   );

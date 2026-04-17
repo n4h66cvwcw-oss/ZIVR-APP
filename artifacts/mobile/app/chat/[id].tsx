@@ -1,10 +1,14 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
+import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
+import * as ScreenCapture from "expo-screen-capture";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Animated,
   FlatList,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -54,6 +58,10 @@ export default function ChatScreen() {
   const isTypingRef = useRef(false);
 
   const { startCall } = useCall();
+
+  const [shieldVisible, setShieldVisible] = useState(false);
+  const shieldOpacity = useRef(new Animated.Value(0)).current;
+  const [shieldConfig, setShieldConfig] = useState<{ text?: string; gifUrl?: string } | null>(null);
 
   const chat = chats.find((c) => c.id === id);
   const messages = getDecryptedMessages(id);
@@ -111,10 +119,32 @@ export default function ChatScreen() {
     : null;
   const otherContact = otherId ? getContactById(otherId) : null;
 
+  useEffect(() => {
+    const msgs = getDecryptedMessages(id);
+    const sdMessages = msgs.filter((m) => m.selfDestruct && !m.deleted);
+    if (sdMessages.length === 0) return;
+    const subscription = ScreenCapture.addScreenshotListener(() => {
+      const latest = sdMessages[sdMessages.length - 1];
+      const cfg = latest?.selfDestruct;
+      if (!cfg) return;
+      setShieldConfig({ text: cfg.shieldText, gifUrl: cfg.shieldGifUrl });
+      setShieldVisible(true);
+      shieldOpacity.setValue(0);
+      Animated.timing(shieldOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      setTimeout(() => {
+        Animated.timing(shieldOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => {
+          setShieldVisible(false);
+        });
+      }, 4000);
+    });
+    return () => subscription.remove();
+  }, [id, messages.length]);
+
   const handleSend = useCallback(
-    async (text: string, audio?: any, image?: any, formatting?: any, music?: any) => {
+    async (text: string, audio?: any, image?: any, formatting?: any, music?: any, selfDestruct?: any) => {
       if (!id) return;
-      await sendMessage(id, text, audio, image, formatting, music);
+      await sendMessage(id, text, audio, image, formatting, music, selfDestruct);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -345,6 +375,28 @@ export default function ChatScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {shieldVisible && (
+        <Animated.View
+          style={[chatStyles.shieldOverlay, { opacity: shieldOpacity }]}
+          pointerEvents="none"
+        >
+          {shieldConfig?.gifUrl ? (
+            <ExpoImage
+              source={{ uri: shieldConfig.gifUrl }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+            />
+          ) : (
+            <View style={chatStyles.shieldTextContainer}>
+              <Text style={chatStyles.shieldIcon}>🚫</Text>
+              <Text style={chatStyles.shieldText}>
+                {shieldConfig?.text ?? "Screenshot blocked"}
+              </Text>
+            </View>
+          )}
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -462,5 +514,32 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_500Medium",
     flex: 1,
     lineHeight: 18,
+  },
+});
+
+const chatStyles = StyleSheet.create({
+  shieldOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#000",
+    zIndex: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shieldTextContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 40,
+    gap: 16,
+  },
+  shieldIcon: {
+    fontSize: 64,
+  },
+  shieldText: {
+    color: "#fff",
+    fontSize: 22,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
+    lineHeight: 30,
   },
 });

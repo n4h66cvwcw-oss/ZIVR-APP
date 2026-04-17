@@ -806,6 +806,61 @@ export function MessageBubble({
 
   const hasCallHandlers = !isMine && (onVoiceCall || onVideoCall);
   const hasText = !!(message.text && message.text.trim().length > 0);
+
+  const sd = message.selfDestruct;
+  const hasSelfDestruct = !!sd && !message.deleted;
+  const [timeLeft, setTimeLeft] = useState<number | null>(() => {
+    if (!sd) return null;
+    const elapsed = (Date.now() - message.timestamp) / 1000;
+    return Math.max(0, Math.ceil(sd.duration - elapsed));
+  });
+  const explodeScale = useRef(new Animated.Value(1)).current;
+  const explodeOpacity = useRef(new Animated.Value(1)).current;
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+  const [exploded, setExploded] = useState(false);
+
+  useEffect(() => {
+    if (!hasSelfDestruct || exploded) return;
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [hasSelfDestruct, exploded]);
+
+  useEffect(() => {
+    if (timeLeft !== 0 || exploded) return;
+    setExploded(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    Animated.sequence([
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(shakeAnim, { toValue: 10, duration: 60, useNativeDriver: true }),
+          Animated.timing(shakeAnim, { toValue: -10, duration: 60, useNativeDriver: true }),
+        ]),
+        { iterations: 4 }
+      ),
+      Animated.parallel([
+        Animated.timing(explodeScale, { toValue: 1.4, duration: 350, useNativeDriver: true }),
+        Animated.timing(explodeOpacity, { toValue: 0, duration: 350, useNativeDriver: true }),
+      ]),
+    ]).start(() => {
+      onDelete?.();
+    });
+  }, [timeLeft, exploded]);
+
+  const formatTimeLeft = (secs: number) => {
+    if (secs >= 3600) return `${Math.floor(secs / 3600)}h`;
+    if (secs >= 60) return `${Math.floor(secs / 60)}m`;
+    return `${secs}s`;
+  };
+
   const [isSpeaking, setIsSpeaking] = useState(false);
   const speakingPulse = useRef(new Animated.Value(1)).current;
   const speakingLoop = useRef<Animated.CompositeAnimation | null>(null);
@@ -977,6 +1032,7 @@ export function MessageBubble({
         { opacity: bubbleOpacity, transform: [{ scale: bubbleScale }] },
       ]}
     >
+    <Animated.View style={{ opacity: explodeOpacity, transform: [{ scale: explodeScale }, { translateX: shakeAnim }] }}>
       {(showReactions || showCallBar) && (
         <Pressable style={StyleSheet.absoluteFill} onPress={handleDismiss} />
       )}
@@ -1020,7 +1076,7 @@ export function MessageBubble({
           </View>
         </View>
       ) : (
-      <View style={!isMine && hasText ? styles.bubbleWrapper : undefined}>
+      <View style={(!isMine && hasText) || hasSelfDestruct ? styles.bubbleWrapper : undefined}>
       <Pressable
         onPress={handlePress}
         onLongPress={handleLongPress}
@@ -1168,6 +1224,20 @@ export function MessageBubble({
             color="#fff"
           />
         </Pressable>
+      )}
+      {hasSelfDestruct && timeLeft !== null && timeLeft > 0 && (
+        <View
+          style={[
+            styles.countdownBadge,
+            isMine ? styles.countdownBadgeMine : styles.countdownBadgeThem,
+            timeLeft <= 10 && styles.countdownBadgeUrgent,
+          ]}
+        >
+          <Text style={styles.countdownBadgeEmoji}>💣</Text>
+          <Text style={[styles.countdownBadgeText, timeLeft <= 10 && styles.countdownBadgeTextUrgent]}>
+            {formatTimeLeft(timeLeft)}
+          </Text>
+        </View>
       )}
       </View>
       )}
@@ -1317,6 +1387,7 @@ export function MessageBubble({
           )}
         </Animated.View>
       )}
+    </Animated.View>
     </Animated.View>
   );
 }
@@ -1684,6 +1755,40 @@ const styles = StyleSheet.create({
   },
   readAloudBtnActive: {
     backgroundColor: "#FF453A",
+  },
+  countdownBadge: {
+    position: "absolute",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    zIndex: 20,
+  },
+  countdownBadgeMine: {
+    top: -10,
+    right: -10,
+  },
+  countdownBadgeThem: {
+    top: -10,
+    right: -10,
+  },
+  countdownBadgeUrgent: {
+    backgroundColor: "#FF3B30",
+  },
+  countdownBadgeEmoji: {
+    fontSize: 10,
+  },
+  countdownBadgeText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
+  },
+  countdownBadgeTextUrgent: {
+    color: "#fff",
   },
   editActionBtn: {
     borderTopWidth: StyleSheet.hairlineWidth,

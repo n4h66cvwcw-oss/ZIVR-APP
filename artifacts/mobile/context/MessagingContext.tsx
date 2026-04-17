@@ -63,6 +63,12 @@ export type MusicAttachment = {
   delaySeconds?: number;
 };
 
+export type SelfDestructConfig = {
+  duration: number;
+  shieldText?: string;
+  shieldGifUrl?: string;
+};
+
 export type Message = {
   id: string;
   chatId: string;
@@ -78,6 +84,7 @@ export type Message = {
   deliveredAt?: number;
   deleted?: boolean;
   editedAt?: number;
+  selfDestruct?: SelfDestructConfig;
 };
 
 export type ChatSortMode =
@@ -289,7 +296,7 @@ interface MessagingContextValue {
   broadcasts: CheckInBroadcast[];
   sortMode: ChatSortMode;
   setSortMode: (mode: ChatSortMode) => Promise<void>;
-  sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment) => Promise<void>;
+  sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
   createServerDirectChat: (serverUser: ServerUser) => Promise<string>;
@@ -768,7 +775,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const sendMessage = useCallback(
-    async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment) => {
+    async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => {
       const id = genId();
       const chat = chats.find((c) => c.id === chatId);
       const storedText =
@@ -786,6 +793,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         imageAttachment: image,
         musicAttachment: music,
         formatting,
+        selfDestruct,
         read: false,
       };
 
