@@ -29,6 +29,7 @@ import {
 } from "@/context/ProfileContext";
 import { useServer } from "@/context/ServerContext";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
+import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
 
 const GUARD_TYPES: { type: CaptureGuardType; icon: string; label: string }[] = [
@@ -49,6 +50,7 @@ export default function ProfileScreen() {
   const [status, setStatus] = useState(profile.statusMessage);
   const [customText, setCustomText] = useState(profile.captureGuardText);
   const [showDefaultSoundPicker, setShowDefaultSoundPicker] = useState(false);
+  const [showTypingEmojiPicker, setShowTypingEmojiPicker] = useState(false);
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
 
   const selectedGradient =
@@ -358,7 +360,38 @@ export default function ProfileScreen() {
             Applied to chats where no per-chat sound is set.
           </Text>
         </View>
+
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
+            TYPING INDICATOR
+          </Text>
+          <Pressable
+            onPress={() => setShowTypingEmojiPicker(true)}
+            style={({ pressed }) => [styles.field, { borderBottomColor: "transparent", opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary, width: "auto", flex: 1 }]}>
+              My Typing Emoji
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ fontSize: 22 }}>
+                {profile.typingEmoji || "···"}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+            </View>
+          </Pressable>
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            Others see this emoji animate when you're typing. Can be overridden per chat.
+          </Text>
+        </View>
       </ScrollView>
+
+      <EmojiPickerModal
+        visible={showTypingEmojiPicker}
+        current={profile.typingEmoji ?? ""}
+        title="My Global Typing Emoji"
+        onClose={() => setShowTypingEmojiPicker(false)}
+        onSelect={(emoji) => updateProfile({ typingEmoji: emoji || undefined })}
+      />
 
       <Modal visible={showDefaultSoundPicker} animationType="slide" presentationStyle="pageSheet" transparent>
         <Pressable style={styles.soundPickerOverlay} onPress={() => setShowDefaultSoundPicker(false)}>

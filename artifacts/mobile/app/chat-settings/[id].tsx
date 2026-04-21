@@ -21,7 +21,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging } from "@/context/MessagingContext";
+import { useProfile } from "@/context/ProfileContext";
 import { PasscodeModal } from "@/components/PasscodeModal";
+import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
 
 export default function ChatSettingsScreen() {
@@ -43,12 +45,16 @@ export default function ChatSettingsScreen() {
     muteChat,
     setNotificationSound,
     setReadReceiptsEnabled,
+    setChatTypingEmoji,
   } = useMessaging();
+
+  const { profile } = useProfile();
 
   const chat = chats.find((c) => c.id === id);
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
 
   const [showSetPasscode, setShowSetPasscode] = useState(false);
+  const [showTypingEmojiPicker, setShowTypingEmojiPicker] = useState(false);
   const [showVerifyOld, setShowVerifyOld] = useState(false);
   const [newPasscode, setNewPasscode] = useState("");
   const [newPasscodeRepeat, setNewPasscodeRepeat] = useState("");
@@ -320,6 +326,20 @@ export default function ChatSettingsScreen() {
           }
         />
 
+        <SettingRow
+          icon="happy-outline"
+          label="My Typing Indicator"
+          subtitle={
+            chat.typingEmoji
+              ? `Using ${chat.typingEmoji} (chat override)`
+              : profile.typingEmoji
+              ? `Using ${profile.typingEmoji} (from profile)`
+              : "Animated dots (default)"
+          }
+          colors={colors}
+          onPress={() => setShowTypingEmojiPicker(true)}
+        />
+
         <SectionHeader title="Danger Zone" colors={colors} />
 
         <SettingRow
@@ -331,6 +351,14 @@ export default function ChatSettingsScreen() {
           danger
         />
       </ScrollView>
+
+      <EmojiPickerModal
+        visible={showTypingEmojiPicker}
+        current={chat.typingEmoji ?? profile.typingEmoji ?? ""}
+        title="My Typing Indicator — This Chat"
+        onClose={() => setShowTypingEmojiPicker(false)}
+        onSelect={(emoji) => setChatTypingEmoji(id, emoji)}
+      />
 
       <Modal visible={showSoundPicker} animationType="slide" presentationStyle="pageSheet" transparent>
         <Pressable style={styles.soundPickerOverlay} onPress={() => setShowSoundPicker(false)}>

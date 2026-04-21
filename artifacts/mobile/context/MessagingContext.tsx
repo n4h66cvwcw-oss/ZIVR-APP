@@ -117,6 +117,7 @@ export type Chat = {
   isServerChat?: boolean;
   notificationSound?: string;
   readReceiptsEnabled?: boolean;
+  typingEmoji?: string;
 };
 
 export type CheckInGroup = {
@@ -318,6 +319,7 @@ interface MessagingContextValue {
   muteChat: (chatId: string) => Promise<void>;
   setNotificationSound: (chatId: string, sound: string) => Promise<void>;
   setReadReceiptsEnabled: (chatId: string, enabled: boolean) => Promise<void>;
+  setChatTypingEmoji: (chatId: string, emoji: string) => Promise<void>;
   addMemberToCheckIn: (groupId: string, memberId: string) => Promise<void>;
   removeMemberFromCheckIn: (groupId: string, memberId: string) => Promise<void>;
   getContactById: (id: string) => Contact | undefined;
@@ -1138,6 +1140,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [chats]
   );
 
+  const setChatTypingEmoji = useCallback(
+    async (chatId: string, emoji: string) => {
+      const updatedChats = chats.map((c) =>
+        c.id === chatId ? { ...c, typingEmoji: emoji } : c
+      );
+      await saveChats(updatedChats);
+    },
+    [chats]
+  );
+
   const setChatPasscode = useCallback(
     async (chatId: string, passcode: string, recoveryEmail?: string, hint?: string) => {
       const salt = genId();
@@ -1269,6 +1281,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       muteChat,
       setNotificationSound,
       setReadReceiptsEnabled,
+      setChatTypingEmoji,
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,
@@ -1314,6 +1327,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       muteChat,
       setNotificationSound,
       setReadReceiptsEnabled,
+      setChatTypingEmoji,
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,

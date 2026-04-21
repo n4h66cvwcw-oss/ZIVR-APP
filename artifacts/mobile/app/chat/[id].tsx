@@ -23,9 +23,11 @@ import { useMessaging, type Message } from "@/context/MessagingContext";
 import { useServer } from "@/context/ServerContext";
 import { useCall } from "@/context/CallContext";
 import { useSkin } from "@/context/SkinContext";
+import { useProfile } from "@/context/ProfileContext";
 import { Avatar } from "@/components/Avatar";
 import { ChatInput } from "@/components/ChatInput";
 import { MessageBubble } from "@/components/MessageBubble";
+import { TypingBubble } from "@/components/TypingBubble";
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -53,7 +55,8 @@ export default function ChatScreen() {
   } = useMessaging();
 
   const { serverUserId, isConnected, onTyping, emitTyping, emitChatRead } = useServer();
-  const [typingUsers, setTypingUsers] = useState<{ id: string; name: string }[]>([]);
+  const { profile } = useProfile();
+  const [typingUsers, setTypingUsers] = useState<{ id: string; name: string; emoji?: string }[]>([]);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef = useRef(false);
 
@@ -82,7 +85,7 @@ export default function ChatScreen() {
       setTypingUsers((prev) => {
         if (data.typing) {
           if (prev.some((u) => u.id === data.userId)) return prev;
-          return [...prev, { id: data.userId, name: data.name }];
+          return [...prev, { id: data.userId, name: data.name, emoji: data.emoji }];
         } else {
           return prev.filter((u) => u.id !== data.userId);
         }
@@ -100,9 +103,10 @@ export default function ChatScreen() {
     if (!chat?.isServerChat || !serverUserId || !id) return;
     const myContact = contacts.find((c) => c.id === "me");
     const myName = myContact?.name ?? "Someone";
+    const myEmoji = chat?.typingEmoji ?? profile.typingEmoji;
     if (text.length > 0 && !isTypingRef.current) {
       isTypingRef.current = true;
-      emitTyping(id, serverUserId, myName, true);
+      emitTyping(id, serverUserId, myName, true, myEmoji);
     }
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
@@ -111,7 +115,7 @@ export default function ChatScreen() {
         emitTyping(id, serverUserId, myName, false);
       }
     }, 2000);
-  }, [chat?.isServerChat, serverUserId, id, contacts, emitTyping]);
+  }, [chat?.isServerChat, serverUserId, id, contacts, emitTyping, chat?.typingEmoji, profile.typingEmoji]);
 
   const isGroup = chat?.type === "group";
   const otherId = !isGroup
@@ -246,7 +250,7 @@ export default function ChatScreen() {
             </View>
             {typingUsers.length > 0 ? (
               <Text style={[styles.headerStatus, { color: "#0A84FF" }]}>
-                {typingUsers[0].name} is typing…
+                {typingUsers.map((u) => u.name).join(", ")} {typingUsers.length === 1 ? "is" : "are"} typing {typingUsers[0].emoji ?? "…"}
               </Text>
             ) : otherContact?.isOnline ? (
               <Text style={[styles.headerStatus, { color: colors.secondary }]}>
@@ -332,6 +336,16 @@ export default function ChatScreen() {
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={() =>
             flatListRef.current?.scrollToEnd({ animated: false })
+          }
+          ListFooterComponent={
+            typingUsers.length > 0 ? (
+              <TypingBubble
+                key={typingUsers[0].id}
+                name={isGroup ? typingUsers[0].name : undefined}
+                emoji={typingUsers[0].emoji}
+                colors={colors}
+              />
+            ) : null
           }
           ListEmptyComponent={
             <View style={styles.emptyChat}>

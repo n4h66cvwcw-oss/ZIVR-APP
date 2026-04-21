@@ -57,8 +57,8 @@ interface ServerContextValue {
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
   sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
   onNewMessage: (handler: MessageHandler) => () => void;
-  emitTyping: (chatId: string, userId: string, name: string, isTyping: boolean) => void;
-  onTyping: (handler: (data: { chatId: string; userId: string; name: string; typing: boolean }) => void) => () => void;
+  emitTyping: (chatId: string, userId: string, name: string, isTyping: boolean, emoji?: string) => void;
+  onTyping: (handler: (data: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void) => () => void;
   emitChatRead: (chatId: string, userId: string) => void;
   onReadReceipt: (handler: ReadReceiptHandler) => () => void;
 }
@@ -84,7 +84,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const messageHandlers = useRef<Set<MessageHandler>>(new Set());
-  const typingHandlers = useRef<Set<(d: { chatId: string; userId: string; name: string; typing: boolean }) => void>>(new Set());
+  const typingHandlers = useRef<Set<(d: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void>>(new Set());
   const readReceiptHandlers = useRef<Set<ReadReceiptHandler>>(new Set());
 
   useEffect(() => {
@@ -122,7 +122,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       messageHandlers.current.forEach((h) => h(msg));
     });
 
-    socket.on("typing:update", (data: { chatId: string; userId: string; name: string; typing: boolean }) => {
+    socket.on("typing:update", (data: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => {
       typingHandlers.current.forEach((h) => h(data));
     });
 
@@ -249,10 +249,10 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const emitTyping = useCallback(
-    (chatId: string, userId: string, name: string, isTyping: boolean) => {
+    (chatId: string, userId: string, name: string, isTyping: boolean, emoji?: string) => {
       if (!socketRef.current?.connected) return;
       if (isTyping) {
-        socketRef.current.emit("typing:start", { chatId, userId, name });
+        socketRef.current.emit("typing:start", { chatId, userId, name, emoji });
       } else {
         socketRef.current.emit("typing:stop", { chatId, userId });
       }
@@ -261,7 +261,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   );
 
   const onTyping = useCallback(
-    (handler: (d: { chatId: string; userId: string; name: string; typing: boolean }) => void) => {
+    (handler: (d: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void) => {
       typingHandlers.current.add(handler);
       return () => { typingHandlers.current.delete(handler); };
     },
