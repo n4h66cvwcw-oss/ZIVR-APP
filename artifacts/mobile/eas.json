@@ -26,6 +26,7 @@
     "production": {
       "autoIncrement": true,
       "distribution": "store",
+      "channel": "production",
       "env": {
         "APP_ENV": "production"
       },
@@ -34,6 +35,16 @@
       },
       "android": {
         "buildType": "apk"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "ios": {
+        "simulator": false
+      },
+      "env": {
+        "APP_ENV": "preview"
       }
     }
   },

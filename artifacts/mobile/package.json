@@ -74,6 +74,7 @@
     "expo-secure-store": "^55.0.9",
     "expo-sharing": "^14.0.8",
     "expo-speech": "~13.1.7",
+    "expo-updates": "^29.0.17",
     "react-native-qrcode-svg": "^6.3.21",
     "socket.io-client": "^4.8.3"
   }
