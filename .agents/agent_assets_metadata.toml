@@ -1,0 +1,14 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "f4SNkswSeGb7PDW-ugNdf"
+uri = "file://artifacts/zivr-deck/public/hero-encryption.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "LE9Abjp_fb-LAKPZQWVED"
+uri = "file://artifacts/zivr-deck/public/hero-messaging.png"
+type = "image"
+title = "generated_image"
