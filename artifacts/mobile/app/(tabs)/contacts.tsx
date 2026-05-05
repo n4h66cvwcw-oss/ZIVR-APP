@@ -1,13 +1,15 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -21,25 +23,327 @@ import { useMessaging, type Contact } from "@/context/MessagingContext";
 import { useCall } from "@/context/CallContext";
 import { Avatar } from "@/components/Avatar";
 import { useContactSync } from "@/hooks/useContactSync";
+import { useContactGroups } from "@/hooks/useContactGroups";
 
 const INVITE_LINK = "https://zivr.app/join";
 const INVITE_MESSAGE = `Hey! I'm using ZIVR to send musical messages and more. Join me here: ${INVITE_LINK}`;
+
+const GROUP_COLORS = ["#30D158", "#FF375F", "#0A84FF", "#BF5AF2", "#FF9F0A", "#5E5CE6", "#FF6B6B", "#00C7BE"];
+const GROUP_EMOJIS = ["👥", "👨‍👩‍👧", "❤️", "💼", "🎉", "⭐", "🏠", "🌍", "🎵", "🏋️"];
+
+// ─── Contact Group Modal ──────────────────────────────────────────────────────
+
+function ContactGroupModal({
+  visible,
+  contact,
+  onClose,
+  colors,
+  insets,
+  getChatId,
+}: {
+  visible: boolean;
+  contact: Contact | null;
+  onClose: () => void;
+  colors: typeof Colors.light;
+  insets: { top: number; bottom: number };
+  getChatId: (contactId: string) => Promise<string>;
+}) {
+  const { groups, createGroup, toggleChatInGroup } = useContactGroups();
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupEmoji, setNewGroupEmoji] = useState("👥");
+  const [newGroupColor, setNewGroupColor] = useState("#0A84FF");
+  const nameInputRef = useRef<TextInput>(null);
+
+  // Resolve the direct chat ID when modal opens
+  React.useEffect(() => {
+    if (!visible || !contact) {
+      setChatId(null);
+      setCreating(false);
+      setNewGroupName("");
+      return;
+    }
+    setResolving(true);
+    getChatId(contact.id)
+      .then((id) => setChatId(id))
+      .catch(() => setChatId(null))
+      .finally(() => setResolving(false));
+  }, [visible, contact?.id]);
+
+  const handleToggleGroup = async (groupId: string) => {
+    if (!chatId) return;
+    Haptics.selectionAsync();
+    toggleChatInGroup(groupId, chatId);
+  };
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const newId = createGroup(newGroupName.trim(), newGroupEmoji, newGroupColor);
+    if (chatId) {
+      toggleChatInGroup(newId, chatId);
+    }
+    setCreating(false);
+    setNewGroupName("");
+    setNewGroupEmoji("👥");
+    setNewGroupColor("#0A84FF");
+  };
+
+  const handleClose = () => {
+    setCreating(false);
+    setNewGroupName("");
+    setNewGroupEmoji("👥");
+    setNewGroupColor("#0A84FF");
+    onClose();
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={handleClose}
+    >
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
+        <View style={[cgStyles.container, { backgroundColor: colors.background }]}>
+          {/* Header */}
+          <View
+            style={[
+              cgStyles.header,
+              { paddingTop: insets.top + 16, borderBottomColor: colors.border },
+            ]}
+          >
+            <Pressable onPress={handleClose} hitSlop={12}>
+              <Text style={[cgStyles.cancel, { color: colors.primary }]}>Done</Text>
+            </Pressable>
+            <Text style={[cgStyles.title, { color: colors.text }]}>
+              Add to Group
+            </Text>
+            <View style={{ width: 44 }} />
+          </View>
+
+          {/* Contact info banner */}
+          {contact && (
+            <View style={[cgStyles.contactBanner, { backgroundColor: colors.surfaceSecondary }]}>
+              <Avatar name={contact.name} size={36} isOnline={contact.isOnline} />
+              <Text style={[cgStyles.contactBannerName, { color: colors.text }]}>
+                {contact.name}
+              </Text>
+            </View>
+          )}
+
+          {resolving ? (
+            <View style={cgStyles.loadingWrap}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : (
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={[cgStyles.sectionLabel, { color: colors.textTertiary }]}>
+                GROUPS
+              </Text>
+
+              {groups.map((group) => {
+                const isMember = chatId ? group.chatIds.includes(chatId) : false;
+                return (
+                  <Pressable
+                    key={group.id}
+                    onPress={() => handleToggleGroup(group.id)}
+                    style={({ pressed }) => [
+                      cgStyles.groupRow,
+                      {
+                        backgroundColor: pressed
+                          ? colors.surfaceSecondary
+                          : colors.surface,
+                      },
+                    ]}
+                  >
+                    <View style={[cgStyles.groupEmojiBadge, { backgroundColor: group.color + "22" }]}>
+                      <Text style={cgStyles.groupEmoji}>{group.emoji}</Text>
+                    </View>
+                    <View style={cgStyles.groupInfo}>
+                      <Text style={[cgStyles.groupName, { color: colors.text }]}>
+                        {group.name}
+                      </Text>
+                      <Text style={[cgStyles.groupCount, { color: colors.textTertiary }]}>
+                        {group.chatIds.length} {group.chatIds.length === 1 ? "member" : "members"}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        cgStyles.checkbox,
+                        {
+                          backgroundColor: isMember ? group.color : "transparent",
+                          borderColor: isMember ? group.color : colors.border,
+                        },
+                      ]}
+                    >
+                      {isMember && (
+                        <Ionicons name="checkmark" size={14} color="#FFF" />
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              })}
+
+              {/* Divider */}
+              <View style={[cgStyles.divider, { backgroundColor: colors.border }]} />
+
+              {/* New Group Section */}
+              {creating ? (
+                <View style={[cgStyles.newGroupForm, { backgroundColor: colors.surface }]}>
+                  {/* Emoji picker */}
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={cgStyles.emojiRow}
+                  >
+                    {GROUP_EMOJIS.map((e) => (
+                      <Pressable
+                        key={e}
+                        onPress={() => setNewGroupEmoji(e)}
+                        style={[
+                          cgStyles.emojiOption,
+                          {
+                            backgroundColor:
+                              newGroupEmoji === e
+                                ? colors.primary + "20"
+                                : colors.surfaceSecondary,
+                            borderWidth: newGroupEmoji === e ? 1.5 : 0,
+                            borderColor: colors.primary,
+                          },
+                        ]}
+                      >
+                        <Text style={{ fontSize: 20 }}>{e}</Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+
+                  {/* Color picker */}
+                  <View style={cgStyles.colorRow}>
+                    {GROUP_COLORS.map((c) => (
+                      <Pressable
+                        key={c}
+                        onPress={() => setNewGroupColor(c)}
+                        style={[
+                          cgStyles.colorDot,
+                          { backgroundColor: c },
+                          newGroupColor === c && cgStyles.colorDotSelected,
+                        ]}
+                      />
+                    ))}
+                  </View>
+
+                  {/* Name input */}
+                  <View
+                    style={[
+                      cgStyles.nameInputWrap,
+                      { backgroundColor: colors.surfaceSecondary },
+                    ]}
+                  >
+                    <Text style={{ fontSize: 20 }}>{newGroupEmoji}</Text>
+                    <TextInput
+                      ref={nameInputRef}
+                      style={[cgStyles.nameInput, { color: colors.text }]}
+                      placeholder="Group name…"
+                      placeholderTextColor={colors.textTertiary}
+                      value={newGroupName}
+                      onChangeText={setNewGroupName}
+                      autoFocus
+                      returnKeyType="done"
+                      onSubmitEditing={handleCreateGroup}
+                    />
+                  </View>
+
+                  <View style={cgStyles.formActions}>
+                    <Pressable
+                      onPress={() => {
+                        setCreating(false);
+                        setNewGroupName("");
+                      }}
+                      style={[cgStyles.formBtn, { backgroundColor: colors.surfaceSecondary }]}
+                    >
+                      <Text style={[cgStyles.formBtnText, { color: colors.textSecondary }]}>
+                        Cancel
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={handleCreateGroup}
+                      style={[
+                        cgStyles.formBtn,
+                        {
+                          backgroundColor:
+                            newGroupName.trim() ? newGroupColor : colors.surfaceSecondary,
+                          flex: 1,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          cgStyles.formBtnText,
+                          { color: newGroupName.trim() ? "#FFF" : colors.textTertiary },
+                        ]}
+                      >
+                        Create &amp; Add
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    setCreating(true);
+                  }}
+                  style={({ pressed }) => [
+                    cgStyles.newGroupBtn,
+                    {
+                      backgroundColor: pressed
+                        ? colors.primary + "18"
+                        : colors.primary + "10",
+                    },
+                  ]}
+                >
+                  <View style={[cgStyles.newGroupPlus, { backgroundColor: colors.primary }]}>
+                    <Ionicons name="add" size={18} color="#FFF" />
+                  </View>
+                  <Text style={[cgStyles.newGroupBtnText, { color: colors.primary }]}>
+                    New Group
+                  </Text>
+                </Pressable>
+              )}
+            </ScrollView>
+          )}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ─── Contact Row ──────────────────────────────────────────────────────────────
 
 function ContactRow({
   contact,
   onPress,
   onVoiceCall,
   onVideoCall,
+  onGroupPress,
+  colors,
 }: {
   contact: Contact;
   onPress: () => void;
   onVoiceCall: () => void;
   onVideoCall: () => void;
+  onGroupPress: () => void;
+  colors: typeof Colors.light;
 }) {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === "dark";
-  const colors = isDark ? Colors.dark : Colors.light;
-
   const lastSeenText = contact.isOnline
     ? "Online"
     : contact.lastSeen
@@ -57,6 +361,19 @@ function ContactRow({
         { backgroundColor: colors.surface, opacity: pressed ? 0.8 : 1 },
       ]}
     >
+      {/* Group tag icon — left side */}
+      <Pressable
+        onPress={(e) => {
+          e.stopPropagation();
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          onGroupPress();
+        }}
+        hitSlop={6}
+        style={[styles.groupTagBtn, { backgroundColor: colors.primary + "15" }]}
+      >
+        <Ionicons name="bookmark-outline" size={15} color={colors.primary} />
+      </Pressable>
+
       <Avatar name={contact.name} size={48} isOnline={contact.isOnline} />
       <View style={styles.contactInfo}>
         <Text style={[styles.contactName, { color: colors.text }]}>
@@ -106,6 +423,8 @@ function ContactRow({
     </Pressable>
   );
 }
+
+// ─── Invite Modal ─────────────────────────────────────────────────────────────
 
 function InviteRow({
   contact,
@@ -271,12 +590,16 @@ function InviteModal({
   );
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function formatLastSeen(ts: number): string {
   const diff = Date.now() - ts;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
   return `${Math.floor(diff / 86400000)}d ago`;
 }
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function ContactsScreen() {
   const colorScheme = useColorScheme();
@@ -287,6 +610,7 @@ export default function ContactsScreen() {
   const { startCall } = useCall();
   const [search, setSearch] = useState("");
   const [showInvite, setShowInvite] = useState(false);
+  const [groupModalContact, setGroupModalContact] = useState<Contact | null>(null);
   const { status: syncStatus, syncedCount, syncContacts } = useContactSync();
 
   const isSyncing = syncStatus === "requesting" || syncStatus === "syncing";
@@ -408,7 +732,9 @@ export default function ContactsScreen() {
               )}
               <ContactRow
                 contact={item}
+                colors={colors}
                 onPress={() => handleMessage(item.id)}
+                onGroupPress={() => setGroupModalContact(item)}
                 onVoiceCall={() => {
                   startCall(item.id, item.name, "voice");
                   router.push({ pathname: "/call/[id]", params: { id: item.id, name: item.name, type: "voice" } });
@@ -425,7 +751,7 @@ export default function ContactsScreen() {
           <View
             style={[
               styles.separator,
-              { backgroundColor: colors.border, marginLeft: 76 },
+              { backgroundColor: colors.border, marginLeft: 96 },
             ]}
           />
         )}
@@ -482,9 +808,20 @@ export default function ContactsScreen() {
         colors={colors}
         insets={{ top: insets.top, bottom: insets.bottom }}
       />
+
+      <ContactGroupModal
+        visible={groupModalContact !== null}
+        contact={groupModalContact}
+        onClose={() => setGroupModalContact(null)}
+        colors={colors}
+        insets={{ top: insets.top, bottom: insets.bottom }}
+        getChatId={createDirectChat}
+      />
     </View>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -557,9 +894,16 @@ const styles = StyleSheet.create({
   contactRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 12,
-    gap: 12,
+    gap: 10,
+  },
+  groupTagBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   contactInfo: {
     flex: 1,
@@ -723,5 +1067,181 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     textAlign: "center",
     lineHeight: 20,
+  },
+});
+
+const cgStyles = StyleSheet.create({
+  container: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  cancel: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    width: 44,
+    textAlign: "left",
+  },
+  title: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+  },
+  contactBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  contactBannerName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+  loadingWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 6,
+  },
+  groupRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    gap: 14,
+  },
+  groupEmojiBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  groupEmoji: {
+    fontSize: 20,
+  },
+  groupInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  groupName: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+  },
+  groupCount: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+  },
+  checkbox: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 16,
+    marginVertical: 8,
+  },
+  newGroupBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 14,
+  },
+  newGroupPlus: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  newGroupBtnText: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+  },
+  newGroupForm: {
+    marginHorizontal: 16,
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
+  },
+  emojiRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingVertical: 2,
+  },
+  emojiOption: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  colorRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  colorDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  colorDotSelected: {
+    transform: [{ scale: 1.2 }],
+    shadowColor: "#000",
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  nameInputWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  nameInput: {
+    flex: 1,
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+  },
+  formActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  formBtn: {
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  formBtnText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
   },
 });
