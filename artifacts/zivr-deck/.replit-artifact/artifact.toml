@@ -1,0 +1,31 @@
+kind = "slides"
+previewPath = "/zivr-deck/"
+title = "ZIVR App Deck"
+version = "1.0.0"
+id = "artifacts/zivr-deck"
+router = "path"
+
+[[integratedSkills]]
+name = "slides"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/zivr-deck/" ]
+localPort = 19092
+
+[services.development]
+run = "pnpm --filter @workspace/zivr-deck run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/zivr-deck", "run", "build" ]
+publicDir = "artifacts/zivr-deck/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19092"
+BASE_PATH = "/zivr-deck/"
