@@ -19,6 +19,7 @@ import {
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
+import { BETA_CHAT_ID } from "@/utils/betaFeedback";
 import { useMessaging, type Message } from "@/context/MessagingContext";
 import { useServer } from "@/context/ServerContext";
 import { useCall } from "@/context/CallContext";
@@ -174,6 +175,7 @@ export default function ChatScreen() {
   );
 
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
+  const isBetaChat = id === BETA_CHAT_ID;
 
   if (!chat) {
     return (
@@ -279,28 +281,32 @@ export default function ChatScreen() {
               color={chat.isMuted ? colors.textTertiary : colors.primary}
             />
           </Pressable>
-          <Pressable
-            hitSlop={10}
-            style={styles.headerActionBtn}
-            onPress={() => {
-              const name = otherContact?.name ?? chat.name;
-              startCall(otherId ?? id, name, "video");
-              router.push({ pathname: "/call/[id]", params: { id: otherId ?? id, name, type: "video" } });
-            }}
-          >
-            <Feather name="video" size={20} color={colors.primary} />
-          </Pressable>
-          <Pressable
-            hitSlop={10}
-            style={styles.headerActionBtn}
-            onPress={() => {
-              const name = otherContact?.name ?? chat.name;
-              startCall(otherId ?? id, name, "voice");
-              router.push({ pathname: "/call/[id]", params: { id: otherId ?? id, name, type: "voice" } });
-            }}
-          >
-            <Feather name="phone" size={20} color={colors.primary} />
-          </Pressable>
+          {!isBetaChat && (
+            <>
+              <Pressable
+                hitSlop={10}
+                style={styles.headerActionBtn}
+                onPress={() => {
+                  const name = otherContact?.name ?? chat.name;
+                  startCall(otherId ?? id, name, "video");
+                  router.push({ pathname: "/call/[id]", params: { id: otherId ?? id, name, type: "video" } });
+                }}
+              >
+                <Feather name="video" size={20} color={colors.primary} />
+              </Pressable>
+              <Pressable
+                hitSlop={10}
+                style={styles.headerActionBtn}
+                onPress={() => {
+                  const name = otherContact?.name ?? chat.name;
+                  startCall(otherId ?? id, name, "voice");
+                  router.push({ pathname: "/call/[id]", params: { id: otherId ?? id, name, type: "voice" } });
+                }}
+              >
+                <Feather name="phone" size={20} color={colors.primary} />
+              </Pressable>
+            </>
+          )}
           <Pressable
             hitSlop={10}
             style={styles.headerActionBtn}
@@ -310,6 +316,18 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       </View>
+
+      {isBetaChat && (
+        <View style={[chatStyles.betaBanner, { backgroundColor: "#7B5EA720", borderBottomColor: "#7B5EA740" }]}>
+          <Ionicons name="bug-outline" size={14} color="#7B5EA7" />
+          <Text style={chatStyles.betaBannerText}>
+            Beta Feedback · Messages go directly to the ZIVR team
+          </Text>
+          <View style={chatStyles.betaBadge}>
+            <Text style={chatStyles.betaBadgeText}>BETA</Text>
+          </View>
+        </View>
+      )}
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -555,5 +573,31 @@ const chatStyles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     textAlign: "center",
     lineHeight: 30,
+  },
+  betaBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 7,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  betaBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
+    color: "#7B5EA7",
+  },
+  betaBadge: {
+    backgroundColor: "#7B5EA7",
+    borderRadius: 5,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  betaBadgeText: {
+    fontSize: 9,
+    fontFamily: "Inter_700Bold",
+    color: "#fff",
+    letterSpacing: 0.5,
   },
 });

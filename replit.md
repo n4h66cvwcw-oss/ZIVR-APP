@@ -14,7 +14,8 @@ ZIVR is a feature-rich iOS-style messaging app with unique innovations:
 - Advanced search: keyword, exact date, date range, time range, by sender — with highlighted results
 - Multiple organize modes: Most Recent, Unread First, Alphabetical, Oldest First, Pinned First
 - Filter tabs: All, Unread, Direct, Groups, Pinned, Encrypted
-- Home screen widget configuration (Small/Medium/Large, up to 4 chat shortcuts)
+- Home screen widget configuration UI (Small/Medium/Large, up to 4 chat shortcuts) — **NOTE: True iOS home screen widgets require a native Swift/SwiftUI WidgetKit extension and a custom Expo config plugin. This cannot be implemented in JavaScript alone. The current widget-settings.tsx is a placeholder UI only and does NOT register any real iOS widget. Completing this feature requires native iOS development outside of Replit.**
+- Beta Feedback pinned thread (`zivr-beta-feedback`) — messages stored in AsyncStorage queue (`@zivr_beta_feedback_queue`); email forwarding pathway is fully stubbed in `utils/betaFeedback.ts` — set `BETA_FEEDBACK_EMAIL` and add `POST /api/beta-feedback` route to activate
 - Swipe-to-pin, swipe-to-mute, swipe-to-delete, swipe to Chat Settings
 - Check-In broadcast groups with per-member reply panels and private side chats
 - Audio message player with waveform visualization and pulse animation

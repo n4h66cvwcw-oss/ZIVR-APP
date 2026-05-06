@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { scheduleLocalNotification } from "@/utils/notifications";
+import { BETA_CHAT_ID, queueFeedbackSubmission } from "@/utils/betaFeedback";
 import React, {
   createContext,
   useCallback,
@@ -286,7 +287,35 @@ const SAMPLE_CONTACTS: Contact[] = [
     isOnline: true,
     lastSeen: Date.now() - 30000,
   },
+  {
+    id: "zivr-team",
+    name: "ZIVR Team",
+    status: "Reading your feedback 👀",
+    isOnline: true,
+  },
 ];
+
+const BETA_CHAT: Chat = {
+  id: BETA_CHAT_ID,
+  type: "direct",
+  name: "ZIVR Beta Feedback",
+  participantIds: ["me", "zivr-team"],
+  createdAt: 0,
+  isPinned: true,
+  unreadCount: 0,
+  description: "Send bugs, issues and feedback directly to the ZIVR team",
+  lastMessage: "👋 Welcome to the ZIVR Beta! Send us any bugs or feedback here.",
+  lastMessageTime: Date.now() - 500,
+};
+
+const BETA_WELCOME_MSG: Message = {
+  id: "beta-welcome-msg-1",
+  chatId: BETA_CHAT_ID,
+  text: "👋 Welcome to the ZIVR Beta!\n\nThis is your direct line to the ZIVR team. Send us any bugs, issues, or feedback you find — we read every message and use your reports to make the app better.\n\nThank you for testing ZIVR! 🚀",
+  senderId: "zivr-team",
+  timestamp: Date.now() - 500,
+  read: true,
+};
 
 interface MessagingContextValue {
   myId: string;
@@ -441,8 +470,31 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         setContactsState(hasMe ? saved : [SAMPLE_CONTACTS[0], ...saved]);
       }
 
-      if (chatsStr) setChats(JSON.parse(chatsStr));
-      if (messagesStr) setMessages(JSON.parse(messagesStr));
+      if (chatsStr) {
+        const loadedChats: Chat[] = JSON.parse(chatsStr);
+        const hasBetaChat = loadedChats.some((c) => c.id === BETA_CHAT_ID);
+        const finalChats = hasBetaChat ? loadedChats : [BETA_CHAT, ...loadedChats];
+        setChats(finalChats);
+        if (!hasBetaChat) {
+          await AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(finalChats));
+        }
+      } else {
+        setChats([BETA_CHAT]);
+        await AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify([BETA_CHAT]));
+      }
+
+      if (messagesStr) {
+        const loadedMsgs: Record<string, Message[]> = JSON.parse(messagesStr);
+        if (!loadedMsgs[BETA_CHAT_ID]) {
+          loadedMsgs[BETA_CHAT_ID] = [BETA_WELCOME_MSG];
+          await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(loadedMsgs));
+        }
+        setMessages(loadedMsgs);
+      } else {
+        const initMsgs = { [BETA_CHAT_ID]: [BETA_WELCOME_MSG] };
+        setMessages(initMsgs);
+        await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(initMsgs));
+      }
 
       if (groupsStr) {
         const loadedGroups: CheckInGroup[] = JSON.parse(groupsStr);
@@ -818,7 +870,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       );
       await saveChats(updatedChats);
 
-      if (chat?.type === "direct") {
+      if (chatId === BETA_CHAT_ID && text) {
+        const senderName = contacts.find((c) => c.id === myId)?.name ?? "Beta Tester";
+        queueFeedbackSubmission(text, senderName, msg.timestamp).catch(() => {});
+      }
+
+      if (chat?.type === "direct" && chatId !== BETA_CHAT_ID) {
         const otherId = chat.participantIds.find((pid) => pid !== myId);
         if (otherId) {
           const delay = 2000 + Math.random() * 2000;
@@ -868,7 +925,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [chats, messages, myId]
+    [chats, messages, myId, contacts]
   );
 
   const simulateMemberReplies = useCallback(
