@@ -1,5 +1,4 @@
 uploads = []
-outputs = []
 
 [[generated]]
 id = "f4SNkswSeGb7PDW-ugNdf"
@@ -12,3 +11,9 @@ id = "LE9Abjp_fb-LAKPZQWVED"
 uri = "file://artifacts/zivr-deck/public/hero-messaging.png"
 type = "image"
 title = "generated_image"
+
+[[outputs]]
+id = "gBArXpBRMtX9DB8EsdLFs"
+uri = "file://.local/outputs/ZIVR-App-Deck.pdf"
+type = "pdf"
+title = "ZIVR App Deck (PDF)"
