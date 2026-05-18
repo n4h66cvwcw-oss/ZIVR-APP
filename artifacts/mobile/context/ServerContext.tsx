@@ -31,6 +31,15 @@ export type ServerMessage = {
   localId?: string;
 };
 
+export type ServerChat = {
+  id: string;
+  type: "direct" | "group";
+  name: string | null;
+  description: string | null;
+  lastMessageAt: number | null;
+  members: Array<{ id: string; displayName: string; avatar: string | null; isOnline: boolean }>;
+};
+
 type MessageHandler = (msg: ServerMessage) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
 
@@ -56,6 +65,7 @@ interface ServerContextValue {
   createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<string | null>;
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
   sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
+  fetchUserChats: (userId: string) => Promise<ServerChat[]>;
   onNewMessage: (handler: MessageHandler) => () => void;
   emitTyping: (chatId: string, userId: string, name: string, isTyping: boolean, emoji?: string) => void;
   onTyping: (handler: (data: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void) => () => void;
@@ -67,16 +77,20 @@ const ServerContext = createContext<ServerContextValue | null>(null);
 
 const SERVER_USER_KEY = "@zivr_server_user_id";
 
+const PRODUCTION_API = "https://echo-stream.replit.app/api-server";
+
 function getApiBase(): string {
+  const override = process.env["EXPO_PUBLIC_API_URL"];
+  if (override) return override;
   const domain = process.env["EXPO_PUBLIC_DOMAIN"];
   if (domain) return `https://${domain}/api-server/api`;
-  return "http://localhost:3001/api";
+  return `${PRODUCTION_API}/api`;
 }
 
 function getSocketUrl(): string {
   const domain = process.env["EXPO_PUBLIC_DOMAIN"];
   if (domain) return `https://${domain}/api-server`;
-  return "http://localhost:3001";
+  return PRODUCTION_API;
 }
 
 export function ServerProvider({ children }: { children: React.ReactNode }) {
@@ -243,6 +257,17 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const fetchUserChats = useCallback(async (userId: string): Promise<ServerChat[]> => {
+    try {
+      const res = await fetch(`${getApiBase()}/chats/user/${userId}`);
+      if (!res.ok) return [];
+      const data = await res.json() as { chats: ServerChat[] };
+      return data.chats ?? [];
+    } catch {
+      return [];
+    }
+  }, []);
+
   const onNewMessage = useCallback((handler: MessageHandler) => {
     messageHandlers.current.add(handler);
     return () => { messageHandlers.current.delete(handler); };
@@ -305,6 +330,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         createServerGroupChat,
         fetchMessages,
         sendServerMessage,
+        fetchUserChats,
         onNewMessage,
         emitTyping,
         onTyping,

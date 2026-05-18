@@ -372,8 +372,8 @@ function genId(): string {
 }
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
-  const myId = "me";
-  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt } = useServer();
+  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats } = useServer();
+  const myId = serverUserId ?? "me";
   const [contacts, setContactsState] = useState<Contact[]>(SAMPLE_CONTACTS);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, Message[]>>({});
@@ -420,6 +420,22 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           const senderName = msg.senderName || "New message";
           scheduleLocalNotification(senderName, msg.text, sound).catch(() => {});
         }
+        if (!chat) {
+          const placeholder: Chat = {
+            id: chatId,
+            type: "direct",
+            name: msg.senderName || "Unknown",
+            participantIds: [msg.senderId],
+            createdAt: msg.createdAt,
+            unreadCount: 1,
+            lastMessage: msg.text,
+            lastMessageTime: msg.createdAt,
+            isServerChat: true,
+          };
+          const updated = [placeholder, ...prev];
+          AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updated)).catch(() => {});
+          return updated;
+        }
         const updated = prev.map((c) =>
           c.id === chatId
             ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
@@ -431,6 +447,39 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     });
     return unsub;
   }, [onNewMessage]);
+
+  useEffect(() => {
+    if (!serverUserId) return;
+    fetchUserChats(serverUserId).then((serverChats) => {
+      if (!serverChats.length) return;
+      setChats((prev) => {
+        const merged = [...prev];
+        let changed = false;
+        for (const sc of serverChats) {
+          if (merged.some((c) => c.id === sc.id)) continue;
+          const members = sc.members ?? [];
+          const otherMembers = members.filter((m) => m.id !== serverUserId);
+          const chatName =
+            sc.type === "direct"
+              ? (otherMembers[0]?.displayName ?? sc.name ?? "Chat")
+              : (sc.name ?? "Group");
+          merged.push({
+            id: sc.id,
+            type: sc.type,
+            name: chatName,
+            participantIds: members.map((m) => m.id),
+            createdAt: sc.lastMessageAt ?? Date.now(),
+            unreadCount: 0,
+            isServerChat: true,
+          });
+          changed = true;
+        }
+        if (!changed) return prev;
+        AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(merged)).catch(() => {});
+        return merged;
+      });
+    }).catch(() => {});
+  }, [serverUserId, fetchUserChats]);
 
   useEffect(() => {
     const unsub = onReadReceipt((data) => {
@@ -875,55 +924,6 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         queueFeedbackSubmission(text, senderName, msg.timestamp).catch(() => {});
       }
 
-      if (chat?.type === "direct" && chatId !== BETA_CHAT_ID) {
-        const otherId = chat.participantIds.find((pid) => pid !== myId);
-        if (otherId) {
-          const delay = 2000 + Math.random() * 2000;
-          setTimeout(async () => {
-            const replyId = genId();
-            const replies = [
-              "That's awesome! ",
-              "Love it! ",
-              "Thanks for sharing! ",
-              "Got it, thanks! ",
-              "Wow, really? ",
-              "Sounds good to me! ",
-              "Let's do it! ",
-              "Perfect timing! ",
-            ];
-            const replyText = replies[Math.floor(Math.random() * replies.length)];
-            const storedReply =
-              chat.isEncrypted && chat.encryptionKey
-                ? encryptMessage(replyText, chat.encryptionKey)
-                : replyText;
-
-            const replyMsg: Message = {
-              id: replyId,
-              chatId,
-              text: storedReply,
-              senderId: otherId,
-              timestamp: Date.now(),
-              read: false,
-            };
-            setMessages((prev) => {
-              const current = prev[chatId] || [];
-              return { ...prev, [chatId]: [...current, replyMsg] };
-            });
-            setChats((prev) =>
-              prev.map((c) =>
-                c.id === chatId
-                  ? {
-                      ...c,
-                      lastMessage: chat.isEncrypted ? "🔐 Encrypted message" : replyText,
-                      lastMessageTime: replyMsg.timestamp,
-                      unreadCount: (c.unreadCount || 0) + 1,
-                    }
-                  : c
-              )
-            );
-          }, delay);
-        }
-      }
     },
     [chats, messages, myId, contacts]
   );

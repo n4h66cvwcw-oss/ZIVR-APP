@@ -2,6 +2,7 @@ import http from "http";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { attachSocket } from "./lib/socket";
+import { migrate } from "./lib/migrate";
 
 const rawPort = process.env["PORT"];
 
@@ -14,9 +15,16 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const httpServer = http.createServer(app);
-attachSocket(httpServer);
-
-httpServer.listen(port, () => {
-  logger.info({ port }, "Server listening (HTTP + Socket.io)");
-});
+migrate()
+  .then(() => {
+    logger.info("Database migration complete");
+    const httpServer = http.createServer(app);
+    attachSocket(httpServer);
+    httpServer.listen(port, () => {
+      logger.info({ port }, "Server listening (HTTP + Socket.io)");
+    });
+  })
+  .catch((err) => {
+    logger.error(err, "Database migration failed — server not started");
+    process.exit(1);
+  });

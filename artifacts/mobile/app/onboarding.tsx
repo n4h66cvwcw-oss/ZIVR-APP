@@ -93,7 +93,7 @@ export default function OnboardingScreen() {
       avatar: avatarUri,
       onboardingComplete: true,
     });
-    registerOnServer({
+    await registerOnServer({
       displayName,
       username: username.trim() || undefined,
       phone: phone.trim() || undefined,
@@ -112,7 +112,7 @@ export default function OnboardingScreen() {
       avatar: avatarUri,
       onboardingComplete: true,
     });
-    registerOnServer({
+    await registerOnServer({
       displayName,
       username: username.trim() || undefined,
       phone: phone.trim() || undefined,
