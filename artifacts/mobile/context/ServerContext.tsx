@@ -71,25 +71,26 @@ interface ServerContextValue {
   onTyping: (handler: (data: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void) => () => void;
   emitChatRead: (chatId: string, userId: string) => void;
   onReadReceipt: (handler: ReadReceiptHandler) => () => void;
+  translateMessage: (text: string, targetLanguage: string, sourceLanguage?: string) => Promise<string>;
 }
 
 const ServerContext = createContext<ServerContextValue | null>(null);
 
 const SERVER_USER_KEY = "@zivr_server_user_id";
 
-const PRODUCTION_API = "https://echo-stream.replit.app/api-server";
+const PRODUCTION_API = "https://echo-stream.replit.app/api";
 
 function getApiBase(): string {
   const override = process.env["EXPO_PUBLIC_API_URL"];
   if (override) return override;
   const domain = process.env["EXPO_PUBLIC_DOMAIN"];
-  if (domain) return `https://${domain}/api-server/api`;
-  return `${PRODUCTION_API}/api`;
+  if (domain) return `https://${domain}/api`;
+  return PRODUCTION_API;
 }
 
 function getSocketUrl(): string {
   const domain = process.env["EXPO_PUBLIC_DOMAIN"];
-  if (domain) return `https://${domain}/api-server`;
+  if (domain) return `https://${domain}/api`;
   return PRODUCTION_API;
 }
 
@@ -117,6 +118,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     if (socketRef.current?.connected) return;
 
     const socket = io(getSocketUrl(), {
+      path: "/api/socket.io",
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionDelay: 2000,
@@ -303,6 +305,24 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     return () => { readReceiptHandlers.current.delete(handler); };
   }, []);
 
+  const translateMessage = useCallback(
+    async (text: string, targetLanguage: string, sourceLanguage?: string): Promise<string> => {
+      try {
+        const res = await fetch(`${getApiBase()}/translate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, targetLanguage, sourceLanguage }),
+        });
+        if (!res.ok) return text;
+        const data = await res.json() as { translatedText?: string };
+        return data.translatedText ?? text;
+      } catch {
+        return text;
+      }
+    },
+    []
+  );
+
   const updateServerProfile = useCallback(
     async (userId: string, updates: { displayName?: string; username?: string; statusMessage?: string; avatar?: string; pushToken?: string }) => {
       try {
@@ -336,6 +356,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         onTyping,
         emitChatRead,
         onReadReceipt,
+        translateMessage,
       }}
     >
       {children}

@@ -17,6 +17,7 @@ import {
   generateEncryptionKey,
 } from "@/utils/crypto";
 import { useServer, type ServerUser } from "@/context/ServerContext";
+import { useProfile } from "@/context/ProfileContext";
 
 export type AudioAttachment = {
   uri: string;
@@ -86,6 +87,9 @@ export type Message = {
   deleted?: boolean;
   editedAt?: number;
   selfDestruct?: SelfDestructConfig;
+  /** Set when the message was auto-translated before sending */
+  wasTranslated?: boolean;
+  translatedTo?: string;
 };
 
 export type ChatSortMode =
@@ -119,6 +123,8 @@ export type Chat = {
   notificationSound?: string;
   readReceiptsEnabled?: boolean;
   typingEmoji?: string;
+  /** Language code of the recipient — triggers auto-translate on send */
+  recipientLanguage?: string;
 };
 
 export type CheckInGroup = {
@@ -349,6 +355,7 @@ interface MessagingContextValue {
   setNotificationSound: (chatId: string, sound: string) => Promise<void>;
   setReadReceiptsEnabled: (chatId: string, enabled: boolean) => Promise<void>;
   setChatTypingEmoji: (chatId: string, emoji: string) => Promise<void>;
+  setChatRecipientLanguage: (chatId: string, lang: string | undefined) => Promise<void>;
   addMemberToCheckIn: (groupId: string, memberId: string) => Promise<void>;
   removeMemberFromCheckIn: (groupId: string, memberId: string) => Promise<void>;
   getContactById: (id: string) => Contact | undefined;
@@ -372,7 +379,8 @@ function genId(): string {
 }
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
-  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats } = useServer();
+  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats, translateMessage } = useServer();
+  const { profile } = useProfile();
   const myId = serverUserId ?? "me";
   const [contacts, setContactsState] = useState<Contact[]>(SAMPLE_CONTACTS);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -881,10 +889,29 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => {
       const id = genId();
       const chat = chats.find((c) => c.id === chatId);
+
+      // Auto-translate if the chat has a recipient language set and message is plain text
+      let finalText = text;
+      let wasTranslated = false;
+      if (text && chat?.recipientLanguage && !audio && !image && !music) {
+        const sourceLang = profile.primaryLanguage ?? "English";
+        if (chat.recipientLanguage.toLowerCase() !== sourceLang.toLowerCase()) {
+          try {
+            const translated = await translateMessage(text, chat.recipientLanguage, sourceLang);
+            if (translated && translated !== text) {
+              finalText = translated;
+              wasTranslated = true;
+            }
+          } catch {
+            // translation failed — send original silently
+          }
+        }
+      }
+
       const storedText =
         chat?.isEncrypted && chat.encryptionKey
-          ? encryptMessage(text, chat.encryptionKey)
-          : text;
+          ? encryptMessage(finalText, chat.encryptionKey)
+          : finalText;
 
       const msg: Message = {
         id,
@@ -898,11 +925,13 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         formatting,
         selfDestruct,
         read: false,
+        wasTranslated: wasTranslated || undefined,
+        translatedTo: wasTranslated ? chat?.recipientLanguage : undefined,
       };
 
       if (chat?.isServerChat && serverUserId) {
         sentLocalIds.current.add(id);
-        sendServerMessage(chatId, serverUserId, text, id);
+        sendServerMessage(chatId, serverUserId, finalText, id);
       }
 
       const chatMessages = messages[chatId] || [];
@@ -911,7 +940,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
       const previewText = chat?.isEncrypted
         ? "🔐 Encrypted message"
-        : text || (music ? `${music.emoji} ${music.title} — ${music.artist}` : audio ? "🎵 Audio message" : image ? "📷 Photo" : "");
+        : finalText || (music ? `${music.emoji} ${music.title} — ${music.artist}` : audio ? "🎵 Audio message" : image ? "📷 Photo" : "");
       const updatedChats = chats.map((c) =>
         c.id === chatId
           ? { ...c, lastMessage: previewText, lastMessageTime: msg.timestamp, lastAudio: audio }
@@ -925,7 +954,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       }
 
     },
-    [chats, messages, myId, contacts]
+    [chats, messages, myId, contacts, profile.primaryLanguage, translateMessage]
   );
 
   const simulateMemberReplies = useCallback(
@@ -1207,6 +1236,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [chats]
   );
 
+  const setChatRecipientLanguage = useCallback(
+    async (chatId: string, lang: string | undefined) => {
+      const updatedChats = chats.map((c) =>
+        c.id === chatId ? { ...c, recipientLanguage: lang } : c
+      );
+      await saveChats(updatedChats);
+    },
+    [chats]
+  );
+
   const setChatPasscode = useCallback(
     async (chatId: string, passcode: string, recoveryEmail?: string, hint?: string) => {
       const salt = genId();
@@ -1339,6 +1378,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setNotificationSound,
       setReadReceiptsEnabled,
       setChatTypingEmoji,
+      setChatRecipientLanguage,
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,
@@ -1385,6 +1425,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setNotificationSound,
       setReadReceiptsEnabled,
       setChatTypingEmoji,
+      setChatRecipientLanguage,
       addMemberToCheckIn,
       removeMemberFromCheckIn,
       getContactById,

@@ -5,23 +5,25 @@ const router = Router();
 
 const USER_SELECT = `
   id,
-  display_name   AS "displayName",
+  display_name        AS "displayName",
   username,
   phone,
   avatar,
-  status_message AS "statusMessage",
-  is_online      AS "isOnline",
-  last_seen      AS "lastSeen"
+  status_message      AS "statusMessage",
+  preferred_language  AS "preferredLanguage",
+  is_online           AS "isOnline",
+  last_seen           AS "lastSeen"
 `;
 
 router.post("/register", async (req, res) => {
   try {
-    const { displayName, username, phone, avatar, statusMessage } = req.body as {
+    const { displayName, username, phone, avatar, statusMessage, preferredLanguage } = req.body as {
       displayName: string;
       username?: string;
       phone?: string;
       avatar?: string;
       statusMessage?: string;
+      preferredLanguage?: string;
     };
 
     if (!displayName?.trim()) {
@@ -31,10 +33,10 @@ router.post("/register", async (req, res) => {
 
     const clean = (s?: string) => s?.trim() || null;
     const user = await queryOne<{ id: string }>(
-      `INSERT INTO vm_users (display_name, username, phone, avatar, status_message)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO vm_users (display_name, username, phone, avatar, status_message, preferred_language)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id`,
-      [clean(displayName), clean(username), clean(phone), clean(avatar), clean(statusMessage) ?? "Hey there! I'm on ZIVR"]
+      [clean(displayName), clean(username), clean(phone), clean(avatar), clean(statusMessage) ?? "Hey there! I'm on ZIVR", clean(preferredLanguage) ?? "English"]
     );
 
     res.json({ user: { id: user!.id, displayName, username, phone } });
@@ -51,18 +53,19 @@ router.post("/register", async (req, res) => {
 router.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { displayName, username, phone, avatar, statusMessage, pushToken } = req.body as Record<string, string | undefined>;
+    const { displayName, username, phone, avatar, statusMessage, pushToken, preferredLanguage } = req.body as Record<string, string | undefined>;
 
     await query(
       `UPDATE vm_users SET
-        display_name   = COALESCE($1, display_name),
-        username       = COALESCE($2, username),
-        phone          = COALESCE($3, phone),
-        avatar         = COALESCE($4, avatar),
-        status_message = COALESCE($5, status_message),
-        push_token     = COALESCE($6, push_token)
-       WHERE id = $7`,
-      [displayName ?? null, username ?? null, phone ?? null, avatar ?? null, statusMessage ?? null, pushToken ?? null, id]
+        display_name       = COALESCE($1, display_name),
+        username           = COALESCE($2, username),
+        phone              = COALESCE($3, phone),
+        avatar             = COALESCE($4, avatar),
+        status_message     = COALESCE($5, status_message),
+        push_token         = COALESCE($6, push_token),
+        preferred_language = COALESCE($7, preferred_language)
+       WHERE id = $8`,
+      [displayName ?? null, username ?? null, phone ?? null, avatar ?? null, statusMessage ?? null, pushToken ?? null, preferredLanguage ?? null, id]
     );
     res.json({ ok: true });
   } catch (err) {

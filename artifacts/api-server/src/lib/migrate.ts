@@ -3,17 +3,24 @@ import { query } from "./db";
 export async function migrate(): Promise<void> {
   await query(`
     CREATE TABLE IF NOT EXISTS vm_users (
-      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      display_name    TEXT NOT NULL,
-      username        TEXT UNIQUE,
-      phone           TEXT,
-      avatar          TEXT,
-      status_message  TEXT DEFAULT 'Hey there! I''m on ZIVR',
-      push_token      TEXT,
-      is_online       BOOLEAN DEFAULT false,
-      last_seen       BIGINT DEFAULT 0,
-      created_at      BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+      id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      display_name       TEXT NOT NULL,
+      username           TEXT UNIQUE,
+      phone              TEXT,
+      avatar             TEXT,
+      status_message     TEXT DEFAULT 'Hey there! I''m on ZIVR',
+      push_token         TEXT,
+      preferred_language TEXT DEFAULT 'English',
+      is_online          BOOLEAN DEFAULT false,
+      last_seen          BIGINT DEFAULT 0,
+      created_at         BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
     )
+  `);
+
+  // Add preferred_language to existing tables that were created without it
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS preferred_language TEXT DEFAULT 'English'
   `);
 
   await query(`

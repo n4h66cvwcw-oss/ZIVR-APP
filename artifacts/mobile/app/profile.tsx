@@ -31,6 +31,7 @@ import { useServer } from "@/context/ServerContext";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
 import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
+import { LANGUAGES, getLanguageByCode } from "@/utils/languages";
 
 const GUARD_TYPES: { type: CaptureGuardType; icon: string; label: string }[] = [
   { type: "ai_gradient", icon: "color-palette",    label: "AI Background" },
@@ -51,6 +52,10 @@ export default function ProfileScreen() {
   const [customText, setCustomText] = useState(profile.captureGuardText);
   const [showDefaultSoundPicker, setShowDefaultSoundPicker] = useState(false);
   const [showTypingEmojiPicker, setShowTypingEmojiPicker] = useState(false);
+  const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  const currentLanguage = profile.primaryLanguage
+    ? (getLanguageByCode(profile.primaryLanguage) ?? LANGUAGES[0])
+    : LANGUAGES[0];
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
 
   const selectedGradient =
@@ -340,6 +345,30 @@ export default function ProfileScreen() {
         )}
         <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
+            LANGUAGE & TRANSLATION
+          </Text>
+          <Pressable
+            onPress={() => setShowLanguagePicker(true)}
+            style={({ pressed }) => [styles.field, { borderBottomColor: "transparent", opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary, width: "auto", flex: 1 }]}>
+              My Primary Language
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ fontSize: 18 }}>{currentLanguage.flag}</Text>
+              <Text style={[styles.fieldInput, { flex: 0, color: colors.primary }]}>
+                {currentLanguage.name}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+            </View>
+          </Pressable>
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            Used for auto-translation. Messages you send will be translated to the recipient's language automatically.
+          </Text>
+        </View>
+
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
             NOTIFICATIONS
           </Text>
           <Pressable
@@ -392,6 +421,46 @@ export default function ProfileScreen() {
         onClose={() => setShowTypingEmojiPicker(false)}
         onSelect={(emoji) => updateProfile({ typingEmoji: emoji || undefined })}
       />
+
+      <Modal visible={showLanguagePicker} animationType="slide" presentationStyle="pageSheet" transparent>
+        <Pressable style={styles.soundPickerOverlay} onPress={() => setShowLanguagePicker(false)}>
+          <Pressable style={[styles.soundPickerSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.soundPickerHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.soundPickerTitle, { color: colors.text }]}>My Primary Language</Text>
+            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+              {LANGUAGES.map((lang) => {
+                const selected = (profile.primaryLanguage ?? "en") === lang.code;
+                return (
+                  <Pressable
+                    key={lang.code}
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      updateProfile({ primaryLanguage: lang.code });
+                      if (serverUserId) {
+                        import("@/context/ServerContext").then(() => {}).catch(() => {});
+                      }
+                      setShowLanguagePicker(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.soundRow,
+                      { backgroundColor: selected ? colors.primary + "14" : "transparent", opacity: pressed ? 0.7 : 1 },
+                    ]}
+                  >
+                    <View style={[styles.soundIconBox, { backgroundColor: selected ? colors.primary + "20" : colors.surfaceSecondary, width: 44, height: 44, borderRadius: 12 }]}>
+                      <Text style={{ fontSize: 22 }}>{lang.flag}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.soundLabel, { color: selected ? colors.primary : colors.text }]}>{lang.name}</Text>
+                      <Text style={[styles.soundDesc, { color: colors.textSecondary }]}>{lang.nativeName}</Text>
+                    </View>
+                    {selected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={showDefaultSoundPicker} animationType="slide" presentationStyle="pageSheet" transparent>
         <Pressable style={styles.soundPickerOverlay} onPress={() => setShowDefaultSoundPicker(false)}>

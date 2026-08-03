@@ -1101,6 +1101,12 @@ export function MessageBubble({
                 {message.text}
               </Text>
             ) : null}
+            {isMine && message.wasTranslated && message.translatedTo && (
+              <View style={styles.translatedBadge}>
+                <Ionicons name="language" size={10} color="rgba(255,255,255,0.6)" />
+                <Text style={styles.translatedBadgeText}>Translated to {message.translatedTo}</Text>
+              </View>
+            )}
             <View style={[styles.reelSeparator, { backgroundColor: "rgba(255,255,255,0.2)" }]} />
             <MusicReelBar music={message.musicAttachment!} isMine={isMine} />
             <View style={styles.metaRow}>
@@ -1131,6 +1137,12 @@ export function MessageBubble({
                 {message.text}
               </Text>
             ) : null}
+            {isMine && message.wasTranslated && message.translatedTo && (
+              <View style={styles.translatedBadge}>
+                <Ionicons name="language" size={10} color="rgba(255,255,255,0.6)" />
+                <Text style={styles.translatedBadgeText}>Translated to {message.translatedTo}</Text>
+              </View>
+            )}
             <View style={styles.metaRow}>
               <View style={styles.metaRight}>
                 <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
@@ -1167,6 +1179,12 @@ export function MessageBubble({
               {message.text}
             </Text>
           ) : null}
+          {isMine && message.wasTranslated && message.translatedTo && (
+            <View style={styles.translatedBadge}>
+              <Ionicons name="language" size={10} color="rgba(255,255,255,0.6)" />
+              <Text style={styles.translatedBadgeText}>Translated to {message.translatedTo}</Text>
+            </View>
+          )}
           <View style={styles.metaRow}>
             <View style={isMine ? styles.metaRight : styles.metaLeft}>
               <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
@@ -1435,6 +1453,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     lineHeight: 22,
+  },
+  translatedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
+    marginBottom: 2,
+  },
+  translatedBadgeText: {
+    fontSize: 10,
+    fontFamily: "Inter_400Regular",
+    color: "rgba(255,255,255,0.55)",
+    fontStyle: "italic",
   },
   metaRow: {
     flexDirection: "row",

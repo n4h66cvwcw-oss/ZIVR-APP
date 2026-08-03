@@ -37,6 +37,7 @@ async function sendExpoPush(tokens: string[], title: string, body: string, sound
 
 export function attachSocket(httpServer: HttpServer): SocketServer {
   const io = new SocketServer(httpServer, {
+    path: "/api/socket.io",
     cors: { origin: "*", methods: ["GET", "POST"] },
     transports: ["websocket", "polling"],
   });

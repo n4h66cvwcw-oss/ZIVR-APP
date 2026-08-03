@@ -25,6 +25,7 @@ import { useProfile } from "@/context/ProfileContext";
 import { PasscodeModal } from "@/components/PasscodeModal";
 import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
+import { LANGUAGES, getLanguageByCode } from "@/utils/languages";
 
 export default function ChatSettingsScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -46,6 +47,7 @@ export default function ChatSettingsScreen() {
     setNotificationSound,
     setReadReceiptsEnabled,
     setChatTypingEmoji,
+    setChatRecipientLanguage,
   } = useMessaging();
 
   const { profile } = useProfile();
@@ -63,6 +65,11 @@ export default function ChatSettingsScreen() {
   const [passcodeStep, setPasscodeStep] = useState<"enter" | "repeat">("enter");
   const [exporting, setExporting] = useState(false);
   const [showSoundPicker, setShowSoundPicker] = useState(false);
+  const [showTranslatePicker, setShowTranslatePicker] = useState(false);
+
+  const recipientLang = chat?.recipientLanguage
+    ? getLanguageByCode(chat.recipientLanguage)
+    : undefined;
 
   if (!chat) return null;
 
@@ -340,6 +347,33 @@ export default function ChatSettingsScreen() {
           onPress={() => setShowTypingEmojiPicker(true)}
         />
 
+        <SectionHeader title="Auto-Translate" colors={colors} />
+
+        <SettingRow
+          icon="language-outline"
+          label="Recipient's Language"
+          subtitle={
+            recipientLang
+              ? `${recipientLang.flag} Translating to ${recipientLang.name}`
+              : "Off — tap to enable auto-translate"
+          }
+          colors={colors}
+          onPress={() => setShowTranslatePicker(true)}
+        />
+
+        {recipientLang && (
+          <SettingRow
+            icon="close-circle-outline"
+            label="Disable Auto-Translate"
+            subtitle="Stop translating messages in this chat"
+            colors={colors}
+            onPress={async () => {
+              await setChatRecipientLanguage(id, undefined);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }}
+          />
+        )}
+
         <SectionHeader title="Danger Zone" colors={colors} />
 
         <SettingRow
@@ -359,6 +393,46 @@ export default function ChatSettingsScreen() {
         onClose={() => setShowTypingEmojiPicker(false)}
         onSelect={(emoji) => setChatTypingEmoji(id, emoji)}
       />
+
+      <Modal visible={showTranslatePicker} animationType="slide" presentationStyle="pageSheet" transparent>
+        <Pressable style={styles.soundPickerOverlay} onPress={() => setShowTranslatePicker(false)}>
+          <Pressable style={[styles.soundPickerSheet, { backgroundColor: colors.surface }]}>
+            <View style={[styles.soundPickerHandle, { backgroundColor: colors.border }]} />
+            <Text style={[styles.soundPickerTitle, { color: colors.text }]}>Recipient's Language</Text>
+            <Text style={[styles.soundPickerSubtitle, { color: colors.textSecondary }]}>
+              Your messages will be auto-translated before sending.
+            </Text>
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              {LANGUAGES.map((lang) => {
+                const selected = chat?.recipientLanguage === lang.code;
+                return (
+                  <Pressable
+                    key={lang.code}
+                    onPress={() => {
+                      Haptics.selectionAsync();
+                      setChatRecipientLanguage(id, lang.code);
+                      setShowTranslatePicker(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.soundRow,
+                      { backgroundColor: selected ? colors.primary + "14" : "transparent", opacity: pressed ? 0.7 : 1 },
+                    ]}
+                  >
+                    <View style={[styles.soundIcon, { backgroundColor: selected ? colors.primary + "20" : colors.surfaceSecondary, width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" }]}>
+                      <Text style={{ fontSize: 22 }}>{lang.flag}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.soundLabel, { color: selected ? colors.primary : colors.text }]}>{lang.name}</Text>
+                      <Text style={[styles.soundDesc, { color: colors.textSecondary }]}>{lang.nativeName}</Text>
+                    </View>
+                    {selected && <Ionicons name="checkmark-circle" size={20} color={colors.primary} />}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={showSoundPicker} animationType="slide" presentationStyle="pageSheet" transparent>
         <Pressable style={styles.soundPickerOverlay} onPress={() => setShowSoundPicker(false)}>
@@ -659,7 +733,14 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: "Inter_700Bold",
     textAlign: "center",
+    marginBottom: 4,
+  },
+  soundPickerSubtitle: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
     marginBottom: 12,
+    paddingHorizontal: 8,
   },
   soundRow: {
     flexDirection: "row",

@@ -30,6 +30,14 @@ ZIVR is a feature-rich iOS-style messaging app with unique innovations:
 - **IAP product IDs**: `com.zivr.app.coins.100/500/1000/2500` (must be created in App Store Connect + Play Console before publishing)
 - `expo-in-app-purchases` has no `app.plugin.js` config plugin — it is **not** listed in `app.json` plugins; native setup is handled automatically by EAS build
 
+### AI Auto-Translation
+- **`/api-server/translate`** (POST) — takes `{ text, targetLanguage, sourceLanguage? }`, returns `{ translatedText, targetLanguage }` via Anthropic claude-haiku-4-5
+- **Profile → Language & Translation** — user sets their primary language (30 languages); stored as `primaryLanguage` ISO code in `ProfileContext` + `preferred_language` column in `vm_users`
+- **Chat Settings → Auto-Translate** — per-chat `recipientLanguage` setting; when set, every plain-text message you send is translated to that language before delivery; `recipientLanguage` stored on the `Chat` type and persisted in AsyncStorage
+- **Translation badge** — sent messages show a subtle `🌐 Translated to X` tag inside the bubble (only on sender's side)
+- **Graceful fallback** — if translation fails, original text sends silently; encryption and audio/image/music messages bypass translation
+- `artifacts/mobile/utils/languages.ts` — shared list of 30 languages with ISO code, English name, native name, flag emoji
+
 ### Real-Time Backend (NEW)
 - **PostgreSQL** — `vm_users`, `vm_chats`, `vm_chat_members`, `vm_messages` tables (UUIDs, BigInt timestamps)
 - **Socket.io** on the Express API server — rooms per chat, `user:join`, `message:send→message:new`, `typing:start/stop`, disconnect cleanup

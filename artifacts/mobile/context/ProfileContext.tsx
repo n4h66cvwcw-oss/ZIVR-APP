@@ -63,6 +63,8 @@ export type ProfileSettings = {
   onboardingComplete: boolean;
   defaultNotificationSound?: string;
   typingEmoji?: string;
+  /** ISO language code e.g. "en", "es" — user's primary language for auto-translate */
+  primaryLanguage?: string;
 };
 
 const DEFAULT_SETTINGS: ProfileSettings = {
