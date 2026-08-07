@@ -45,7 +45,11 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
   io.on("connection", (socket: Socket) => {
     let currentUserId: string | null = null;
 
-    socket.on("user:join", async (userId: string) => {
+    socket.on("user:join", async (payload: string | { userId: string; since?: number }) => {
+      // Accept both legacy string form and new object form { userId, since }
+      const userId = typeof payload === "string" ? payload : payload.userId;
+      const since = typeof payload === "object" ? payload.since : undefined;
+
       currentUserId = userId;
       onlineUsers.set(userId, socket.id);
 
@@ -63,6 +67,51 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
       io.to(`user:${userId}`).emit("user:online", { userId, online: true });
       socket.emit("user:joined", { userId, chatRooms: chats.map((c) => c.id) });
+
+      // If the client provided a `since` timestamp, send any messages they may
+      // have missed while the socket was disconnected (e.g. app was backgrounded).
+      if (since && chats.length > 0) {
+        try {
+          const chatIds = chats.map((c) => c.id);
+          // Build a parameterised query for all chat rooms the user belongs to
+          const placeholders = chatIds.map((_, i) => `$${i + 2}`).join(", ");
+          const missed = await query<{
+            id: string;
+            chat_id: string;
+            sender_id: string;
+            sender_name: string;
+            text: string;
+            type: string;
+            created_at: number;
+          }>(
+            `SELECT m.id, m.chat_id, m.sender_id,
+                    u.display_name AS sender_name,
+                    m.text, m.type, m.created_at
+             FROM vm_messages m
+             JOIN vm_users u ON u.id = m.sender_id
+             WHERE m.created_at > $1
+               AND m.chat_id IN (${placeholders})
+             ORDER BY m.created_at ASC`,
+            [since, ...chatIds]
+          );
+
+          if (missed.length > 0) {
+            socket.emit("missed_messages", {
+              messages: missed.map((m) => ({
+                id: m.id,
+                chatId: m.chat_id,
+                senderId: m.sender_id,
+                senderName: m.sender_name,
+                text: m.text,
+                type: m.type,
+                createdAt: m.created_at,
+              })),
+            });
+          }
+        } catch (err) {
+          console.error("[socket] missed_messages query error:", err);
+        }
+      }
     });
 
     socket.on("message:send", async (payload: {

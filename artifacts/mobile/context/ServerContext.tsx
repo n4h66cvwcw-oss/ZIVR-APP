@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { AppState, AppStateStatus } from "react-native";
 import { io, Socket } from "socket.io-client";
 
 export type ServerUser = {
@@ -101,17 +102,47 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const messageHandlers = useRef<Set<MessageHandler>>(new Set());
   const typingHandlers = useRef<Set<(d: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void>>(new Set());
   const readReceiptHandlers = useRef<Set<ReadReceiptHandler>>(new Set());
+  // Tracks when the socket last disconnected so we can request missed messages on rejoin
+  const disconnectTimeRef = useRef<number | null>(null);
+  const serverUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     AsyncStorage.getItem(SERVER_USER_KEY).then((id) => {
       if (id) {
         setServerUserId(id);
+        serverUserIdRef.current = id;
         connectSocket(id);
       }
     });
     return () => {
       socketRef.current?.disconnect();
     };
+  }, []);
+
+  // Re-connect and catch up on missed messages when the app returns to foreground
+  useEffect(() => {
+    function handleAppStateChange(nextState: AppStateStatus) {
+      if (nextState === "active") {
+        const userId = serverUserIdRef.current;
+        if (!userId) return;
+        if (!socketRef.current) {
+          connectSocket(userId);
+          return;
+        }
+        if (!socketRef.current.connected) {
+          // Socket.io auto-reconnects, but if it hasn't yet we nudge it manually
+          socketRef.current.connect();
+        } else {
+          // Already connected — re-emit user:join so the server rejoins us to
+          // all chat rooms and sends any messages we missed while backgrounded.
+          const since = disconnectTimeRef.current ?? undefined;
+          socketRef.current.emit("user:join", since ? { userId, since } : userId);
+        }
+      }
+    }
+
+    const sub = AppState.addEventListener("change", handleAppStateChange);
+    return () => sub.remove();
   }, []);
 
   function connectSocket(userId: string) {
@@ -127,15 +158,28 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
     socket.on("connect", () => {
       setIsConnected(true);
-      socket.emit("user:join", userId);
+      // Pass `since` so the server can deliver messages missed during the gap
+      const since = disconnectTimeRef.current ?? undefined;
+      socket.emit("user:join", since ? { userId, since } : userId);
+      disconnectTimeRef.current = null;
     });
 
     socket.on("disconnect", () => {
       setIsConnected(false);
+      disconnectTimeRef.current = Date.now();
     });
 
     socket.on("message:new", (msg: ServerMessage) => {
       messageHandlers.current.forEach((h) => h(msg));
+    });
+
+    // Deliver any messages that arrived while the socket was disconnected
+    socket.on("missed_messages", (data: { messages: ServerMessage[] }) => {
+      if (Array.isArray(data?.messages)) {
+        data.messages.forEach((msg) => {
+          messageHandlers.current.forEach((h) => h(msg));
+        });
+      }
     });
 
     socket.on("typing:update", (data: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => {
@@ -176,6 +220,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         const userId = data.user.id;
         await AsyncStorage.setItem(SERVER_USER_KEY, userId);
         setServerUserId(userId);
+        serverUserIdRef.current = userId;
         connectSocket(userId);
         return userId;
       } catch (e) {
