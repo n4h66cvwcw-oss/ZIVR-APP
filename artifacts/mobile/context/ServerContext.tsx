@@ -17,6 +17,7 @@ export type ServerUser = {
   phone?: string;
   avatar?: string;
   statusMessage?: string;
+  preferredLanguage?: string;
   isOnline?: boolean;
   lastSeen?: number;
 };
@@ -60,7 +61,9 @@ interface ServerContextValue {
     statusMessage?: string;
     avatar?: string;
     pushToken?: string;
+    preferredLanguage?: string;
   }) => Promise<void>;
+  fetchServerUser: (userId: string) => Promise<ServerUser | null>;
   findUsers: (query: string) => Promise<ServerUser[]>;
   getOrCreateDirectChat: (myUserId: string, theirUserId: string) => Promise<string | null>;
   createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<string | null>;
@@ -368,8 +371,19 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const fetchServerUser = useCallback(async (userId: string): Promise<ServerUser | null> => {
+    try {
+      const res = await fetch(`${getApiBase()}/users/${userId}`);
+      if (!res.ok) return null;
+      const data = await res.json() as { user: ServerUser };
+      return data.user ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const updateServerProfile = useCallback(
-    async (userId: string, updates: { displayName?: string; username?: string; statusMessage?: string; avatar?: string; pushToken?: string }) => {
+    async (userId: string, updates: { displayName?: string; username?: string; statusMessage?: string; avatar?: string; pushToken?: string; preferredLanguage?: string }) => {
       try {
         await fetch(`${getApiBase()}/users/${userId}`, {
           method: "PATCH",
@@ -390,6 +404,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         isConnected,
         registerOnServer,
         updateServerProfile,
+        fetchServerUser,
         findUsers,
         getOrCreateDirectChat,
         createServerGroupChat,

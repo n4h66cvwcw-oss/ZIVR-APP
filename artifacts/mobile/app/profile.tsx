@@ -437,7 +437,7 @@ export default function ProfileScreen() {
                       Haptics.selectionAsync();
                       updateProfile({ primaryLanguage: lang.code });
                       if (serverUserId) {
-                        import("@/context/ServerContext").then(() => {}).catch(() => {});
+                        updateServerProfile(serverUserId, { preferredLanguage: lang.code });
                       }
                       setShowLanguagePicker(false);
                     }}

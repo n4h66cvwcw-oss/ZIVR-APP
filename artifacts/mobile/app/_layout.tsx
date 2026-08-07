@@ -49,11 +49,26 @@ function PushRegistrar() {
   return null;
 }
 
+function LanguageSyncer() {
+  const { serverUserId, fetchServerUser } = useServer();
+  const { profile, profileLoaded, updateProfile } = useProfile();
+  useEffect(() => {
+    if (!serverUserId || !profileLoaded) return;
+    fetchServerUser(serverUserId).then((serverUser) => {
+      if (serverUser?.preferredLanguage && !profile.primaryLanguage) {
+        updateProfile({ primaryLanguage: serverUser.preferredLanguage });
+      }
+    });
+  }, [serverUserId, profileLoaded]);
+  return null;
+}
+
 function RootLayoutNav() {
   return (
     <>
       <OnboardingGate />
       <PushRegistrar />
+      <LanguageSyncer />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false, presentation: "fullScreenModal", animation: "fade" }} />
