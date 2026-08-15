@@ -55,6 +55,7 @@ export default function ChatScreen() {
     muteChat,
     getContactById,
     contacts,
+    setActiveChatId,
   } = useMessaging();
 
   const { serverUserId, isConnected, onTyping, emitTyping, emitChatRead, getSuggestedReply } = useServer();
@@ -77,6 +78,14 @@ export default function ChatScreen() {
 
   const chat = chats.find((c) => c.id === id);
   const messages = getDecryptedMessages(id);
+
+  // Tell MessagingContext this chat is currently on screen so that incoming
+  // messages (live or replayed via missed_messages) skip the unread increment.
+  useEffect(() => {
+    if (!id) return;
+    setActiveChatId(id);
+    return () => setActiveChatId(null);
+  }, [id]);
 
   useEffect(() => {
     if (id) {

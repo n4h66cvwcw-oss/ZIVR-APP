@@ -334,6 +334,8 @@ interface MessagingContextValue {
   broadcasts: CheckInBroadcast[];
   sortMode: ChatSortMode;
   setSortMode: (mode: ChatSortMode) => Promise<void>;
+  /** Register the chat currently on screen so incoming messages skip the unread increment. */
+  setActiveChatId: (id: string | null) => void;
   sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
@@ -408,6 +410,17 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { chatsRef.current = chats; }, [chats]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
+  // Always-current server user id without stale closure captures.
+  const serverUserIdRef = useRef(serverUserId);
+  useEffect(() => { serverUserIdRef.current = serverUserId; }, [serverUserId]);
+
+  // The chat screen sets this to its own id while mounted so that incoming
+  // messages (live or missed) for that chat don't transiently bump the badge.
+  const activeChatIdRef = useRef<string | null>(null);
+  const setActiveChatId = useCallback((id: string | null) => {
+    activeChatIdRef.current = id;
+  }, []);
+
   useEffect(() => {
     loadData();
   }, []);
@@ -454,6 +467,13 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           const senderName = msg.senderName || "New message";
           scheduleLocalNotification(senderName, msg.text, sound).catch(() => {});
         }
+        // Messages the current user sent, and messages in the currently open
+        // chat, should not increment the unread badge. The chat screen's own
+        // markChatRead effect handles clearing any residual count when the user
+        // enters a chat, so we only need to guard the increment here.
+        const isOwnMessage = !!serverUserIdRef.current && msg.senderId === serverUserIdRef.current;
+        const isActiveChat = activeChatIdRef.current === chatId;
+        const shouldCount = !isOwnMessage && !isActiveChat;
         if (!chat) {
           const placeholder: Chat = {
             id: chatId,
@@ -461,7 +481,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             name: msg.senderName || "Unknown",
             participantIds: [msg.senderId],
             createdAt: msg.createdAt,
-            unreadCount: 1,
+            unreadCount: shouldCount ? 1 : 0,
             lastMessage: msg.text,
             lastMessageTime: msg.createdAt,
             isServerChat: true,
@@ -472,7 +492,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         }
         const updated = prev.map((c) =>
           c.id === chatId
-            ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
+            ? {
+                ...c,
+                lastMessage: msg.text,
+                lastMessageTime: msg.createdAt,
+                unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
+              }
             : c
         );
         AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updated)).catch(() => {});
@@ -650,6 +675,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           let updated = prev;
           for (const msg of bufferedForChats) {
             const chatId = msg.chatId;
+            const isOwnMessage = !!serverUserIdRef.current && msg.senderId === serverUserIdRef.current;
+            const isActiveChat = activeChatIdRef.current === chatId;
+            const shouldCount = !isOwnMessage && !isActiveChat;
             const chat = updated.find((c) => c.id === chatId);
             if (!chat) {
               const placeholder: Chat = {
@@ -658,7 +686,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
                 name: msg.senderName || "Unknown",
                 participantIds: [msg.senderId],
                 createdAt: msg.createdAt,
-                unreadCount: 1,
+                unreadCount: shouldCount ? 1 : 0,
                 lastMessage: msg.text,
                 lastMessageTime: msg.createdAt,
                 isServerChat: true,
@@ -667,7 +695,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             } else {
               updated = updated.map((c) =>
                 c.id === chatId
-                  ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
+                  ? {
+                      ...c,
+                      lastMessage: msg.text,
+                      lastMessageTime: msg.createdAt,
+                      unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
+                    }
                   : c
               );
             }
@@ -705,6 +738,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
           return updated;
         });
+        const isOwnMessage = !!serverUserIdRef.current && msg.senderId === serverUserIdRef.current;
+        const isActiveChat = activeChatIdRef.current === chatId;
+        const shouldCount = !isOwnMessage && !isActiveChat;
         setChats((prev) => {
           const chat = prev.find((c) => c.id === chatId);
           if (!chat) {
@@ -714,7 +750,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
               name: msg.senderName || "Unknown",
               participantIds: [msg.senderId],
               createdAt: msg.createdAt,
-              unreadCount: 1,
+              unreadCount: shouldCount ? 1 : 0,
               lastMessage: msg.text,
               lastMessageTime: msg.createdAt,
               isServerChat: true,
@@ -725,7 +761,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           }
           const updated = prev.map((c) =>
             c.id === chatId
-              ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
+              ? {
+                  ...c,
+                  lastMessage: msg.text,
+                  lastMessageTime: msg.createdAt,
+                  unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
+                }
               : c
           );
           AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updated)).catch(() => {});
@@ -1517,6 +1558,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       broadcasts,
       sortMode,
       setSortMode,
+      setActiveChatId,
       sendMessage,
       markImageViewed,
       createDirectChat,
@@ -1564,6 +1606,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       broadcasts,
       sortMode,
       setSortMode,
+      setActiveChatId,
       sendMessage,
       markImageViewed,
       createDirectChat,
