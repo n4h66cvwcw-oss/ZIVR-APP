@@ -90,6 +90,8 @@ export type Message = {
   /** Set when the message was auto-translated before sending */
   wasTranslated?: boolean;
   translatedTo?: string;
+  /** The original text before auto-translation */
+  originalText?: string;
 };
 
 export type ChatSortMode =
@@ -633,6 +635,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       return msgs.map((m) => ({
         ...m,
         text: decryptMessage(m.text, chat.encryptionKey!),
+        originalText: m.originalText
+          ? decryptMessage(m.originalText, chat.encryptionKey!)
+          : undefined,
       }));
     },
     [chats, messages]
@@ -927,6 +932,11 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         read: false,
         wasTranslated: wasTranslated || undefined,
         translatedTo: wasTranslated ? chat?.recipientLanguage : undefined,
+        originalText: wasTranslated
+          ? (chat?.isEncrypted && chat.encryptionKey
+              ? encryptMessage(text, chat.encryptionKey)
+              : text)
+          : undefined,
       };
 
       if (chat?.isServerChat && serverUserId) {
@@ -1294,6 +1304,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       const encryptedMessages = chatMessages.map((m) => ({
         ...m,
         text: m.text ? encryptMessage(m.text, key) : m.text,
+        originalText: m.originalText ? encryptMessage(m.originalText, key) : m.originalText,
       }));
       await saveMessages({ ...messages, [chatId]: encryptedMessages });
       return key;
@@ -1310,6 +1321,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       const decryptedMessages = chatMessages.map((m) => ({
         ...m,
         text: m.text ? decryptMessage(m.text, chat.encryptionKey!) : m.text,
+        originalText: m.originalText ? decryptMessage(m.originalText, chat.encryptionKey!) : m.originalText,
       }));
       await saveMessages({ ...messages, [chatId]: decryptedMessages });
 

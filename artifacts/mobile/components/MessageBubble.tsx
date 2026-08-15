@@ -795,6 +795,7 @@ export function MessageBubble({
   const [showReactions, setShowReactions] = useState(false);
   const [showCallBar, setShowCallBar] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
   const [editText, setEditText] = useState("");
   const editInputRef = useRef<any>(null);
   const EDIT_WINDOW_MS = 90000;
@@ -1102,9 +1103,15 @@ export function MessageBubble({
               </Text>
             ) : null}
             {isMine && message.wasTranslated && message.translatedTo && (
-              <View style={styles.translatedBadge}>
+              <Pressable onPress={() => { if (message.originalText) { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowOriginal((v) => !v); } }} style={styles.translatedBadge}>
                 <Ionicons name="language" size={10} color="rgba(255,255,255,0.6)" />
-                <Text style={styles.translatedBadgeText}>Translated to {message.translatedTo}</Text>
+                <Text style={styles.translatedBadgeText}>🌐 Translated to {message.translatedTo}{message.originalText ? (showOriginal ? " · hide original" : " · tap to see original") : ""}</Text>
+              </Pressable>
+            )}
+            {isMine && message.wasTranslated && message.originalText && showOriginal && (
+              <View style={styles.originalTextBox}>
+                <Text style={styles.originalTextLabel}>Original</Text>
+                <Text style={styles.originalTextContent}>{message.originalText}</Text>
               </View>
             )}
             <View style={[styles.reelSeparator, { backgroundColor: "rgba(255,255,255,0.2)" }]} />
@@ -1138,9 +1145,15 @@ export function MessageBubble({
               </Text>
             ) : null}
             {isMine && message.wasTranslated && message.translatedTo && (
-              <View style={styles.translatedBadge}>
+              <Pressable onPress={() => { if (message.originalText) { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowOriginal((v) => !v); } }} style={styles.translatedBadge}>
                 <Ionicons name="language" size={10} color="rgba(255,255,255,0.6)" />
-                <Text style={styles.translatedBadgeText}>Translated to {message.translatedTo}</Text>
+                <Text style={styles.translatedBadgeText}>🌐 Translated to {message.translatedTo}{message.originalText ? (showOriginal ? " · hide original" : " · tap to see original") : ""}</Text>
+              </Pressable>
+            )}
+            {isMine && message.wasTranslated && message.originalText && showOriginal && (
+              <View style={styles.originalTextBox}>
+                <Text style={styles.originalTextLabel}>Original</Text>
+                <Text style={styles.originalTextContent}>{message.originalText}</Text>
               </View>
             )}
             <View style={styles.metaRow}>
@@ -1180,9 +1193,15 @@ export function MessageBubble({
             </Text>
           ) : null}
           {isMine && message.wasTranslated && message.translatedTo && (
-            <View style={styles.translatedBadge}>
+            <Pressable onPress={() => { if (message.originalText) { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowOriginal((v) => !v); } }} style={styles.translatedBadge}>
               <Ionicons name="language" size={10} color="rgba(255,255,255,0.6)" />
-              <Text style={styles.translatedBadgeText}>Translated to {message.translatedTo}</Text>
+              <Text style={styles.translatedBadgeText}>🌐 Translated to {message.translatedTo}{message.originalText ? (showOriginal ? " · hide original" : " · tap to see original") : ""}</Text>
+            </Pressable>
+          )}
+          {isMine && message.wasTranslated && message.originalText && showOriginal && (
+            <View style={styles.originalTextBox}>
+              <Text style={styles.originalTextLabel}>Original</Text>
+              <Text style={styles.originalTextContent}>{message.originalText}</Text>
             </View>
           )}
           <View style={styles.metaRow}>
@@ -1466,6 +1485,30 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: "rgba(255,255,255,0.55)",
     fontStyle: "italic",
+  },
+  originalTextBox: {
+    marginTop: 4,
+    marginBottom: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: "rgba(0,0,0,0.18)",
+    borderRadius: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: "rgba(255,255,255,0.35)",
+    gap: 2,
+  },
+  originalTextLabel: {
+    fontSize: 9,
+    fontFamily: "Inter_600SemiBold",
+    color: "rgba(255,255,255,0.45)",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  originalTextContent: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "rgba(255,255,255,0.75)",
+    lineHeight: 18,
   },
   metaRow: {
     flexDirection: "row",
