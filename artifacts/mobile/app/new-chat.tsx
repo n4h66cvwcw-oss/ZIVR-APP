@@ -63,8 +63,24 @@ export default function NewChatScreen() {
 
   const handleSelectServer = async (user: ServerUser) => {
     Haptics.selectionAsync();
-    const chatId = await createServerDirectChat(user);
-    if (chatId) router.replace(`/chat/${chatId}`);
+    const result = await createServerDirectChat(user);
+    if (result.chatId) {
+      router.replace(`/chat/${result.chatId}`);
+      return;
+    }
+    if (result.approval === "pending") {
+      Alert.alert(
+        "Waiting for parent approval",
+        `You can chat with ${user.displayName} once a parent approves this contact. We've sent them a request.`
+      );
+    } else if (result.approval === "blocked") {
+      Alert.alert(
+        "Contact blocked",
+        `A parent has blocked chatting with ${user.displayName}.`
+      );
+    } else if (result.error) {
+      Alert.alert("Couldn't start chat", result.error);
+    }
   };
 
   const handleInviteSms = useCallback(

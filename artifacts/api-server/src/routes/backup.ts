@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { query, queryOne } from "../lib/db";
+import { getAuthUserId } from "../lib/auth";
 
 const router = Router();
 
@@ -7,16 +8,16 @@ const router = Router();
 router.get("/chats/:chatId/export", async (req, res) => {
   try {
     const { chatId } = req.params;
-    const { userId, format = "json" } = req.query as { userId?: string; format?: string };
+    const { format = "json" } = req.query as { format?: string };
 
-    // Verify membership if userId provided
-    if (userId) {
-      const member = await queryOne(
-        `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
-        [chatId, userId]
-      );
-      if (!member) { res.status(403).json({ error: "Not a member of this chat" }); return; }
-    }
+    // Identity comes from the signed token, and the caller must be a member
+    const authUserId = getAuthUserId(req);
+    if (!authUserId) { res.status(401).json({ error: "Invalid or missing auth token" }); return; }
+    const member = await queryOne(
+      `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+      [chatId, authUserId]
+    );
+    if (!member) { res.status(403).json({ error: "Not a member of this chat" }); return; }
 
     const messages = await query<{
       id: string; senderId: string; senderName: string;
@@ -97,6 +98,12 @@ router.post("/backup", async (req, res) => {
       return;
     }
 
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== userId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
     await query(
       `INSERT INTO vm_chat_backups (user_id, local_chat_id, chat_name, encrypted_data, message_count, backed_up_at)
        VALUES ($1, $2, $3, $4, $5, $6)
@@ -116,6 +123,8 @@ router.get("/backup", async (req, res) => {
   try {
     const { userId } = req.query as { userId: string };
     if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== userId) { res.status(401).json({ error: "Invalid or missing auth token" }); return; }
 
     const backups = await query<{
       id: string; localChatId: string; chatName: string;
@@ -144,6 +153,8 @@ router.get("/backup/:localChatId", async (req, res) => {
     const { localChatId } = req.params;
     const { userId } = req.query as { userId: string };
     if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== userId) { res.status(401).json({ error: "Invalid or missing auth token" }); return; }
 
     const backup = await queryOne<{
       id: string; localChatId: string; chatName: string;
@@ -173,6 +184,8 @@ router.delete("/backup/:localChatId", async (req, res) => {
     const { localChatId } = req.params;
     const { userId } = req.query as { userId: string };
     if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== userId) { res.status(401).json({ error: "Invalid or missing auth token" }); return; }
 
     await query(
       `DELETE FROM vm_chat_backups WHERE user_id = $1 AND local_chat_id = $2`,

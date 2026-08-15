@@ -1,7 +1,16 @@
 import { Server as HttpServer } from "http";
 import { Server as SocketServer, Socket } from "socket.io";
 import { query, queryOne } from "./db";
+import { sendExpoPush } from "./push";
+import { verifyToken } from "./auth";
 import Anthropic from "@anthropic-ai/sdk";
+
+let ioInstance: SocketServer | null = null;
+
+/** Access the live Socket.io server from outside (e.g. HTTP routes). */
+export function getIO(): SocketServer | null {
+  return ioInstance;
+}
 
 const anthropic = new Anthropic({
   apiKey: process.env["AI_INTEGRATIONS_ANTHROPIC_API_KEY"],
@@ -73,33 +82,14 @@ export type ServerMessage = {
 
 const onlineUsers = new Map<string, string>();
 
-async function sendExpoPush(tokens: string[], title: string, body: string, sound: string) {
-  if (!tokens.length) return;
-  try {
-    await fetch("https://exp.host/--/api/v2/push/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(
-        tokens.map((to) => ({
-          to,
-          title,
-          body,
-          sound: sound === "none" ? undefined : "default",
-          data: { sound },
-        }))
-      ),
-    });
-  } catch (err) {
-    console.warn("[push] failed to send:", err);
-  }
-}
-
 export function attachSocket(httpServer: HttpServer): SocketServer {
   const io = new SocketServer(httpServer, {
     path: "/api/socket.io",
     cors: { origin: "*", methods: ["GET", "POST"] },
     transports: ["websocket", "polling"],
   });
+
+  ioInstance = io;
 
   io.on("connection", (socket: Socket) => {
     let currentUserId: string | null = null;
@@ -108,6 +98,14 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       // Accept both legacy string form and new object form { userId, since }
       const userId = typeof payload === "string" ? payload : payload.userId;
       const since = typeof payload === "object" ? payload.since : undefined;
+
+      // Identity must be proven by the signed token from the socket handshake —
+      // a client cannot join as an arbitrary user id.
+      const tokenUserId = verifyToken(socket.handshake.auth?.["token"] as string | undefined);
+      if (!tokenUserId || tokenUserId !== userId) {
+        socket.emit("error", { message: "Authentication failed — invalid or missing token" });
+        return;
+      }
 
       currentUserId = userId;
       onlineUsers.set(userId, socket.id);
@@ -183,11 +181,51 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       try {
         const { chatId, senderId, text, type = "text", localId } = payload;
 
+        // senderId must match the authenticated identity of this connection
+        if (!currentUserId || senderId !== currentUserId) {
+          socket.emit("error", { message: "Not authenticated as this sender" });
+          return;
+        }
+
         const isMember = await queryOne<{ user_id: string }>(
           `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
           [chatId, senderId]
         );
         if (!isMember) { socket.emit("error", { message: "Not a member of this chat" }); return; }
+
+        // Contact-approval enforcement for direct chats involving a child:
+        // block sends between a child and a contact that isn't parent-approved.
+        const chatInfo = await queryOne<{ type: string }>(
+          `SELECT type FROM vm_chats WHERE id = $1`,
+          [chatId]
+        );
+        if (chatInfo?.type === "direct") {
+          const otherMember = await queryOne<{ user_id: string }>(
+            `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id != $2 LIMIT 1`,
+            [chatId, senderId]
+          );
+          if (otherMember) {
+            const { checkDirectContactAllowed, requestApprovalAndNotifyParents } = await import("./approvals");
+            const check = await checkDirectContactAllowed(senderId, otherMember.user_id);
+            if (!check.allowed) {
+              // Auto-create pending approval request(s) and notify parents,
+              // same as the chat-creation path (no-op for blocked pairs).
+              if (check.status === "pending") {
+                void requestApprovalAndNotifyParents(check.unapprovedPairs);
+              }
+              socket.emit("message:blocked", {
+                chatId,
+                localId,
+                status: check.status,
+                message:
+                  check.status === "blocked"
+                    ? "This contact has been blocked by a parent."
+                    : "Waiting for parent approval before you can chat with this contact.",
+              });
+              return;
+            }
+          }
+        }
 
         const sender = await queryOne<{ display_name: string; avatar: string }>(
           `SELECT display_name, avatar FROM vm_users WHERE id = $1`,
@@ -248,6 +286,13 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
     socket.on("chat:read", async (payload: { chatId: string; userId: string; lastMessageId?: string }) => {
       try {
         const { chatId, userId } = payload;
+        if (!currentUserId || userId !== currentUserId) return;
+        // The reader must actually be a member of the chat
+        const member = await queryOne<{ user_id: string }>(
+          `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+          [chatId, userId]
+        );
+        if (!member) return;
         const now = Date.now();
 
         const unread = await query<{ id: string; sender_id: string }>(
@@ -277,15 +322,34 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       }
     });
 
-    socket.on("chat:join", (chatId: string) => {
+    socket.on("chat:join", async (chatId: string) => {
+      // Only authenticated members may subscribe to a chat room
+      if (!currentUserId) return;
+      const member = await queryOne<{ user_id: string }>(
+        `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+        [chatId, currentUserId]
+      );
+      if (!member) return;
       void socket.join(`chat:${chatId}`);
     });
 
-    socket.on("typing:start", (payload: { chatId: string; userId: string; name: string }) => {
+    socket.on("typing:start", async (payload: { chatId: string; userId: string; name: string }) => {
+      if (!currentUserId || payload.userId !== currentUserId) return;
+      const member = await queryOne<{ user_id: string }>(
+        `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+        [payload.chatId, currentUserId]
+      );
+      if (!member) return;
       socket.to(`chat:${payload.chatId}`).emit("typing:update", { ...payload, typing: true });
     });
 
-    socket.on("typing:stop", (payload: { chatId: string; userId: string }) => {
+    socket.on("typing:stop", async (payload: { chatId: string; userId: string }) => {
+      if (!currentUserId || payload.userId !== currentUserId) return;
+      const member = await queryOne<{ user_id: string }>(
+        `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+        [payload.chatId, currentUserId]
+      );
+      if (!member) return;
       socket.to(`chat:${payload.chatId}`).emit("typing:update", { ...payload, typing: false });
     });
 

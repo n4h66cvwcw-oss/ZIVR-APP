@@ -71,10 +71,25 @@ export async function migrate(): Promise<void> {
     )
   `);
 
-  // Parental controls: account type on users
+  // Auth token bootstrap flag: tokens are issued once per user (at registration
+  // or via a one-time claim for accounts created before tokens existed).
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS token_claimed BOOLEAN DEFAULT false
+  `);
+
+  // Parental controls: account type on users (must exist before the
+  // child-token cleanup below references it)
   await query(`
     ALTER TABLE vm_users
     ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'standard'
+  `);
+
+  // Child accounts never self-claim tokens: their credential is recovered only
+  // through the authenticated parent route, so close the public claim window.
+  await query(`
+    UPDATE vm_users SET token_claimed = true
+     WHERE account_type = 'child' AND token_claimed = false
   `);
 
   // Parent ↔ child relationships

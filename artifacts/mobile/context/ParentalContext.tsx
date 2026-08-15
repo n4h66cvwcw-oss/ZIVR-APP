@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getAuthHeaders } from "@/context/ServerContext";
 
 export type ChildAccount = {
   id: string;
@@ -61,6 +62,9 @@ interface ParentalContextValue {
 
   updateTimeRestrictions: (childId: string, restriction: TimeRestriction) => Promise<void>;
 
+  /** Auth token for a child created on this device (parent-mediated bootstrap). */
+  getChildToken: (childId: string) => Promise<string | null>;
+
   loadContacts: (childId: string) => Promise<ContactApproval[]>;
   updateContactStatus: (childId: string, contactId: string, status: "approved" | "blocked") => Promise<void>;
 
@@ -74,6 +78,7 @@ interface ParentalContextValue {
 const ParentalContext = createContext<ParentalContextValue | null>(null);
 
 const PARENT_MODE_KEY = "@zivr_parent_mode";
+const CHILD_TOKENS_KEY = "@zivr_child_auth_tokens";
 const PARENT_USER_KEY = "@zivr_parent_user_id";
 
 const PRODUCTION_API = "https://echo-stream.replit.app/api";
@@ -91,8 +96,12 @@ async function apiCall<T>(
   options?: RequestInit
 ): Promise<T> {
   const res = await fetch(`${getApiBase()}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(await getAuthHeaders()),
+      ...(options?.headers as Record<string, string> | undefined),
+    },
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as { error?: string };
@@ -143,10 +152,20 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
   }): Promise<string | null> => {
     if (!parentUserId) return null;
     try {
-      const data = await apiCall<{ child: { id: string } }>("/parental/children", {
+      const data = await apiCall<{ child: { id: string; authToken?: string } }>("/parental/children", {
         method: "POST",
         body: JSON.stringify({ parentId: parentUserId, ...opts }),
       });
+      // Parent-mediated bootstrap: keep the child's auth token so the child
+      // profile on this device can act as the child account.
+      if (data.child.authToken) {
+        try {
+          const raw = await AsyncStorage.getItem(CHILD_TOKENS_KEY);
+          const map = raw ? JSON.parse(raw) as Record<string, string> : {};
+          map[data.child.id] = data.child.authToken;
+          await AsyncStorage.setItem(CHILD_TOKENS_KEY, JSON.stringify(map));
+        } catch { /* non-fatal */ }
+      }
       await loadChildren();
       return data.child.id;
     } catch (err) {
@@ -170,6 +189,26 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
       method: "PUT",
       body: JSON.stringify(restriction),
     });
+  }, []);
+
+  const getChildToken = useCallback(async (childId: string): Promise<string | null> => {
+    try {
+      const raw = await AsyncStorage.getItem(CHILD_TOKENS_KEY);
+      const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      if (map[childId]) return map[childId];
+      // Fallback: recover the child's credential as the authenticated parent
+      const data = await apiCall<{ authToken: string }>(`/parental/children/${childId}/token`, {
+        method: "POST",
+      });
+      if (data.authToken) {
+        map[childId] = data.authToken;
+        await AsyncStorage.setItem(CHILD_TOKENS_KEY, JSON.stringify(map));
+        return data.authToken;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }, []);
 
   const loadContacts = useCallback(async (childId: string): Promise<ContactApproval[]> => {
@@ -232,6 +271,7 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
       createChildAccount,
       loadChildDetail,
       updateTimeRestrictions,
+      getChildToken,
       loadContacts,
       updateContactStatus,
       loadFlags,

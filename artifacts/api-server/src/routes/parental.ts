@@ -1,7 +1,31 @@
 import { Router } from "express";
 import { query, queryOne } from "../lib/db";
+import { getAuthUserId, signToken } from "../lib/auth";
 
 const router = Router();
+
+/** Verify the request is authenticated as a parent of the given child. */
+async function requireParentOf(req: Parameters<typeof getAuthUserId>[0], childId: string): Promise<string | null> {
+  const authUserId = getAuthUserId(req);
+  if (!authUserId) return null;
+  const link = await queryOne<{ parent_id: string }>(
+    `SELECT parent_id FROM vm_parent_child WHERE parent_id = $1 AND child_id = $2`,
+    [authUserId, childId]
+  );
+  return link ? authUserId : null;
+}
+
+/** Allow either the child themself or one of their parents. */
+async function requireParentOrSelf(req: Parameters<typeof getAuthUserId>[0], childId: string): Promise<string | null> {
+  const authUserId = getAuthUserId(req);
+  if (!authUserId) return null;
+  if (authUserId === childId) return authUserId;
+  const link = await queryOne<{ parent_id: string }>(
+    `SELECT parent_id FROM vm_parent_child WHERE parent_id = $1 AND child_id = $2`,
+    [authUserId, childId]
+  );
+  return link ? authUserId : null;
+}
 
 // ── Create a child account linked to this parent ──────────────────────────────
 router.post("/children", async (req, res) => {
@@ -18,16 +42,23 @@ router.post("/children", async (req, res) => {
       return;
     }
 
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== parentId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
     // Ensure parent exists and set their account_type to 'parent'
     await query(
       `UPDATE vm_users SET account_type = 'parent' WHERE id = $1`,
       [parentId]
     );
 
-    // Create child user
+    // Create child user. The child's auth token is handed to the authenticated
+    // parent (parent-mediated bootstrap) — there is no public claim endpoint.
     const child = await queryOne<{ id: string }>(
-      `INSERT INTO vm_users (display_name, username, account_type)
-       VALUES ($1, $2, 'child') RETURNING id`,
+      `INSERT INTO vm_users (display_name, username, account_type, token_claimed)
+       VALUES ($1, $2, 'child', true) RETURNING id`,
       [displayName.trim(), username?.trim() ?? null]
     );
 
@@ -45,7 +76,7 @@ router.post("/children", async (req, res) => {
       [child.id]
     );
 
-    res.json({ child: { id: child.id, displayName, username } });
+    res.json({ child: { id: child.id, displayName, username, authToken: signToken(child.id) } });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "error";
     if (msg.includes("unique")) {
@@ -56,11 +87,33 @@ router.post("/children", async (req, res) => {
   }
 });
 
+// ── Recover a child's auth token (authenticated parent only) ─────────────────
+// Secure token recovery for child accounts: children never claim tokens
+// themselves; a verified parent can (re)fetch the child's credential.
+router.post("/children/:childId/token", async (req, res) => {
+  try {
+    const { childId } = req.params;
+    if (!(await requireParentOf(req, childId))) {
+      res.status(403).json({ error: "Only this child's parent can fetch their credential" });
+      return;
+    }
+    await query(`UPDATE vm_users SET token_claimed = true WHERE id = $1`, [childId]);
+    res.json({ authToken: signToken(childId) });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
 // ── List children for a parent ────────────────────────────────────────────────
 router.get("/children", async (req, res) => {
   try {
     const { parentId } = req.query as { parentId: string };
     if (!parentId) { res.status(400).json({ error: "parentId required" }); return; }
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== parentId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
 
     const children = await query<{
       id: string; displayName: string; username: string | null;
@@ -92,6 +145,10 @@ router.get("/children", async (req, res) => {
 router.get("/children/:childId", async (req, res) => {
   try {
     const { childId } = req.params;
+    if (!(await requireParentOrSelf(req, childId))) {
+      res.status(403).json({ error: "Not authorized for this child account" });
+      return;
+    }
 
     const child = await queryOne<{
       id: string; displayName: string; username: string | null;
@@ -127,6 +184,12 @@ router.put("/children/:childId/time-restrictions", async (req, res) => {
       enabled: boolean; startHour: number; endHour: number; days: string;
     };
 
+    // Only a parent of this child may change time restrictions
+    if (!(await requireParentOf(req, childId))) {
+      res.status(403).json({ error: "Only this child's parent can change time restrictions" });
+      return;
+    }
+
     await query(
       `INSERT INTO vm_time_restrictions (child_id, enabled, start_hour, end_hour, days)
        VALUES ($1, $2, $3, $4, $5)
@@ -145,6 +208,10 @@ router.put("/children/:childId/time-restrictions", async (req, res) => {
 router.get("/check-access/:childId", async (req, res) => {
   try {
     const { childId } = req.params;
+    if (!(await requireParentOrSelf(req, childId))) {
+      res.status(403).json({ error: "Not authorized for this child account" });
+      return;
+    }
 
     const restriction = await queryOne<{
       enabled: boolean; startHour: number; endHour: number; days: string;
@@ -183,6 +250,10 @@ router.get("/check-access/:childId", async (req, res) => {
 router.get("/children/:childId/contacts", async (req, res) => {
   try {
     const { childId } = req.params;
+    if (!(await requireParentOrSelf(req, childId))) {
+      res.status(403).json({ error: "Not authorized for this child account" });
+      return;
+    }
 
     const contacts = await query<{
       contactId: string; displayName: string; username: string | null;
@@ -217,6 +288,13 @@ router.put("/children/:childId/contacts/:contactId", async (req, res) => {
       return;
     }
 
+    // Only a parent of this child may approve or block contacts
+    const parentId = await requireParentOf(req, childId);
+    if (!parentId) {
+      res.status(403).json({ error: "Only this child's parent can review contacts" });
+      return;
+    }
+
     await query(
       `INSERT INTO vm_contact_approvals (child_id, contact_id, status, reviewed_at)
        VALUES ($1, $2, $3, $4)
@@ -236,6 +314,10 @@ router.post("/children/:childId/contacts/request", async (req, res) => {
   try {
     const { childId } = req.params;
     const { contactId } = req.body as { contactId: string };
+    if (!(await requireParentOrSelf(req, childId))) {
+      res.status(403).json({ error: "Not authorized for this child account" });
+      return;
+    }
 
     await query(
       `INSERT INTO vm_contact_approvals (child_id, contact_id, status)
@@ -254,6 +336,10 @@ router.post("/children/:childId/contacts/request", async (req, res) => {
 router.get("/children/:childId/contacts/:contactId/status", async (req, res) => {
   try {
     const { childId, contactId } = req.params;
+    if (!(await requireParentOrSelf(req, childId))) {
+      res.status(403).json({ error: "Not authorized for this child account" });
+      return;
+    }
 
     const row = await queryOne<{ status: string }>(
       `SELECT status FROM vm_contact_approvals WHERE child_id = $1 AND contact_id = $2`,
@@ -271,6 +357,10 @@ router.get("/children/:childId/flags", async (req, res) => {
   try {
     const { childId } = req.params;
     const { reviewed } = req.query as { reviewed?: string };
+    if (!(await requireParentOf(req, childId))) {
+      res.status(403).json({ error: "Only this child's parent can view flags" });
+      return;
+    }
 
     const whereReviewed = reviewed === "true"
       ? "AND cf.is_reviewed = true"
@@ -308,6 +398,10 @@ router.get("/children/:childId/flags", async (req, res) => {
 router.patch("/children/:childId/flags/:flagId", async (req, res) => {
   try {
     const { childId, flagId } = req.params;
+    if (!(await requireParentOf(req, childId))) {
+      res.status(403).json({ error: "Only this child's parent can review flags" });
+      return;
+    }
 
     await query(
       `UPDATE vm_content_flags SET is_reviewed = true

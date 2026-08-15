@@ -47,7 +47,7 @@ export default function ProfileScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { profile, updateProfile } = useProfile();
-  const { serverUserId, updateServerProfile } = useServer();
+  const { serverUserId, updateServerProfile, previousUserId, switchBackToPreviousUser } = useServer();
   const { isParentMode, children, setParentMode, loadChildren } = useParental();
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [status, setStatus] = useState(profile.statusMessage);
@@ -376,6 +376,25 @@ export default function ProfileScreen() {
               FAMILY CONTROLS
             </Text>
           </View>
+          {previousUserId && (
+            <Pressable
+              onPress={async () => {
+                const ok = await switchBackToPreviousUser();
+                if (ok) {
+                  await setParentMode(true, previousUserId);
+                  Alert.alert("Switched back", "You're now using your own account again.");
+                } else {
+                  Alert.alert("Switch failed", "Could not restore your previous account.");
+                }
+              }}
+              style={({ pressed }) => [styles.field, { borderBottomColor: "transparent", opacity: pressed ? 0.7 : 1 }]}
+            >
+              <Text style={[styles.fieldLabel, { color: "#6C63FF", width: "auto", flex: 1, fontWeight: "600" }]}>
+                Switch back to my account
+              </Text>
+              <Ionicons name="swap-horizontal-outline" size={18} color="#6C63FF" />
+            </Pressable>
+          )}
           <View style={[styles.field, { borderBottomColor: "transparent" }]}>
             <Text style={[styles.fieldLabel, { color: colors.textSecondary, width: "auto", flex: 1 }]}>
               Parent Mode

@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, Text, View, useColorScheme } from "react-native";
+import { Image, StyleSheet, Text, View, useColorScheme } from "react-native";
 import Colors from "@/constants/colors";
 
 interface AvatarProps {
@@ -7,6 +7,8 @@ interface AvatarProps {
   size?: number;
   isOnline?: boolean;
   color?: string;
+  /** Optional image URI; falls back to initials when absent. */
+  avatar?: string;
 }
 
 const AVATAR_COLORS = [
@@ -38,7 +40,7 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function Avatar({ name, size = 44, isOnline, color }: AvatarProps) {
+export function Avatar({ name, size = 44, isOnline, color, avatar }: AvatarProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const bgColor = color || getColorForName(name);
@@ -58,9 +60,16 @@ export function Avatar({ name, size = 44, isOnline, color }: AvatarProps) {
           },
         ]}
       >
-        <Text style={[styles.initials, { fontSize, color: "#FFFFFF" }]}>
-          {initials}
-        </Text>
+        {avatar ? (
+          <Image
+            source={{ uri: avatar }}
+            style={{ width: size, height: size, borderRadius: size / 2 }}
+          />
+        ) : (
+          <Text style={[styles.initials, { fontSize, color: "#FFFFFF" }]}>
+            {initials}
+          </Text>
+        )}
       </View>
       {isOnline && (
         <View

@@ -23,6 +23,7 @@ import {
   type TimeRestriction,
 } from "@/context/ParentalContext";
 import { Avatar } from "@/components/Avatar";
+import { useServer } from "@/context/ServerContext";
 
 const DAYS = [
   { key: "mon", label: "M" },
@@ -103,7 +104,10 @@ export default function ChildSettingsScreen() {
     updateContactStatus,
     loadFlags,
     markFlagReviewed,
+    getChildToken,
+    setParentMode,
   } = useParental();
+  const { switchActiveUser } = useServer();
 
   const [child, setChild] = useState<ChildAccount | null>(null);
   const [timeRestriction, setTimeRestriction] = useState<TimeRestriction>({
@@ -163,6 +167,34 @@ export default function ChildSettingsScreen() {
     );
   };
 
+  const handleUseAsChild = () => {
+    if (!childId || !child) return;
+    Alert.alert(
+      `Switch to ${child.displayName}?`,
+      "This device will start chatting as this child account. You can switch back from the profile screen by signing in as yourself.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Switch",
+          onPress: async () => {
+            const token = await getChildToken(childId);
+            if (!token) {
+              Alert.alert(
+                "Not available",
+                "This child's sign-in credential isn't stored on this device. It is only available on the device that created the child account."
+              );
+              return;
+            }
+            await switchActiveUser(childId, token);
+            await setParentMode(false);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            router.replace("/");
+          },
+        },
+      ]
+    );
+  };
+
   const handleDismissFlag = async (flagId: string) => {
     if (!childId) return;
     await markFlagReviewed(childId, flagId);
@@ -188,7 +220,7 @@ export default function ChildSettingsScreen() {
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </Pressable>
         <View style={sStyles.headerCenter}>
-          <Avatar name={child.displayName} avatar={child.avatar ?? undefined} size={32} />
+          <Avatar name={child.displayName} size={32} />
           <Text style={[sStyles.headerTitle, { color: colors.text }]}>{child.displayName}</Text>
         </View>
         <View style={{ width: 24 }} />
@@ -226,6 +258,11 @@ export default function ChildSettingsScreen() {
             {child.username && (
               <Text style={[sStyles.username, { color: colors.textSecondary }]}>@{child.username}</Text>
             )}
+            <View style={[sStyles.divider, { backgroundColor: colors.border }]} />
+            <Pressable style={sStyles.switchChildBtn} onPress={handleUseAsChild} hitSlop={4}>
+              <Ionicons name="swap-horizontal-outline" size={18} color="#6C63FF" />
+              <Text style={sStyles.switchChildText}>Use this device as {child.displayName}</Text>
+            </Pressable>
           </View>
 
           {/* Time restrictions */}
@@ -334,7 +371,7 @@ export default function ChildSettingsScreen() {
           }
           renderItem={({ item }) => (
             <View style={[sStyles.contactCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Avatar name={item.displayName} avatar={item.avatar ?? undefined} size={44} />
+              <Avatar name={item.displayName} size={44} />
               <View style={sStyles.contactInfo}>
                 <Text style={[sStyles.contactName, { color: colors.text }]}>{item.displayName}</Text>
                 {item.username && (
@@ -463,6 +500,8 @@ const sStyles = StyleSheet.create({
   statusDot: { width: 8, height: 8, borderRadius: 4 },
   statusText: { fontSize: 14 },
   username: { fontSize: 13 },
+  switchChildBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
+  switchChildText: { fontSize: 14, fontWeight: "600", color: "#6C63FF" },
   switchRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   switchLabel: { fontSize: 16, fontWeight: "500" },
   divider: { height: 1 },

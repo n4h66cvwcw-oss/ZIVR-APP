@@ -3,7 +3,7 @@ import * as Haptics from "expo-haptics";
 import * as MailComposer from "expo-mail-composer";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
@@ -44,6 +44,7 @@ export default function ChatSettingsScreen() {
     disableChatEncryption,
     generateChatPdfHtml,
     getChatMessages,
+    replaceChatMessages,
     deleteChat,
     pinChat,
     muteChat,
@@ -202,6 +203,7 @@ export default function ChatSettingsScreen() {
               }
               const msgs = JSON.parse(data) as unknown[];
               if (!Array.isArray(msgs)) throw new Error("Invalid backup data");
+              await replaceChatMessages(id, msgs as Parameters<typeof replaceChatMessages>[1]);
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               Alert.alert("Restored ✓", `${msgs.length} messages restored from backup.`);
             } catch {

@@ -48,7 +48,6 @@ function ChildCard({
     >
       <Avatar
         name={child.displayName}
-        avatar={child.avatar ?? undefined}
         size={50}
       />
       <View style={styles.childInfo}>

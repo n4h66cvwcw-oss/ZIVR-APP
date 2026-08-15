@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { query, queryOne } from "../lib/db";
+import { signToken, getAuthUserId } from "../lib/auth";
 
 const router = Router();
 
@@ -33,13 +34,13 @@ router.post("/register", async (req, res) => {
 
     const clean = (s?: string) => s?.trim() || null;
     const user = await queryOne<{ id: string }>(
-      `INSERT INTO vm_users (display_name, username, phone, avatar, status_message, preferred_language)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO vm_users (display_name, username, phone, avatar, status_message, preferred_language, token_claimed)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
        RETURNING id`,
       [clean(displayName), clean(username), clean(phone), clean(avatar), clean(statusMessage) ?? "Hey there! I'm on ZIVR", clean(preferredLanguage) ?? "English"]
     );
 
-    res.json({ user: { id: user!.id, displayName, username, phone } });
+    res.json({ user: { id: user!.id, displayName, username, phone }, authToken: signToken(user!.id) });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     if (msg.includes("unique")) {
@@ -50,9 +51,19 @@ router.post("/register", async (req, res) => {
   }
 });
 
+// NOTE: there is deliberately no public "claim token" endpoint. A user ID is
+// public data (search results, chat member lists), never a credential. Tokens
+// are issued only at registration or handed to an authenticated parent when a
+// child account is created; legacy accounts must re-register to obtain one.
+
 router.patch("/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== id) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
     const { displayName, username, phone, avatar, statusMessage, pushToken, preferredLanguage } = req.body as Record<string, string | undefined>;
 
     await query(

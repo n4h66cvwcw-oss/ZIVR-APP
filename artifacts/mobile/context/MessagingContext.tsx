@@ -16,6 +16,7 @@ import {
   hashPasscode,
   generateEncryptionKey,
 } from "@/utils/crypto";
+import { Alert } from "react-native";
 import { useServer, type ServerMessage, type ServerUser } from "@/context/ServerContext";
 import { useProfile } from "@/context/ProfileContext";
 
@@ -339,7 +340,7 @@ interface MessagingContextValue {
   sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
-  createServerDirectChat: (serverUser: ServerUser) => Promise<string>;
+  createServerDirectChat: (serverUser: ServerUser) => Promise<{ chatId: string; approval?: "pending" | "blocked"; error?: string }>;
   createGroupChat: (name: string, participantIds: string[], description?: string) => Promise<string>;
   createCheckInGroup: (name: string, memberIds: string[], anonymous?: boolean) => Promise<string>;
   sendBroadcast: (groupId: string, text: string, audio?: AudioAttachment) => Promise<string>;
@@ -365,6 +366,8 @@ interface MessagingContextValue {
   getContactById: (id: string) => Contact | undefined;
   updateContacts: (contacts: Contact[]) => Promise<void>;
   getChatMessages: (chatId: string) => Message[];
+  /** Replace a chat's messages wholesale (e.g. cloud-backup restore) and persist. */
+  replaceChatMessages: (chatId: string, msgs: Message[]) => Promise<void>;
   getBroadcastsForGroup: (groupId: string) => CheckInBroadcast[];
   setChatPasscode: (chatId: string, passcode: string, recoveryEmail?: string, hint?: string) => Promise<void>;
   removeChatPasscode: (chatId: string) => Promise<void>;
@@ -383,7 +386,7 @@ function genId(): string {
 }
 
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
-  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats, translateMessage } = useServer();
+  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats, translateMessage, onMessageBlocked, onContactRequest } = useServer();
   const { profile } = useProfile();
   const myId = serverUserId ?? "me";
   const [contacts, setContactsState] = useState<Contact[]>(SAMPLE_CONTACTS);
@@ -506,6 +509,53 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     });
     return unsub;
   }, [onNewMessage]);
+
+  // Surface parental contact-approval blocks: a message the server refused to
+  // deliver is removed from local state (it was added optimistically) and the
+  // child sees a "waiting for parent approval" (or blocked) alert.
+  useEffect(() => {
+    const unsub = onMessageBlocked((data) => {
+      const { chatId, localId } = data;
+      if (localId) {
+        sentLocalIds.current.delete(localId);
+        setMessages((prev) => {
+          const chatMsgs = prev[chatId] || [];
+          const filtered = chatMsgs.filter((m) => m.id !== localId);
+          if (filtered.length === chatMsgs.length) return prev;
+          const updated = { ...prev, [chatId]: filtered };
+          AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+          // Revert the chat's last-message preview to the last delivered message
+          setChats((prevChats) => {
+            const last = filtered[filtered.length - 1];
+            const updatedChats = prevChats.map((c) =>
+              c.id === chatId
+                ? { ...c, lastMessage: last?.text ?? "", lastMessageTime: last?.timestamp }
+                : c
+            );
+            AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updatedChats)).catch(() => {});
+            return updatedChats;
+          });
+          return updated;
+        });
+      }
+      Alert.alert(
+        data.status === "blocked" ? "Contact blocked" : "Waiting for parent approval",
+        data.message
+      );
+    });
+    return unsub;
+  }, [onMessageBlocked]);
+
+  // In-app parent notification: a child tried to chat with someone new
+  useEffect(() => {
+    const unsub = onContactRequest((data) => {
+      Alert.alert(
+        "New contact request",
+        `${data.childName} wants to chat with ${data.contactName}. Review the request in Parental Controls.`
+      );
+    });
+    return unsub;
+  }, [onContactRequest]);
 
   useEffect(() => {
     if (!serverUserId) return;
@@ -818,6 +868,26 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     [messages]
   );
 
+  const replaceChatMessages = useCallback(async (chatId: string, msgs: Message[]) => {
+    const updated = { ...messagesRef.current, [chatId]: msgs };
+    messagesRef.current = updated;
+    setMessages(updated);
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
+    } catch { /* non-fatal — state is updated; persist retried on next write */ }
+    // Keep the chat preview in sync with the restored history
+    const last = msgs[msgs.length - 1];
+    if (last) {
+      setChats((prev) => {
+        const next = prev.map((c) =>
+          c.id === chatId ? { ...c, lastMessage: last.text, lastMessageTime: last.timestamp } : c
+        );
+        AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(next)).catch(() => {});
+        return next;
+      });
+    }
+  }, []);
+
   const getDecryptedMessages = useCallback(
     (chatId: string): Message[] => {
       const chat = chats.find((c) => c.id === chatId);
@@ -987,16 +1057,17 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createServerDirectChat = useCallback(
-    async (serverUser: ServerUser): Promise<string> => {
+    async (serverUser: ServerUser): Promise<{ chatId: string; approval?: "pending" | "blocked"; error?: string }> => {
       const existing = chats.find(
         (c) => c.isServerChat && c.participantIds.includes(serverUser.id)
       );
-      if (existing) return existing.id;
+      if (existing) return { chatId: existing.id };
 
-      if (!serverUserId) return "";
+      if (!serverUserId) return { chatId: "" };
 
-      const chatId = await getOrCreateDirectChat(serverUserId, serverUser.id);
-      if (!chatId) return "";
+      const result = await getOrCreateDirectChat(serverUserId, serverUser.id);
+      const chatId = result.chatId;
+      if (!chatId) return { chatId: "", approval: result.approval, error: result.error };
 
       const contact: Contact = {
         id: serverUser.id,
@@ -1025,7 +1096,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         isServerChat: true,
       };
       await saveChats([newChat, ...chats]);
-      return chatId;
+      return { chatId };
     },
     [chats, contacts, serverUserId, getOrCreateDirectChat]
   );
@@ -1588,6 +1659,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       getContactById,
       updateContacts,
       getChatMessages,
+      replaceChatMessages,
       getBroadcastsForGroup,
       setChatPasscode,
       removeChatPasscode,
@@ -1636,6 +1708,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       getContactById,
       updateContacts,
       getChatMessages,
+      replaceChatMessages,
       getBroadcastsForGroup,
       setChatPasscode,
       removeChatPasscode,

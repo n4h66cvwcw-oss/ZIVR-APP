@@ -42,7 +42,28 @@ export type ServerChat = {
   members: Array<{ id: string; displayName: string; avatar: string | null; isOnline: boolean }>;
 };
 
+export type DirectChatResult = {
+  chatId: string | null;
+  /** Set when a parent hasn't approved (or has blocked) this contact for a child account. */
+  approval?: "pending" | "blocked";
+  error?: string;
+};
 type MessageHandler = (msg: ServerMessage) => void;
+
+type MessageBlockedHandler = (data: {
+  chatId: string;
+  localId?: string;
+  status: "pending" | "blocked";
+  message: string;
+}) => void;
+
+type ContactRequestHandler = (data: {
+  childId: string;
+  childName: string;
+  contactId: string;
+  contactName: string;
+  requestedAt: number;
+}) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
 
 export type ChatBackupMeta = {
@@ -74,7 +95,15 @@ interface ServerContextValue {
   }) => Promise<void>;
   fetchServerUser: (userId: string) => Promise<ServerUser | null>;
   findUsers: (query: string) => Promise<ServerUser[]>;
-  getOrCreateDirectChat: (myUserId: string, theirUserId: string) => Promise<string | null>;
+  getOrCreateDirectChat: (myUserId: string, theirUserId: string) => Promise<DirectChatResult>;
+  onMessageBlocked: (handler: MessageBlockedHandler) => () => void;
+  onContactRequest: (handler: ContactRequestHandler) => () => void;
+  /** Switch this device's active server account (e.g. parent-mediated child handoff). */
+  switchActiveUser: (userId: string, authToken: string) => Promise<void>;
+  /** Non-null when a previous identity (e.g. the parent) was saved during a switch. */
+  previousUserId: string | null;
+  /** Restore the identity that was active before the last switchActiveUser. */
+  switchBackToPreviousUser: () => Promise<boolean>;
   createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<string | null>;
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
   sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
@@ -102,6 +131,9 @@ const ServerContext = createContext<ServerContextValue | null>(null);
 
 const SERVER_USER_KEY = "@zivr_server_user_id";
 
+const SERVER_TOKEN_KEY = "@zivr_server_auth_token";
+// The identity that was active before the last account switch (parent handoff)
+const PREVIOUS_IDENTITY_KEY = "@zivr_previous_identity";
 const PRODUCTION_API = "https://echo-stream.replit.app/api";
 
 function getApiBase(): string {
@@ -120,22 +152,42 @@ function getSocketUrl(): string {
 
 export function ServerProvider({ children }: { children: React.ReactNode }) {
   const [serverUserId, setServerUserId] = useState<string | null>(null);
+  const [previousUserId, setPreviousUserId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const messageHandlers = useRef<Set<MessageHandler>>(new Set());
   const typingHandlers = useRef<Set<(d: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void>>(new Set());
   const readReceiptHandlers = useRef<Set<ReadReceiptHandler>>(new Set());
+  const messageBlockedHandlers = useRef<Set<MessageBlockedHandler>>(new Set());
+  const contactRequestHandlers = useRef<Set<ContactRequestHandler>>(new Set());
+  const authTokenRef = useRef<string | null>(null);
   // Tracks when the socket last disconnected so we can request missed messages on rejoin
   const disconnectTimeRef = useRef<number | null>(null);
   const serverUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(SERVER_USER_KEY).then((id) => {
-      if (id) {
-        setServerUserId(id);
-        serverUserIdRef.current = id;
-        connectSocket(id);
+    Promise.all([
+      AsyncStorage.getItem(SERVER_USER_KEY),
+      AsyncStorage.getItem(SERVER_TOKEN_KEY),
+      AsyncStorage.getItem(PREVIOUS_IDENTITY_KEY),
+    ]).then(async ([id, token, prevRaw]) => {
+      if (prevRaw) {
+        try { setPreviousUserId((JSON.parse(prevRaw) as { userId: string }).userId); } catch { /* ignore */ }
       }
+      if (!id) return;
+      setServerUserId(id);
+      serverUserIdRef.current = id;
+      if (token) {
+        authTokenRef.current = token;
+        cachedAuthToken = token;
+      } else {
+        // No stored credential. A user ID alone is public data, never a
+        // credential, so there is deliberately no way to "claim" a token for
+        // an existing account — the user must re-register (or, for child
+        // accounts, receive their credential from the authenticated parent).
+        console.warn("[ServerContext] no auth token stored for this account; re-registration required for authenticated actions");
+      }
+      connectSocket(id);
     });
     return () => {
       socketRef.current?.disconnect();
@@ -177,6 +229,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       reconnection: true,
       reconnectionDelay: 2000,
       timeout: 10000,
+      auth: (cb) => cb({ token: authTokenRef.current }),
     });
 
     socket.on("connect", () => {
@@ -213,6 +266,15 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       readReceiptHandlers.current.forEach((h) => h(data));
     });
 
+    socket.on("message:blocked", (data: { chatId: string; localId?: string; status: "pending" | "blocked"; message: string }) => {
+      messageBlockedHandlers.current.forEach((h) => h(data));
+    });
+
+    // In-app parent notification: child attempted to contact someone new
+    socket.on("contact:request", (data: { childId: string; childName: string; contactId: string; contactName: string; requestedAt: number }) => {
+      contactRequestHandlers.current.forEach((h) => h(data));
+    });
+
     socket.on("connect_error", (err) => {
       console.log("[ServerContext] socket connect_error:", err.message);
     });
@@ -240,8 +302,13 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
           console.warn("[ServerContext] register failed:", err.error);
           return null;
         }
-        const data = await res.json() as { user: { id: string } };
+        const data = await res.json() as { user: { id: string }; authToken?: string };
         const userId = data.user.id;
+        if (data.authToken) {
+          authTokenRef.current = data.authToken;
+          cachedAuthToken = data.authToken;
+          await AsyncStorage.setItem(SERVER_TOKEN_KEY, data.authToken);
+        }
         await AsyncStorage.setItem(SERVER_USER_KEY, userId);
         setServerUserId(userId);
         serverUserIdRef.current = userId;
@@ -268,30 +335,95 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const getOrCreateDirectChat = useCallback(
-    async (myUserId: string, theirUserId: string): Promise<string | null> => {
+    async (myUserId: string, theirUserId: string): Promise<DirectChatResult> => {
       try {
         const res = await fetch(`${getApiBase()}/chats/direct`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
           body: JSON.stringify({ myUserId, theirUserId }),
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({})) as { error?: string; approval?: "pending" | "blocked" };
+          return { chatId: null, approval: err.approval, error: err.error };
+        }
         const data = await res.json() as { chatId: string };
         socketRef.current?.emit("chat:join", data.chatId);
-        return data.chatId;
+        return { chatId: data.chatId };
       } catch {
-        return null;
+        return { chatId: null, error: "Network error" };
       }
     },
     []
   );
+
+  const onMessageBlocked = useCallback((handler: MessageBlockedHandler) => {
+    messageBlockedHandlers.current.add(handler);
+    return () => { messageBlockedHandlers.current.delete(handler); };
+  }, []);
+
+  const switchActiveUser = useCallback(async (userId: string, authToken: string) => {
+    // Preserve the current identity (e.g. the parent) so the user can switch back
+    const prevId = serverUserIdRef.current;
+    const prevToken = authTokenRef.current;
+    if (prevId && prevToken && prevId !== userId) {
+      await AsyncStorage.setItem(
+        PREVIOUS_IDENTITY_KEY,
+        JSON.stringify({ userId: prevId, authToken: prevToken })
+      );
+      setPreviousUserId(prevId);
+    }
+    authTokenRef.current = authToken;
+    cachedAuthToken = authToken;
+    await AsyncStorage.multiSet([
+      [SERVER_USER_KEY, userId],
+      [SERVER_TOKEN_KEY, authToken],
+    ]);
+    setServerUserId(userId);
+    serverUserIdRef.current = userId;
+    // Reconnect the socket as the new identity
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    disconnectTimeRef.current = null;
+    connectSocket(userId);
+  }, []);
+
+  const switchBackToPreviousUser = useCallback(async (): Promise<boolean> => {
+    try {
+      const raw = await AsyncStorage.getItem(PREVIOUS_IDENTITY_KEY);
+      if (!raw) return false;
+      const prev = JSON.parse(raw) as { userId: string; authToken: string };
+      if (!prev.userId || !prev.authToken) return false;
+      await AsyncStorage.removeItem(PREVIOUS_IDENTITY_KEY);
+      setPreviousUserId(null);
+      authTokenRef.current = prev.authToken;
+      cachedAuthToken = prev.authToken;
+      await AsyncStorage.multiSet([
+        [SERVER_USER_KEY, prev.userId],
+        [SERVER_TOKEN_KEY, prev.authToken],
+      ]);
+      setServerUserId(prev.userId);
+      serverUserIdRef.current = prev.userId;
+      socketRef.current?.disconnect();
+      socketRef.current = null;
+      disconnectTimeRef.current = null;
+      connectSocket(prev.userId);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const onContactRequest = useCallback((handler: ContactRequestHandler) => {
+    contactRequestHandlers.current.add(handler);
+    return () => { contactRequestHandlers.current.delete(handler); };
+  }, []);
 
   const createServerGroupChat = useCallback(
     async (myUserId: string, name: string, memberIds: string[]): Promise<string | null> => {
       try {
         const res = await fetch(`${getApiBase()}/chats/group`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
           body: JSON.stringify({ myUserId, name, memberIds }),
         });
         if (!res.ok) return null;
@@ -309,7 +441,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     async (chatId: string, before?: number): Promise<ServerMessage[]> => {
       try {
         const url = `${getApiBase()}/chats/${chatId}/messages${before ? `?before=${before}` : ""}`;
-        const res = await fetch(url);
+        const res = await fetch(url, { headers: await getAuthHeaders() });
         if (!res.ok) return [];
         const data = await res.json() as { messages: ServerMessage[] };
         return data.messages ?? [];
@@ -330,7 +462,9 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUserChats = useCallback(async (userId: string): Promise<ServerChat[]> => {
     try {
-      const res = await fetch(`${getApiBase()}/chats/user/${userId}`);
+      const res = await fetch(`${getApiBase()}/chats/user/${userId}`, {
+        headers: await getAuthHeaders(),
+      });
       if (!res.ok) return [];
       const data = await res.json() as { chats: ServerChat[] };
       return data.chats ?? [];
@@ -418,8 +552,9 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const exportServerChatAsText = useCallback(async (chatId: string): Promise<string | null> => {
     try {
       const uid = serverUserIdRef.current;
-      const qs = uid ? `?userId=${uid}&format=txt` : "?format=txt";
-      const res = await fetch(`${getApiBase()}/chats/${chatId}/export${qs}`);
+      const res = await fetch(`${getApiBase()}/chats/${chatId}/export?format=txt`, {
+        headers: await getAuthHeaders(),
+      });
       if (!res.ok) return null;
       return await res.text();
     } catch {
@@ -438,7 +573,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await fetch(`${getApiBase()}/backup`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
         body: JSON.stringify({ userId: uid, ...opts }),
       });
       return res.ok;
@@ -451,7 +586,9 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     const uid = serverUserIdRef.current;
     if (!uid) return [];
     try {
-      const res = await fetch(`${getApiBase()}/backup?userId=${uid}`);
+      const res = await fetch(`${getApiBase()}/backup?userId=${uid}`, {
+        headers: await getAuthHeaders(),
+      });
       if (!res.ok) return [];
       const data = await res.json() as { backups: ChatBackupMeta[] };
       return data.backups ?? [];
@@ -464,7 +601,9 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     const uid = serverUserIdRef.current;
     if (!uid) return null;
     try {
-      const res = await fetch(`${getApiBase()}/backup/${encodeURIComponent(localChatId)}?userId=${uid}`);
+      const res = await fetch(`${getApiBase()}/backup/${encodeURIComponent(localChatId)}?userId=${uid}`, {
+        headers: await getAuthHeaders(),
+      });
       if (!res.ok) return null;
       const data = await res.json() as { backup: { encryptedData: string } };
       return data.backup?.encryptedData ?? null;
@@ -479,6 +618,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     try {
       await fetch(`${getApiBase()}/backup/${encodeURIComponent(localChatId)}?userId=${uid}`, {
         method: "DELETE",
+        headers: await getAuthHeaders(),
       });
     } catch { /* silent */ }
   }, []);
@@ -499,7 +639,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       try {
         await fetch(`${getApiBase()}/users/${userId}`, {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
           body: JSON.stringify(updates),
         });
       } catch (e) {
@@ -519,6 +659,11 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         fetchServerUser,
         findUsers,
         getOrCreateDirectChat,
+        onMessageBlocked,
+        onContactRequest,
+        switchActiveUser,
+        previousUserId,
+        switchBackToPreviousUser,
         createServerGroupChat,
         fetchMessages,
         sendServerMessage,
@@ -546,4 +691,14 @@ export function useServer() {
   const ctx = useContext(ServerContext);
   if (!ctx) throw new Error("useServer must be used within ServerProvider");
   return ctx;
+}
+
+let cachedAuthToken: string | null = null;
+
+/** Auth headers for server requests that require a proven identity. */
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  if (!cachedAuthToken) {
+    cachedAuthToken = await AsyncStorage.getItem(SERVER_TOKEN_KEY);
+  }
+  return cachedAuthToken ? { "X-Auth-Token": cachedAuthToken } : {};
 }

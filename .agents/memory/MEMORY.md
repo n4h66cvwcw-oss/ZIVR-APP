@@ -1,0 +1,1 @@
+- [Server-derived identity is mandatory](auth-tokens.md) — never trust client-asserted user IDs in mutations; tokens issued only at registration or via an authenticated parent; verify ownership/membership per resource.

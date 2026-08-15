@@ -1,11 +1,40 @@
 import { Router } from "express";
 import { query, queryOne } from "../lib/db";
+import { checkDirectContactAllowed, requestApprovalAndNotifyParents } from "../lib/approvals";
+import { getAuthUserId } from "../lib/auth";
 
 const router = Router();
 
 router.post("/direct", async (req, res) => {
   try {
     const { myUserId, theirUserId } = req.body as { myUserId: string; theirUserId: string };
+
+    // Actor identity must be proven by a signed token, not trusted from the body
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== myUserId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
+    // Parental contact-approval enforcement: if either user is a child,
+    // the other must be approved by the child's parent before a chat exists.
+    const check = await checkDirectContactAllowed(myUserId, theirUserId);
+    if (!check.allowed) {
+      if (check.status === "blocked") {
+        res.status(403).json({
+          error: "This contact has been blocked by a parent.",
+          approval: "blocked",
+        });
+        return;
+      }
+      // Auto-create pending approval request(s) and notify parent(s)
+      await requestApprovalAndNotifyParents(check.unapprovedPairs);
+      res.status(403).json({
+        error: "Waiting for parent approval before you can chat with this contact.",
+        approval: "pending",
+      });
+      return;
+    }
 
     const existing = await queryOne<{ id: string }>(
       `SELECT c.id FROM vm_chats c
@@ -40,6 +69,12 @@ router.post("/group", async (req, res) => {
       myUserId: string; name: string; description?: string; memberIds: string[];
     };
 
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== myUserId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
     const chat = await queryOne<{ id: string }>(
       `INSERT INTO vm_chats (type, name, description, created_by) VALUES ('group', $1, $2, $3) RETURNING id`,
       [name, description ?? null, myUserId]
@@ -60,6 +95,11 @@ router.post("/group", async (req, res) => {
 router.get("/user/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
+    const authUserId = getAuthUserId(req);
+    if (!authUserId || authUserId !== userId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
     const chats = await query(
       `SELECT c.id, c.type, c.name, c.description, c.last_message_at,
          (SELECT m.text FROM vm_messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) as last_message,
@@ -80,6 +120,14 @@ router.get("/user/:userId", async (req, res) => {
 router.get("/:chatId/messages", async (req, res) => {
   try {
     const { chatId } = req.params;
+    // Only authenticated members may read a chat's history
+    const authUserId = getAuthUserId(req);
+    if (!authUserId) { res.status(401).json({ error: "Invalid or missing auth token" }); return; }
+    const member = await queryOne(
+      `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+      [chatId, authUserId]
+    );
+    if (!member) { res.status(403).json({ error: "Not a member of this chat" }); return; }
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const before = req.query.before ? Number(req.query.before) : Date.now() + 1000;
 
