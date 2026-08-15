@@ -45,6 +45,14 @@ export type ServerChat = {
 type MessageHandler = (msg: ServerMessage) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
 
+export type ChatBackupMeta = {
+  id: string;
+  localChatId: string;
+  chatName: string;
+  messageCount: number;
+  backedUpAt: number;
+};
+
 interface ServerContextValue {
   serverUserId: string | null;
   isConnected: boolean;
@@ -83,6 +91,11 @@ interface ServerContextValue {
     myName?: string;
     recipientLanguage?: string;
   }) => Promise<string>;
+  exportServerChatAsText: (chatId: string) => Promise<string | null>;
+  backupLocalChat: (opts: { localChatId: string; chatName: string; encryptedData: string; messageCount: number }) => Promise<boolean>;
+  listBackups: () => Promise<ChatBackupMeta[]>;
+  restoreBackup: (localChatId: string) => Promise<string | null>;
+  deleteBackup: (localChatId: string) => Promise<void>;
 }
 
 const ServerContext = createContext<ServerContextValue | null>(null);
@@ -402,6 +415,74 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const exportServerChatAsText = useCallback(async (chatId: string): Promise<string | null> => {
+    try {
+      const uid = serverUserIdRef.current;
+      const qs = uid ? `?userId=${uid}&format=txt` : "?format=txt";
+      const res = await fetch(`${getApiBase()}/chats/${chatId}/export${qs}`);
+      if (!res.ok) return null;
+      return await res.text();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const backupLocalChat = useCallback(async (opts: {
+    localChatId: string;
+    chatName: string;
+    encryptedData: string;
+    messageCount: number;
+  }): Promise<boolean> => {
+    const uid = serverUserIdRef.current;
+    if (!uid) return false;
+    try {
+      const res = await fetch(`${getApiBase()}/backup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: uid, ...opts }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const listBackups = useCallback(async (): Promise<ChatBackupMeta[]> => {
+    const uid = serverUserIdRef.current;
+    if (!uid) return [];
+    try {
+      const res = await fetch(`${getApiBase()}/backup?userId=${uid}`);
+      if (!res.ok) return [];
+      const data = await res.json() as { backups: ChatBackupMeta[] };
+      return data.backups ?? [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const restoreBackup = useCallback(async (localChatId: string): Promise<string | null> => {
+    const uid = serverUserIdRef.current;
+    if (!uid) return null;
+    try {
+      const res = await fetch(`${getApiBase()}/backup/${encodeURIComponent(localChatId)}?userId=${uid}`);
+      if (!res.ok) return null;
+      const data = await res.json() as { backup: { encryptedData: string } };
+      return data.backup?.encryptedData ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const deleteBackup = useCallback(async (localChatId: string): Promise<void> => {
+    const uid = serverUserIdRef.current;
+    if (!uid) return;
+    try {
+      await fetch(`${getApiBase()}/backup/${encodeURIComponent(localChatId)}?userId=${uid}`, {
+        method: "DELETE",
+      });
+    } catch { /* silent */ }
+  }, []);
+
   const fetchServerUser = useCallback(async (userId: string): Promise<ServerUser | null> => {
     try {
       const res = await fetch(`${getApiBase()}/users/${userId}`);
@@ -449,6 +530,11 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         onReadReceipt,
         translateMessage,
         getSuggestedReply,
+        exportServerChatAsText,
+        backupLocalChat,
+        listBackups,
+        restoreBackup,
+        deleteBackup,
       }}
     >
       {children}

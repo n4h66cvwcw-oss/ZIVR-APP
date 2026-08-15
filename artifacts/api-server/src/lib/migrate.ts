@@ -57,6 +57,20 @@ export async function migrate(): Promise<void> {
     )
   `);
 
+  // Cloud backup for local chats
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_chat_backups (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id      UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      local_chat_id TEXT NOT NULL,
+      chat_name    TEXT NOT NULL,
+      encrypted_data TEXT NOT NULL,
+      message_count INT DEFAULT 0,
+      backed_up_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+      UNIQUE (user_id, local_chat_id)
+    )
+  `);
+
   // Parental controls: account type on users
   await query(`
     ALTER TABLE vm_users

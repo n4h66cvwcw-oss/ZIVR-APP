@@ -3,8 +3,9 @@ import * as Haptics from "expo-haptics";
 import * as MailComposer from "expo-mail-composer";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import * as FileSystem from "expo-file-system";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   Modal,
@@ -22,6 +23,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging } from "@/context/MessagingContext";
 import { useProfile } from "@/context/ProfileContext";
+import { useServer } from "@/context/ServerContext";
 import { PasscodeModal } from "@/components/PasscodeModal";
 import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
@@ -41,6 +43,7 @@ export default function ChatSettingsScreen() {
     enableChatEncryption,
     disableChatEncryption,
     generateChatPdfHtml,
+    getChatMessages,
     deleteChat,
     pinChat,
     muteChat,
@@ -51,6 +54,14 @@ export default function ChatSettingsScreen() {
   } = useMessaging();
 
   const { profile } = useProfile();
+  const {
+    serverUserId,
+    exportServerChatAsText,
+    backupLocalChat,
+    listBackups,
+    restoreBackup,
+    deleteBackup,
+  } = useServer();
 
   const chat = chats.find((c) => c.id === id);
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
@@ -64,6 +75,10 @@ export default function ChatSettingsScreen() {
   const [hint, setHint] = useState(chat?.passcodeHint || "");
   const [passcodeStep, setPasscodeStep] = useState<"enter" | "repeat">("enter");
   const [exporting, setExporting] = useState(false);
+  const [exportingText, setExportingText] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [lastBackedUpAt, setLastBackedUpAt] = useState<number | null>(null);
   const [showSoundPicker, setShowSoundPicker] = useState(false);
   const [showTranslatePicker, setShowTranslatePicker] = useState(false);
 
@@ -71,9 +86,134 @@ export default function ChatSettingsScreen() {
     ? getLanguageByCode(chat.recipientLanguage)
     : undefined;
 
+  // Load last backup timestamp on mount
+  useEffect(() => {
+    if (!serverUserId || !chat) return;
+    listBackups().then((backups) => {
+      const match = backups.find((b) => b.localChatId === id);
+      if (match) setLastBackedUpAt(match.backedUpAt);
+    });
+  }, [id, serverUserId]);
+
   if (!chat) return null;
 
   const hasPasscode = !!chat.passcodeHash;
+
+  // Export full history as a .txt file and share it
+  const handleExportText = async () => {
+    setExportingText(true);
+    try {
+      let text: string | null = null;
+
+      if (chat.isServerChat) {
+        // Fetch ALL messages from server (no pagination limit)
+        text = await exportServerChatAsText(id);
+      }
+
+      if (!text) {
+        // Fall back to locally-loaded messages
+        const msgs = getChatMessages(id);
+        const lines = [
+          `ZIVR Chat Export`,
+          `Chat: ${chat.name}`,
+          `Exported: ${new Date().toISOString()}`,
+          `Messages: ${msgs.length}`,
+          "─".repeat(60),
+          "",
+          ...msgs.map((m) => {
+            const d = new Date(m.timestamp);
+            const time = d.toLocaleString("en-US", {
+              month: "short", day: "numeric", year: "numeric",
+              hour: "2-digit", minute: "2-digit",
+            });
+            const label = m.senderId === "me" ? "You" : m.text;
+            return m.audioAttachment
+              ? `[${time}] ${label}: [Voice Message]`
+              : m.imageAttachment
+              ? `[${time}] ${label}: [Image]`
+              : `[${time}] ${label}: ${m.text}`;
+          }),
+        ];
+        text = lines.join("\n");
+      }
+
+      const filename = `zivr-${chat.name.replace(/[^a-z0-9]/gi, "-").toLowerCase()}-${Date.now()}.txt`;
+      const uri = `${FileSystem.cacheDirectory}${filename}`;
+      await FileSystem.writeAsStringAsync(uri, text, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(uri, {
+        mimeType: "text/plain",
+        dialogTitle: `${chat.name} — Message History`,
+        UTI: "public.plain-text",
+      });
+    } catch {
+      Alert.alert("Export failed", "Could not export messages. Please try again.");
+    } finally {
+      setExportingText(false);
+    }
+  };
+
+  // Back up local chat messages (as JSON blob) to the server
+  const handleCloudBackup = async () => {
+    if (!serverUserId) {
+      Alert.alert("Not connected", "You need a server account to use cloud backup.");
+      return;
+    }
+    setBackingUp(true);
+    try {
+      const msgs = getChatMessages(id);
+      const payload = JSON.stringify(msgs);
+      const ok = await backupLocalChat({
+        localChatId: id,
+        chatName: chat.name,
+        encryptedData: payload,
+        messageCount: msgs.length,
+      });
+      if (ok) {
+        const now = Date.now();
+        setLastBackedUpAt(now);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert("Backup saved ✓", `${msgs.length} messages backed up to your ZIVR account.`);
+      } else {
+        Alert.alert("Backup failed", "Could not save backup. Please try again.");
+      }
+    } catch {
+      Alert.alert("Backup failed", "An unexpected error occurred.");
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
+  // Restore messages from cloud backup
+  const handleRestoreBackup = async () => {
+    Alert.alert(
+      "Restore from backup?",
+      "This will reload your messages from the last cloud backup. Current local messages will be replaced.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Restore",
+          onPress: async () => {
+            setRestoring(true);
+            try {
+              const data = await restoreBackup(id);
+              if (!data) {
+                Alert.alert("No backup found", "There is no cloud backup for this chat.");
+                return;
+              }
+              const msgs = JSON.parse(data) as unknown[];
+              if (!Array.isArray(msgs)) throw new Error("Invalid backup data");
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert("Restored ✓", `${msgs.length} messages restored from backup.`);
+            } catch {
+              Alert.alert("Restore failed", "Could not restore backup. The data may be corrupted.");
+            } finally {
+              setRestoring(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const handleToggleEncryption = async () => {
     if (chat.isEncrypted) {
@@ -272,16 +412,51 @@ export default function ChatSettingsScreen() {
           </>
         )}
 
-        <SectionHeader title="Export" colors={colors} />
+        <SectionHeader title="Export & Backup" colors={colors} />
 
         <SettingRow
           icon="document-text-outline"
+          label={exportingText ? "Exporting…" : "Export as Text File"}
+          subtitle="Full message history as a shareable .txt file"
+          colors={colors}
+          onPress={handleExportText}
+          disabled={exportingText}
+        />
+
+        <SettingRow
+          icon="document-outline"
           label={exporting ? "Generating PDF..." : "Export to PDF"}
-          subtitle="Save this thread with dates and times"
+          subtitle="Save this thread as a formatted PDF"
           colors={colors}
           onPress={handleExportPDF}
           disabled={exporting}
         />
+
+        <SettingRow
+          icon={backingUp ? "cloud-upload-outline" : "cloud-upload-outline"}
+          label={backingUp ? "Backing up…" : "Back Up to Cloud"}
+          subtitle={
+            lastBackedUpAt
+              ? `Last backed up ${new Date(lastBackedUpAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+              : serverUserId
+              ? "Save a copy of messages to your ZIVR account"
+              : "Sign in to a ZIVR account to enable backup"
+          }
+          colors={colors}
+          onPress={handleCloudBackup}
+          disabled={backingUp || !serverUserId}
+        />
+
+        {lastBackedUpAt !== null && (
+          <SettingRow
+            icon={restoring ? "cloud-download-outline" : "cloud-download-outline"}
+            label={restoring ? "Restoring…" : "Restore from Backup"}
+            subtitle="Reload messages from your last cloud backup"
+            colors={colors}
+            onPress={handleRestoreBackup}
+            disabled={restoring}
+          />
+        )}
 
         <SectionHeader title="Organization" colors={colors} />
 
