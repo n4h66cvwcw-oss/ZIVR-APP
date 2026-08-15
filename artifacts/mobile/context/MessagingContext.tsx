@@ -16,7 +16,7 @@ import {
   hashPasscode,
   generateEncryptionKey,
 } from "@/utils/crypto";
-import { useServer, type ServerUser } from "@/context/ServerContext";
+import { useServer, type ServerMessage, type ServerUser } from "@/context/ServerContext";
 import { useProfile } from "@/context/ProfileContext";
 
 export type AudioAttachment = {
@@ -392,6 +392,17 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [sortMode, setSortModeState] = useState<ChatSortMode>("recent");
 
   const sentLocalIds = useRef<Set<string>>(new Set());
+  // Synchronous guard: message IDs that have already been dispatched into state.
+  // Updated atomically at the top of the onNewMessage handler so that two
+  // rapid deliveries of the same server ID (e.g. socket auto-reconnect +
+  // missed_messages replay arriving before a re-render) are both caught even
+  // before React has had a chance to commit and run effects.
+  const seenMessageIds = useRef<Set<string>>(new Set());
+  // Messages that arrive before AsyncStorage hydration completes are buffered
+  // here and replayed once hydration finishes, preventing a race where a
+  // setMessages(loadedSnapshot) call would silently overwrite them.
+  const hydrationComplete = useRef(false);
+  const preHydrationBuffer = useRef<ServerMessage[]>([]);
   const chatsRef = useRef(chats);
   const messagesRef = useRef(messages);
   useEffect(() => { chatsRef.current = chats; }, [chats]);
@@ -407,6 +418,19 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         sentLocalIds.current.delete(msg.localId!);
         return;
       }
+      // If storage hydration hasn't finished yet, buffer the message so that
+      // the upcoming setMessages(loadedSnapshot) call cannot silently overwrite
+      // it. The buffer is drained synchronously at the end of loadData().
+      if (!hydrationComplete.current) {
+        preHydrationBuffer.current.push(msg);
+        return;
+      }
+      // Atomically mark this server ID as seen. If it was already in the set
+      // (e.g. both socket auto-reconnect and missed_messages replay delivered it
+      // before the next render), bail out immediately so neither setMessages nor
+      // setChats run a second time.
+      if (seenMessageIds.current.has(msg.id)) return;
+      seenMessageIds.current.add(msg.id);
       const chatId = msg.chatId;
       const newMsg: Message = {
         id: msg.id,
@@ -542,17 +566,20 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         await AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify([BETA_CHAT]));
       }
 
+      // Collect the persisted message snapshot; do NOT call setMessages yet —
+      // we wait until after the buffer drain below so a single state update
+      // includes any messages that arrived during AsyncStorage hydration.
+      let finalMsgs: Record<string, Message[]>;
       if (messagesStr) {
         const loadedMsgs: Record<string, Message[]> = JSON.parse(messagesStr);
         if (!loadedMsgs[BETA_CHAT_ID]) {
           loadedMsgs[BETA_CHAT_ID] = [BETA_WELCOME_MSG];
           await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(loadedMsgs));
         }
-        setMessages(loadedMsgs);
+        finalMsgs = loadedMsgs;
       } else {
-        const initMsgs = { [BETA_CHAT_ID]: [BETA_WELCOME_MSG] };
-        setMessages(initMsgs);
-        await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(initMsgs));
+        finalMsgs = { [BETA_CHAT_ID]: [BETA_WELCOME_MSG] };
+        await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(finalMsgs));
       }
 
       if (groupsStr) {
@@ -580,8 +607,131 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (sortStr) setSortModeState(sortStr as ChatSortMode);
+
+      // ── Finalize message state (synchronous from here to the end) ──────────
+      // 1. Populate seenMessageIds from everything already persisted so that
+      //    replays of those messages are silently ignored going forward.
+      Object.values(finalMsgs).forEach((msgs) =>
+        msgs.forEach((m) => seenMessageIds.current.add(m.id))
+      );
+
+      // 2. Drain messages that arrived while we were awaiting AsyncStorage.
+      //    Merge them into finalMsgs so the single setMessages call below
+      //    includes both persisted and buffered messages.
+      const buffered = preHydrationBuffer.current.splice(0);
+      const bufferedForChats: ServerMessage[] = [];
+      for (const msg of buffered) {
+        if (seenMessageIds.current.has(msg.id)) continue;
+        seenMessageIds.current.add(msg.id);
+        const chatId = msg.chatId;
+        const existing = finalMsgs[chatId] || [];
+        const newMsg: Message = {
+          id: msg.id,
+          chatId,
+          text: msg.text,
+          senderId: msg.senderId,
+          timestamp: msg.createdAt,
+          read: false,
+        };
+        finalMsgs = { ...finalMsgs, [chatId]: [...existing, newMsg] };
+        bufferedForChats.push(msg);
+      }
+
+      // 3. Commit messages state (single call covers both persisted + buffered).
+      setMessages(finalMsgs);
+      // Persist the merged snapshot so buffered messages survive app restarts.
+      if (bufferedForChats.length) {
+        AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(finalMsgs)).catch(() => {});
+      }
+
+      // 4. Apply chat-list updates for any genuinely new buffered messages.
+      if (bufferedForChats.length) {
+        setChats((prev) => {
+          let updated = prev;
+          for (const msg of bufferedForChats) {
+            const chatId = msg.chatId;
+            const chat = updated.find((c) => c.id === chatId);
+            if (!chat) {
+              const placeholder: Chat = {
+                id: chatId,
+                type: "direct",
+                name: msg.senderName || "Unknown",
+                participantIds: [msg.senderId],
+                createdAt: msg.createdAt,
+                unreadCount: 1,
+                lastMessage: msg.text,
+                lastMessageTime: msg.createdAt,
+                isServerChat: true,
+              };
+              updated = [placeholder, ...updated];
+            } else {
+              updated = updated.map((c) =>
+                c.id === chatId
+                  ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
+                  : c
+              );
+            }
+          }
+          AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+      }
+
+      // 5. Open the gate — from now on the handler processes messages directly.
+      hydrationComplete.current = true;
     } catch (e) {
       console.error("Error loading data:", e);
+      // Open the gate first so the handler can process new messages normally.
+      hydrationComplete.current = true;
+      // Drain any messages that were buffered before the error by dispatching
+      // them through the normal handler path (seenMessageIds + state updates).
+      const bufferedOnError = preHydrationBuffer.current.splice(0);
+      for (const msg of bufferedOnError) {
+        if (seenMessageIds.current.has(msg.id)) continue;
+        seenMessageIds.current.add(msg.id);
+        const chatId = msg.chatId;
+        const newMsg: Message = {
+          id: msg.id,
+          chatId,
+          text: msg.text,
+          senderId: msg.senderId,
+          timestamp: msg.createdAt,
+          read: false,
+        };
+        setMessages((prev) => {
+          const existing = prev[chatId] || [];
+          if (existing.some((m) => m.id === msg.id)) return prev;
+          const updated = { ...prev, [chatId]: [...existing, newMsg] };
+          AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+        setChats((prev) => {
+          const chat = prev.find((c) => c.id === chatId);
+          if (!chat) {
+            const placeholder: Chat = {
+              id: chatId,
+              type: "direct",
+              name: msg.senderName || "Unknown",
+              participantIds: [msg.senderId],
+              createdAt: msg.createdAt,
+              unreadCount: 1,
+              lastMessage: msg.text,
+              lastMessageTime: msg.createdAt,
+              isServerChat: true,
+            };
+            const updated = [placeholder, ...prev];
+            AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updated)).catch(() => {});
+            return updated;
+          }
+          const updated = prev.map((c) =>
+            c.id === chatId
+              ? { ...c, lastMessage: msg.text, lastMessageTime: msg.createdAt, unreadCount: (c.unreadCount || 0) + 1 }
+              : c
+          );
+          AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+      }
     }
   }
 
