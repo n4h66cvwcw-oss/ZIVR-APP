@@ -19,6 +19,7 @@ import { CallProvider } from "@/context/CallContext";
 import { ProfileProvider, useProfile } from "@/context/ProfileContext";
 import { ServerProvider, useServer } from "@/context/ServerContext";
 import { SkinProvider } from "@/context/SkinContext";
+import { ParentalProvider } from "@/context/ParentalContext";
 import { IncomingCallModal } from "@/components/IncomingCallModal";
 import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 import { registerForPushNotificationsAsync } from "@/utils/notifications";
@@ -153,6 +154,22 @@ function RootLayoutNav() {
           name="checkin/received/[broadcastId]"
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="parental-dashboard"
+          options={{
+            headerShown: false,
+            presentation: "modal",
+            animation: "slide_from_bottom",
+          }}
+        />
+        <Stack.Screen
+          name="parental/[childId]"
+          options={{
+            headerShown: false,
+            presentation: "card",
+            animation: "slide_from_right",
+          }}
+        />
       </Stack>
       <IncomingCallModal />
     </>
@@ -181,6 +198,7 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <ProfileProvider>
             <ServerProvider>
+            <ParentalProvider>
             <SkinProvider>
               <MessagingProvider>
                 <CallProvider>
@@ -194,6 +212,7 @@ export default function RootLayout() {
                 </CallProvider>
               </MessagingProvider>
             </SkinProvider>
+            </ParentalProvider>
             </ServerProvider>
           </ProfileProvider>
         </QueryClientProvider>

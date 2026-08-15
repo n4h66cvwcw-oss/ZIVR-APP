@@ -28,6 +28,7 @@ import {
   type CaptureGuardType,
 } from "@/context/ProfileContext";
 import { useServer } from "@/context/ServerContext";
+import { useParental } from "@/context/ParentalContext";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
 import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
@@ -47,6 +48,7 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const { profile, updateProfile } = useProfile();
   const { serverUserId, updateServerProfile } = useServer();
+  const { isParentMode, children, setParentMode, loadChildren } = useParental();
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [status, setStatus] = useState(profile.statusMessage);
   const [customText, setCustomText] = useState(profile.captureGuardText);
@@ -364,6 +366,52 @@ export default function ProfileScreen() {
           </Pressable>
           <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
             Used for auto-translation. Messages you send will be translated to the recipient's language automatically.
+          </Text>
+        </View>
+
+        {/* Family Controls */}
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
+              FAMILY CONTROLS
+            </Text>
+          </View>
+          <View style={[styles.field, { borderBottomColor: "transparent" }]}>
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary, width: "auto", flex: 1 }]}>
+              Parent Mode
+            </Text>
+            <Switch
+              value={isParentMode}
+              onValueChange={async (v) => {
+                await setParentMode(v, serverUserId ?? undefined);
+                if (v) await loadChildren();
+              }}
+              trackColor={{ false: colors.border, true: "#6C63FF" }}
+              thumbColor="#fff"
+            />
+          </View>
+          {isParentMode && (
+            <Pressable
+              onPress={() => router.push("/parental-dashboard" as never)}
+              style={({ pressed }) => [styles.field, { borderBottomColor: "transparent", opacity: pressed ? 0.7 : 1 }]}
+            >
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary, width: "auto", flex: 1 }]}>
+                Manage Children
+              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                {children.length > 0 && (
+                  <Text style={[styles.fieldInput, { flex: 0, color: colors.primary }]}>
+                    {children.length} child{children.length > 1 ? "ren" : ""}
+                  </Text>
+                )}
+                <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+              </View>
+            </Pressable>
+          )}
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            {isParentMode
+              ? "Manage child accounts, set screen time, approve contacts, and review AI-flagged content."
+              : "Enable to create monitored child accounts with content filtering and screen time controls."}
           </Text>
         </View>
 

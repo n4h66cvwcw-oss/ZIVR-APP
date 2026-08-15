@@ -56,4 +56,59 @@ export async function migrate(): Promise<void> {
       created_at   BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
     )
   `);
+
+  // Parental controls: account type on users
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'standard'
+  `);
+
+  // Parent ↔ child relationships
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_parent_child (
+      parent_id  UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      child_id   UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+      PRIMARY KEY (parent_id, child_id)
+    )
+  `);
+
+  // Time-of-day restrictions per child
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_time_restrictions (
+      child_id   UUID PRIMARY KEY REFERENCES vm_users(id) ON DELETE CASCADE,
+      enabled    BOOLEAN DEFAULT false,
+      start_hour INT DEFAULT 8,
+      end_hour   INT DEFAULT 21,
+      days       TEXT DEFAULT 'mon,tue,wed,thu,fri,sat,sun'
+    )
+  `);
+
+  // Contact approval list per child
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_contact_approvals (
+      child_id      UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      contact_id    UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      status        TEXT DEFAULT 'pending',
+      requested_at  BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+      reviewed_at   BIGINT,
+      PRIMARY KEY (child_id, contact_id)
+    )
+  `);
+
+  // AI-flagged content per child
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_content_flags (
+      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      child_id     UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      message_id   UUID REFERENCES vm_messages(id) ON DELETE SET NULL,
+      chat_id      UUID REFERENCES vm_chats(id) ON DELETE SET NULL,
+      sender_id    UUID REFERENCES vm_users(id) ON DELETE SET NULL,
+      flagged_text TEXT NOT NULL,
+      severity     TEXT DEFAULT 'low',
+      ai_reason    TEXT,
+      is_reviewed  BOOLEAN DEFAULT false,
+      created_at   BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+    )
+  `);
 }

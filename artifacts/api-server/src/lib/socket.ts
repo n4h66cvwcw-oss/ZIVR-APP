@@ -1,6 +1,65 @@
 import { Server as HttpServer } from "http";
 import { Server as SocketServer, Socket } from "socket.io";
 import { query, queryOne } from "./db";
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  apiKey: process.env["AI_INTEGRATIONS_ANTHROPIC_API_KEY"],
+  baseURL: process.env["AI_INTEGRATIONS_ANTHROPIC_BASE_URL"],
+});
+
+// Fire-and-forget: check message for inappropriate content if sender or any
+// recipient is a child account. Stores flags in vm_content_flags.
+async function checkContentForChild(
+  messageId: string,
+  chatId: string,
+  senderId: string,
+  text: string
+): Promise<void> {
+  try {
+    if (!text || text.length < 3) return;
+
+    // Find all child members of this chat (including sender if they're a child)
+    const childMembers = await query<{ userId: string }>(
+      `SELECT u.id AS "userId"
+         FROM vm_chat_members cm
+         JOIN vm_users u ON u.id = cm.user_id
+        WHERE cm.chat_id = $1 AND u.account_type = 'child'`,
+      [chatId]
+    );
+
+    if (childMembers.length === 0) return;
+
+    const prompt = `You are a child-safety content moderation system. Analyze the following message for content inappropriate for minors (under 18). Look for: sexual content, violence, drug/alcohol references, bullying, grooming, hate speech, or other harmful content.
+
+Message: "${text}"
+
+Respond with JSON only (no markdown): { "flagged": true/false, "severity": "low"|"medium"|"high", "reason": "brief explanation or null" }
+Only flag if genuinely concerning. Normal conversation should not be flagged.`;
+
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 150,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const raw = response.content[0].type === "text" ? response.content[0].text.trim() : "";
+    const parsed = JSON.parse(raw) as { flagged: boolean; severity: string; reason: string | null };
+
+    if (!parsed.flagged) return;
+
+    // Insert a flag row for each child member of this chat
+    for (const { userId } of childMembers) {
+      await query(
+        `INSERT INTO vm_content_flags (child_id, message_id, chat_id, sender_id, flagged_text, severity, ai_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [userId, messageId, chatId, senderId, text.slice(0, 500), parsed.severity, parsed.reason]
+      );
+    }
+  } catch {
+    // Content check failures are silent — never block message delivery
+  }
+}
 
 export type ServerMessage = {
   id: string;
@@ -158,6 +217,11 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         };
 
         io.to(`chat:${chatId}`).emit("message:new", { ...outgoing, localId });
+
+        // AI content check for child accounts — fire-and-forget, never blocks delivery
+        if (type === "text") {
+          void checkContentForChild(msg!.id, chatId, senderId, text);
+        }
 
         const offlineMembers = await query<{ id: string; push_token: string | null }>(
           `SELECT u.id, u.push_token
