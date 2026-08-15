@@ -32,7 +32,7 @@ export default function OnboardingScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
 
-  const { updateProfile } = useProfile();
+  const { profile, updateProfile } = useProfile();
   const { updateContacts } = useMessaging();
   const { registerOnServer } = useServer();
   const { status, syncedCount, syncContacts } = useContactSync();
@@ -98,6 +98,7 @@ export default function OnboardingScreen() {
       username: username.trim() || undefined,
       phone: phone.trim() || undefined,
       statusMessage: "Hey there! I'm on ZIVR",
+      preferredLanguage: profile.primaryLanguage,
     }).catch(() => {});
     router.replace("/(tabs)");
   }
@@ -116,6 +117,7 @@ export default function OnboardingScreen() {
       displayName,
       username: username.trim() || undefined,
       phone: phone.trim() || undefined,
+      preferredLanguage: profile.primaryLanguage,
     }).catch(() => {});
     router.replace("/(tabs)");
   }

@@ -54,6 +54,7 @@ interface ServerContextValue {
     phone?: string;
     avatar?: string;
     statusMessage?: string;
+    preferredLanguage?: string;
   }) => Promise<string | null>;
   updateServerProfile: (userId: string, updates: {
     displayName?: string;
@@ -213,6 +214,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       phone?: string;
       avatar?: string;
       statusMessage?: string;
+      preferredLanguage?: string;
     }): Promise<string | null> => {
       try {
         const res = await fetch(`${getApiBase()}/users/register`, {
