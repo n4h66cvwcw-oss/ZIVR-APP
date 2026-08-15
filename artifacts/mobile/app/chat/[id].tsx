@@ -6,11 +6,13 @@ import * as ScreenCapture from "expo-screen-capture";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   FlatList,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -55,7 +57,7 @@ export default function ChatScreen() {
     contacts,
   } = useMessaging();
 
-  const { serverUserId, isConnected, onTyping, emitTyping, emitChatRead } = useServer();
+  const { serverUserId, isConnected, onTyping, emitTyping, emitChatRead, getSuggestedReply } = useServer();
   const { profile } = useProfile();
   const [typingUsers, setTypingUsers] = useState<{ id: string; name: string; emoji?: string }[]>([]);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,6 +68,12 @@ export default function ChatScreen() {
   const [shieldVisible, setShieldVisible] = useState(false);
   const shieldOpacity = useRef(new Animated.Value(0)).current;
   const [shieldConfig, setShieldConfig] = useState<{ text?: string; gifUrl?: string } | null>(null);
+
+  // AI smart reply state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
+  const [aiTextToInject, setAiTextToInject] = useState<string | undefined>(undefined);
+  const suggestionSlide = useRef(new Animated.Value(60)).current;
 
   const chat = chats.find((c) => c.id === id);
   const messages = getDecryptedMessages(id);
@@ -150,12 +158,54 @@ export default function ChatScreen() {
     async (text: string, audio?: any, image?: any, formatting?: any, music?: any, selfDestruct?: any) => {
       if (!id) return;
       await sendMessage(id, text, audio, image, formatting, music, selfDestruct);
+      setAiSuggestion(null);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     },
     [id, sendMessage]
   );
+
+  const handleAiSuggest = useCallback(async () => {
+    if (aiLoading) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setAiLoading(true);
+    setAiSuggestion(null);
+
+    // Build message context from recent messages (last 20 non-deleted)
+    const recentMsgs = messages
+      .filter((m) => !m.deleted && (m.text || "").trim())
+      .slice(-20)
+      .map((m) => ({
+        sender: m.senderId === myId ? ("me" as const) : ("them" as const),
+        senderName: m.senderId !== myId ? (getContactById(m.senderId)?.name ?? chat?.name) : undefined,
+        text: m.text,
+      }));
+
+    const myDisplayName = contacts.find((c) => c.id === myId)?.name ?? profile.displayName;
+
+    const suggestion = await getSuggestedReply({
+      messages: recentMsgs,
+      chatName: chat?.name,
+      myName: myDisplayName,
+      recipientLanguage: chat?.recipientLanguage,
+    });
+
+    setAiLoading(false);
+    if (suggestion) {
+      setAiSuggestion(suggestion);
+      suggestionSlide.setValue(60);
+      Animated.spring(suggestionSlide, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 160,
+        friction: 18,
+      }).start();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+  }, [aiLoading, messages, myId, chat, contacts, profile.displayName, getSuggestedReply, getContactById, suggestionSlide]);
 
   const handleImageViewed = useCallback(
     (messageId: string) => {
@@ -394,6 +444,66 @@ export default function ChatScreen() {
             </View>
           }
         />
+        {/* AI Suggestion Card */}
+        {aiSuggestion && (
+          <Animated.View
+            style={[
+              chatStyles.suggestionCard,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.primary + "40",
+                transform: [{ translateY: suggestionSlide }],
+              },
+            ]}
+          >
+            <View style={chatStyles.suggestionHeader}>
+              <View style={chatStyles.suggestionBadge}>
+                <Text style={chatStyles.suggestionBadgeIcon}>✨</Text>
+                <Text style={[chatStyles.suggestionBadgeText, { color: colors.primary }]}>AI Suggestion</Text>
+              </View>
+              <Pressable
+                onPress={() => { setAiSuggestion(null); Haptics.selectionAsync(); }}
+                hitSlop={10}
+              >
+                <Ionicons name="close" size={18} color={colors.textSecondary} />
+              </Pressable>
+            </View>
+            <ScrollView
+              style={{ maxHeight: 100 }}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+            >
+              <Text style={[chatStyles.suggestionText, { color: colors.text }]}>
+                {aiSuggestion}
+              </Text>
+            </ScrollView>
+            <View style={chatStyles.suggestionActions}>
+              <Pressable
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  setAiTextToInject(aiSuggestion);
+                  setAiSuggestion(null);
+                }}
+                style={[chatStyles.suggestionBtn, { backgroundColor: colors.primary + "18", borderColor: colors.primary + "40" }]}
+              >
+                <Ionicons name="create-outline" size={14} color={colors.primary} />
+                <Text style={[chatStyles.suggestionBtnText, { color: colors.primary }]}>Edit</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  handleSend(aiSuggestion);
+                  setAiSuggestion(null);
+                }}
+                style={[chatStyles.suggestionBtn, chatStyles.suggestionBtnSend, { backgroundColor: colors.primary }]}
+              >
+                <Ionicons name="send" size={14} color="#fff" />
+                <Text style={[chatStyles.suggestionBtnText, { color: "#fff" }]}>Send</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        )}
+
         <View style={[styles.bottomBar, { paddingBottom: insets.bottom, backgroundColor: colors.background }]}>
           <Pressable
             onPress={() => router.back()}
@@ -402,8 +512,32 @@ export default function ChatScreen() {
           >
             <Ionicons name="chevron-back" size={22} color={colors.primary} />
           </Pressable>
+          {/* AI Smart Reply button */}
+          <Pressable
+            onPress={handleAiSuggest}
+            hitSlop={10}
+            style={[
+              styles.floatingBackBtn,
+              {
+                backgroundColor: aiLoading ? colors.primary + "18" : colors.surface,
+                borderColor: aiLoading ? colors.primary : colors.border,
+                marginLeft: 6,
+              },
+            ]}
+          >
+            {aiLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Text style={{ fontSize: 18 }}>✨</Text>
+            )}
+          </Pressable>
           <View style={{ flex: 1 }}>
-            <ChatInput onSend={handleSend} onTextChange={handleTypingChange} />
+            <ChatInput
+              onSend={handleSend}
+              onTextChange={handleTypingChange}
+              suggestedText={aiTextToInject}
+              onSuggestedTextConsumed={() => setAiTextToInject(undefined)}
+            />
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -599,5 +733,62 @@ const chatStyles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: "#fff",
     letterSpacing: 0.5,
+  },
+  suggestionCard: {
+    marginHorizontal: 10,
+    marginBottom: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 8,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 4,
+  },
+  suggestionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  suggestionBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  suggestionBadgeIcon: {
+    fontSize: 13,
+  },
+  suggestionBadgeText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+  },
+  suggestionText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 20,
+  },
+  suggestionActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 2,
+  },
+  suggestionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  suggestionBtnSend: {
+    borderWidth: 0,
+  },
+  suggestionBtnText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
   },
 });

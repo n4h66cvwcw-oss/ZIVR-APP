@@ -76,6 +76,12 @@ interface ServerContextValue {
   emitChatRead: (chatId: string, userId: string) => void;
   onReadReceipt: (handler: ReadReceiptHandler) => () => void;
   translateMessage: (text: string, targetLanguage: string, sourceLanguage?: string) => Promise<string>;
+  getSuggestedReply: (opts: {
+    messages: Array<{ sender: "me" | "them"; senderName?: string; text: string }>;
+    chatName?: string;
+    myName?: string;
+    recipientLanguage?: string;
+  }) => Promise<string>;
 }
 
 const ServerContext = createContext<ServerContextValue | null>(null);
@@ -371,6 +377,29 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const getSuggestedReply = useCallback(
+    async (opts: {
+      messages: Array<{ sender: "me" | "them"; senderName?: string; text: string }>;
+      chatName?: string;
+      myName?: string;
+      recipientLanguage?: string;
+    }): Promise<string> => {
+      try {
+        const res = await fetch(`${getApiBase()}/suggest-reply`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(opts),
+        });
+        if (!res.ok) return "";
+        const data = await res.json() as { suggestedReply?: string };
+        return data.suggestedReply ?? "";
+      } catch {
+        return "";
+      }
+    },
+    []
+  );
+
   const fetchServerUser = useCallback(async (userId: string): Promise<ServerUser | null> => {
     try {
       const res = await fetch(`${getApiBase()}/users/${userId}`);
@@ -417,6 +446,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         emitChatRead,
         onReadReceipt,
         translateMessage,
+        getSuggestedReply,
       }}
     >
       {children}

@@ -39,6 +39,9 @@ interface ChatInputProps {
   ) => void;
   placeholder?: string;
   onTextChange?: (text: string) => void;
+  /** When set, populates the text field with this value (e.g. AI suggestion) */
+  suggestedText?: string;
+  onSuggestedTextConsumed?: () => void;
 }
 
 type FontSize = "sm" | "md" | "lg" | "xl";
@@ -60,12 +63,21 @@ const TEXT_COLORS = [
   "#64D2FF",
 ];
 
-export function ChatInput({ onSend, placeholder = "Message...", onTextChange }: ChatInputProps) {
+export function ChatInput({ onSend, placeholder = "Message...", onTextChange, suggestedText, onSuggestedTextConsumed }: ChatInputProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
 
   const [text, setText] = useState("");
+
+  // Populate input when a suggestion is injected from the parent
+  React.useEffect(() => {
+    if (suggestedText) {
+      setText(suggestedText);
+      onTextChange?.(suggestedText);
+      onSuggestedTextConsumed?.();
+    }
+  }, [suggestedText]);
   const [attachedAudio, setAttachedAudio] = useState<AudioAttachment | null>(null);
   const [attachedMusic, setAttachedMusic] = useState<MusicAttachment | null>(null);
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
