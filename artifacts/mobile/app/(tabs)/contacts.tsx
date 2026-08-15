@@ -21,6 +21,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging, type Contact } from "@/context/MessagingContext";
 import { useCall } from "@/context/CallContext";
+import { FavoritesStrip } from "@/components/FavoritesStrip";
+import { useFavorites } from "@/context/FavoritesContext";
 import { Avatar } from "@/components/Avatar";
 import { useContactSync } from "@/hooks/useContactSync";
 import { useContactGroups } from "@/hooks/useContactGroups";
@@ -332,6 +334,7 @@ function ContactGroupModal({
 function ContactRow({
   contact,
   onPress,
+  onLongPress,
   onVoiceCall,
   onVideoCall,
   onGroupPress,
@@ -339,6 +342,7 @@ function ContactRow({
 }: {
   contact: Contact;
   onPress: () => void;
+  onLongPress?: () => void;
   onVoiceCall: () => void;
   onVideoCall: () => void;
   onGroupPress: () => void;
@@ -356,6 +360,7 @@ function ContactRow({
         Haptics.selectionAsync();
         onPress();
       }}
+      onLongPress={onLongPress}
       style={({ pressed }) => [
         styles.contactRow,
         { backgroundColor: colors.surface, opacity: pressed ? 0.8 : 1 },
@@ -608,6 +613,7 @@ export default function ContactsScreen() {
   const insets = useSafeAreaInsets();
   const { contacts, createDirectChat, updateContacts } = useMessaging();
   const { startCall } = useCall();
+  const { favorites, addFavorite, removeFavorite, isFavorited } = useFavorites();
   const [search, setSearch] = useState("");
   const [showInvite, setShowInvite] = useState(false);
   const [groupModalContact, setGroupModalContact] = useState<Contact | null>(null);
@@ -712,6 +718,8 @@ export default function ContactsScreen() {
         </View>
       </View>
 
+      <FavoritesStrip tab="contacts" />
+
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
@@ -734,6 +742,20 @@ export default function ContactsScreen() {
                 contact={item}
                 colors={colors}
                 onPress={() => handleMessage(item.id)}
+                onLongPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  const alreadyFaved = isFavorited(undefined, item.id);
+                  if (alreadyFaved) {
+                    const existing = favorites.find((f) => f.userId === item.id);
+                    if (existing) {
+                      removeFavorite(existing.id);
+                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                    }
+                  } else {
+                    addFavorite({ type: "contact", name: item.name, avatar: item.avatar, userId: item.id });
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  }
+                }}
                 onGroupPress={() => setGroupModalContact(item)}
                 onVoiceCall={() => {
                   startCall(item.id, item.name, "voice");

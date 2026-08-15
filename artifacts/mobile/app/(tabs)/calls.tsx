@@ -16,6 +16,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useCall, type CallRecord } from "@/context/CallContext";
 import { Avatar } from "@/components/Avatar";
+import { FavoritesStrip } from "@/components/FavoritesStrip";
+import { useFavorites } from "@/context/FavoritesContext";
 
 function formatDuration(secs: number): string {
   if (secs === 0) return "";
@@ -46,6 +48,7 @@ export default function CallsScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { callHistory, startCall, clearHistory } = useCall();
+  const { addFavorite, removeFavorite, isFavorited } = useFavorites();
   const [filter, setFilter] = useState<FilterType>("all");
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
 
@@ -221,6 +224,8 @@ export default function CallsScreen() {
           ))}
         </View>
       </View>
+
+      <FavoritesStrip tab="calls" />
 
       <FlatList
         data={filtered}

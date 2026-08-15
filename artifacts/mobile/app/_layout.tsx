@@ -20,6 +20,7 @@ import { ProfileProvider, useProfile } from "@/context/ProfileContext";
 import { ServerProvider, useServer } from "@/context/ServerContext";
 import { SkinProvider } from "@/context/SkinContext";
 import { ParentalProvider } from "@/context/ParentalContext";
+import { FavoritesProvider } from "@/context/FavoritesContext";
 import { IncomingCallModal } from "@/components/IncomingCallModal";
 import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 import { registerForPushNotificationsAsync } from "@/utils/notifications";
@@ -199,6 +200,7 @@ export default function RootLayout() {
           <ProfileProvider>
             <ServerProvider>
             <ParentalProvider>
+            <FavoritesProvider>
             <SkinProvider>
               <MessagingProvider>
                 <CallProvider>
@@ -212,6 +214,7 @@ export default function RootLayout() {
                 </CallProvider>
               </MessagingProvider>
             </SkinProvider>
+            </FavoritesProvider>
             </ParentalProvider>
             </ServerProvider>
           </ProfileProvider>

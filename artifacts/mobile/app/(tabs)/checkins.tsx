@@ -1,4 +1,5 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
+import { FavoritesStrip } from "@/components/FavoritesStrip";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React from "react";
@@ -295,6 +296,8 @@ export default function CheckInsScreen() {
           Members can't see each other. Only you see their replies.
         </Text>
       </View>
+
+      <FavoritesStrip tab="checkins" />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

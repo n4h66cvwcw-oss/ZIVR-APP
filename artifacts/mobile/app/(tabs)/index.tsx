@@ -25,6 +25,8 @@ import { SwipeableRow } from "@/components/SwipeableRow";
 import { PasscodeModal } from "@/components/PasscodeModal";
 import { ManageGroupsModal } from "@/components/ManageGroupsModal";
 import { useContactGroups } from "@/hooks/useContactGroups";
+import { FavoritesStrip } from "@/components/FavoritesStrip";
+import { useFavorites } from "@/context/FavoritesContext";
 
 type FilterTab = "all" | "direct" | "groups" | "pinned" | "unread" | "encrypted";
 
@@ -36,6 +38,7 @@ export default function ChatsScreen() {
   const { chats, deleteChat, pinChat, muteChat, sortMode, setSortMode, verifyChatPasscode, removeChatPasscode } = useMessaging();
   const { profile } = useProfile();
   const { groups } = useContactGroups();
+  const { favorites, addFavorite, removeFavorite, isFavorited } = useFavorites();
   const [search, setSearch] = useState("");
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
@@ -348,6 +351,8 @@ export default function ChatsScreen() {
         </View>
       </View>
 
+      <FavoritesStrip tab="chats" />
+
       <FlatList
         data={visibleChats}
         keyExtractor={(item) => item.id}
@@ -365,6 +370,25 @@ export default function ChatsScreen() {
                 icon: "bookmark",
                 color: "#FF9F0A",
                 onPress: () => pinChat(item.id),
+              },
+              {
+                label: isFavorited(item.id) ? "Unfave" : "Favorite",
+                icon: "star",
+                color: "#FFD700",
+                onPress: () => {
+                  if (isFavorited(item.id)) {
+                    const existing = favorites.find((f) => f.chatId === item.id && !f.messageId);
+                    if (existing) removeFavorite(existing.id);
+                  } else {
+                    addFavorite({
+                      type: "chat",
+                      name: item.name,
+                      avatar: item.avatar,
+                      chatId: item.id,
+                    });
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  }
+                },
               },
               {
                 label: "Settings",
