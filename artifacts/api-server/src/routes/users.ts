@@ -13,7 +13,8 @@ const USER_SELECT = `
   status_message      AS "statusMessage",
   preferred_language  AS "preferredLanguage",
   is_online           AS "isOnline",
-  last_seen           AS "lastSeen"
+  last_seen           AS "lastSeen",
+  account_type        AS "accountType"
 `;
 
 router.post("/register", async (req, res) => {

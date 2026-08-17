@@ -71,8 +71,15 @@ interface ParentalContextValue {
   loadFlags: (childId: string, reviewed?: boolean) => Promise<ContentFlag[]>;
   markFlagReviewed: (childId: string, flagId: string) => Promise<void>;
 
-  // For child accounts: check access
+  // For child accounts: check access (fail-open, safe for dashboards)
   checkAccess: (childId: string) => Promise<{ allowed: boolean; startHour?: number; endHour?: number }>;
+
+  /**
+   * Like checkAccess but throws on network/auth error instead of defaulting to
+   * allowed.  Use this wherever failing silently would be a security issue (e.g.
+   * the time-lock gate on app launch).
+   */
+  checkAccessStrict: (childId: string) => Promise<{ allowed: boolean; startHour?: number; endHour?: number }>;
 }
 
 const ParentalContext = createContext<ParentalContextValue | null>(null);
@@ -261,6 +268,13 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
     }
   }, []);
 
+  const checkAccessStrict = useCallback(async (childId: string) => {
+    // Intentionally does NOT catch — callers must handle errors themselves.
+    return apiCall<{ allowed: boolean; startHour?: number; endHour?: number }>(
+      `/parental/check-access/${childId}`
+    );
+  }, []);
+
   return (
     <ParentalContext.Provider value={{
       isParentMode,
@@ -277,6 +291,7 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
       loadFlags,
       markFlagReviewed,
       checkAccess,
+      checkAccessStrict,
     }}>
       {reactChildren}
     </ParentalContext.Provider>

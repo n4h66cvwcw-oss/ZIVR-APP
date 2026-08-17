@@ -20,6 +20,8 @@ export type ServerUser = {
   preferredLanguage?: string;
   isOnline?: boolean;
   lastSeen?: number;
+  /** "child" | "parent" | null — set server-side; clients must not trust a self-asserted value. */
+  accountType?: "child" | "parent" | null;
 };
 
 export type ServerMessage = {
@@ -76,6 +78,11 @@ export type ChatBackupMeta = {
 
 interface ServerContextValue {
   serverUserId: string | null;
+  /**
+   * True once the initial AsyncStorage identity hydration has resolved.
+   * While false, `serverUserId === null` means "still loading", not "signed out".
+   */
+  identityReady: boolean;
   isConnected: boolean;
   registerOnServer: (opts: {
     displayName: string;
@@ -152,6 +159,7 @@ function getSocketUrl(): string {
 
 export function ServerProvider({ children }: { children: React.ReactNode }) {
   const [serverUserId, setServerUserId] = useState<string | null>(null);
+  const [identityReady, setIdentityReady] = useState(false);
   const [previousUserId, setPreviousUserId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const socketRef = useRef<Socket | null>(null);
@@ -188,6 +196,10 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         console.warn("[ServerContext] no auth token stored for this account; re-registration required for authenticated actions");
       }
       connectSocket(id);
+    }).finally(() => {
+      // Signal that the stored identity has been resolved — null now means
+      // "genuinely signed out", not "still loading".
+      setIdentityReady(true);
     });
     return () => {
       socketRef.current?.disconnect();
@@ -653,6 +665,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     <ServerContext.Provider
       value={{
         serverUserId,
+        identityReady,
         isConnected,
         registerOnServer,
         updateServerProfile,
