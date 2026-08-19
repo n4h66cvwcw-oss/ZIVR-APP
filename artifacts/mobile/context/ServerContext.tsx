@@ -50,7 +50,8 @@ export type DirectChatResult = {
   approval?: "pending" | "blocked";
   error?: string;
 };
-type MessageHandler = (msg: ServerMessage) => void;
+export type MessageDelivery = "live" | "missed";
+type MessageHandler = (msg: ServerMessage, delivery: MessageDelivery) => void;
 
 type MessageBlockedHandler = (data: {
   chatId: string;
@@ -258,14 +259,14 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     });
 
     socket.on("message:new", (msg: ServerMessage) => {
-      messageHandlers.current.forEach((h) => h(msg));
+      messageHandlers.current.forEach((h) => h(msg, "live"));
     });
 
     // Deliver any messages that arrived while the socket was disconnected
     socket.on("missed_messages", (data: { messages: ServerMessage[] }) => {
       if (Array.isArray(data?.messages)) {
         data.messages.forEach((msg) => {
-          messageHandlers.current.forEach((h) => h(msg));
+          messageHandlers.current.forEach((h) => h(msg, "missed"));
         });
       }
     });

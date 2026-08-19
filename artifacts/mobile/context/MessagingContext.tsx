@@ -17,7 +17,7 @@ import {
   generateEncryptionKey,
 } from "@/utils/crypto";
 import { Alert } from "react-native";
-import { useServer, type ServerMessage, type ServerUser } from "@/context/ServerContext";
+import { useServer, type MessageDelivery, type ServerMessage, type ServerUser } from "@/context/ServerContext";
 import { useProfile } from "@/context/ProfileContext";
 
 export type AudioAttachment = {
@@ -385,6 +385,14 @@ function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
+type MissedNotificationGroup = {
+  count: number;
+  senderId: string;
+  senderName: string;
+  lastText: string;
+  hasMultipleSenders: boolean;
+};
+
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats, translateMessage, onMessageBlocked, onContactRequest } = useServer();
   const { profile } = useProfile();
@@ -410,6 +418,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const preHydrationBuffer = useRef<ServerMessage[]>([]);
   const chatsRef = useRef(chats);
   const messagesRef = useRef(messages);
+  const missedNotificationGroups = useRef<Map<string, MissedNotificationGroup>>(new Map());
+  const missedNotificationFlushScheduled = useRef(false);
   useEffect(() => { chatsRef.current = chats; }, [chats]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
@@ -429,7 +439,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const unsub = onNewMessage((msg) => {
+    const unsub = onNewMessage((msg, delivery: MessageDelivery = "live") => {
       if (sentLocalIds.current.has(msg.localId ?? "")) {
         sentLocalIds.current.delete(msg.localId!);
         return;
@@ -463,10 +473,52 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
         return updated;
       });
+
+      if (delivery === "missed") {
+        const senderName = msg.senderName || "New message";
+        const existing = missedNotificationGroups.current.get(chatId);
+        missedNotificationGroups.current.set(chatId, existing
+          ? {
+              ...existing,
+              count: existing.count + 1,
+              lastText: msg.text,
+              hasMultipleSenders: existing.hasMultipleSenders || existing.senderId !== msg.senderId,
+            }
+          : {
+              count: 1,
+              senderId: msg.senderId,
+              senderName,
+              lastText: msg.text,
+              hasMultipleSenders: false,
+            });
+
+        if (!missedNotificationFlushScheduled.current) {
+          missedNotificationFlushScheduled.current = true;
+          Promise.resolve().then(() => {
+            missedNotificationFlushScheduled.current = false;
+            const pending = missedNotificationGroups.current;
+            missedNotificationGroups.current = new Map();
+
+            pending.forEach((group, pendingChatId) => {
+              const chat = chatsRef.current.find((c) => c.id === pendingChatId);
+              const sound = chat?.notificationSound ?? "default";
+              if (chat?.isMuted || sound === "none") return;
+
+              const title = group.count === 1
+                ? group.senderName
+                : group.hasMultipleSenders
+                  ? `${group.count} new messages`
+                  : `${group.count} new messages from ${group.senderName}`;
+              scheduleLocalNotification(title, group.lastText, sound).catch(() => {});
+            });
+          });
+        }
+      }
+
       setChats((prev) => {
         const chat = prev.find((c) => c.id === chatId);
         const sound = chat?.notificationSound ?? "default";
-        if (!chat?.isMuted && sound !== "none") {
+        if (delivery === "live" && !chat?.isMuted && sound !== "none") {
           const senderName = msg.senderName || "New message";
           scheduleLocalNotification(senderName, msg.text, sound).catch(() => {});
         }
