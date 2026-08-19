@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/zivr-website/"
+title = "ZIVR Website"
+description = "A polished public marketing website for the ZIVR family messaging app, showcasing private communication, translation, favorites, calls, check-ins, parental controls, and backup features with accurate app-inspired visuals."
+version = "1.0.0"
+id = "artifacts/zivr-website"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/zivr-website/" ]
+localPort = 18519
+
+[services.development]
+run = "pnpm --filter @workspace/zivr-website run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/zivr-website", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/zivr-website/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18519"
+BASE_PATH = "/zivr-website/"
