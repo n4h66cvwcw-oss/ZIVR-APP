@@ -427,8 +427,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const serverUserIdRef = useRef(serverUserId);
   useEffect(() => { serverUserIdRef.current = serverUserId; }, [serverUserId]);
 
-  // The chat screen sets this to its own id while mounted so that incoming
-  // messages (live or missed) for that chat don't transiently bump the badge.
+  // The root layout seeds this from the verified route before socket startup,
+  // while the chat screen keeps it current during in-app navigation.
   const activeChatIdRef = useRef<string | null>(null);
   const setActiveChatId = useCallback((id: string | null) => {
     activeChatIdRef.current = id;

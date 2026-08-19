@@ -6,17 +6,17 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack, router } from "expo-router";
+import { Stack, router, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, AppStateStatus, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { MessagingProvider } from "@/context/MessagingContext";
+import { MessagingProvider, useMessaging } from "@/context/MessagingContext";
 import { CallProvider } from "@/context/CallContext";
 import { ProfileProvider, useProfile } from "@/context/ProfileContext";
 import { ServerProvider, useServer } from "@/context/ServerContext";
@@ -274,6 +274,18 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
 }
 
 function RootLayoutNav() {
+  const pathname = usePathname();
+  const { setActiveChatId } = useMessaging();
+  const activeChatId = pathname.match(/^\/chat\/([^/]+)$/)?.[1] ?? null;
+
+  // This layout effect runs before the server provider's socket connection
+  // effect. It establishes the unread guard from the actual launch route, so a
+  // restored chat is active before missed messages can be replayed, while a
+  // cold launch to the chat list leaves every chat eligible for unread badges.
+  useLayoutEffect(() => {
+    setActiveChatId(activeChatId);
+  }, [activeChatId, setActiveChatId]);
+
   return (
     <TimeLockGate>
       <OnboardingGate />
