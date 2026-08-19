@@ -64,6 +64,36 @@ Only flag if genuinely concerning. Normal conversation should not be flagged.`;
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [userId, messageId, chatId, senderId, text.slice(0, 500), parsed.severity, parsed.reason]
       );
+
+      // Notify parents in real time for medium/high severity flags only
+      if (parsed.severity === "medium" || parsed.severity === "high") {
+        const child = await queryOne<{ display_name: string }>(
+          `SELECT display_name FROM vm_users WHERE id = $1`,
+          [userId]
+        );
+
+        const parents = await query<{ push_token: string | null }>(
+          `SELECT u.push_token
+             FROM vm_parent_child pc
+             JOIN vm_users u ON u.id = pc.parent_id
+            WHERE pc.child_id = $1`,
+          [userId]
+        );
+
+        const parentTokens = parents
+          .map((p) => p.push_token)
+          .filter((t): t is string => !!t && t.startsWith("ExponentPushToken"));
+
+        if (parentTokens.length > 0) {
+          const childName = child?.display_name ?? "your child";
+          await sendExpoPush(
+            parentTokens,
+            "⚠️ ZIVR Safety Alert",
+            `ZIVR flagged a message in ${childName}'s chat`,
+            "default"
+          );
+        }
+      }
     }
   } catch {
     // Content check failures are silent — never block message delivery
