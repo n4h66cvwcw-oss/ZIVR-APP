@@ -3,7 +3,7 @@
     "name": "ZIVR",
     "slug": "mobile",
     "version": "1.0.0",
-    "buildNumber": "1",
+    "buildNumber": "3",
     "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -21,7 +21,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.zivr.app",
-      "buildNumber": "1",
+      "buildNumber": "3",
       "infoPlist": {
         "NSCameraUsageDescription": "ZIVR uses your camera to take secure pictures to send in chats.",
         "NSPhotoLibraryUsageDescription": "ZIVR accesses your photo library to share images in messages.",
@@ -41,7 +41,7 @@
     },
     "android": {
       "package": "com.zivr.app",
-      "versionCode": 1,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#0A0E1A"
