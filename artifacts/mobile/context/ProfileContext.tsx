@@ -65,6 +65,8 @@ export type ProfileSettings = {
   typingEmoji?: string;
   /** ISO language code e.g. "en", "es" — user's primary language for auto-translate */
   primaryLanguage?: string;
+  /** Server account that owns the locally cached primary language. */
+  primaryLanguageUserId?: string;
 };
 
 const DEFAULT_SETTINGS: ProfileSettings = {

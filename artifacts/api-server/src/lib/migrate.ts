@@ -22,6 +22,14 @@ export async function migrate(): Promise<void> {
     ALTER TABLE vm_users
     ADD COLUMN IF NOT EXISTS preferred_language TEXT DEFAULT 'English'
   `);
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS recovery_code_hash TEXT
+  `);
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS recovery_code_acknowledged BOOLEAN DEFAULT false
+  `);
 
   await query(`
     CREATE TABLE IF NOT EXISTS vm_chats (

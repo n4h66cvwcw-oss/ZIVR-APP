@@ -10,7 +10,7 @@ import { Stack, router, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, AppStateStatus, View } from "react-native";
+import { ActivityIndicator, AppState, AppStateStatus, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -27,6 +27,7 @@ import { IncomingCallModal } from "@/components/IncomingCallModal";
 import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 import { TimeLockScreen } from "@/components/TimeLockScreen";
 import { registerForPushNotificationsAsync } from "@/utils/notifications";
+import { getRecoveredLanguageUpdate } from "@/utils/language-sync";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -59,14 +60,103 @@ function LanguageSyncer() {
   const { profile, profileLoaded, updateProfile } = useProfile();
   useEffect(() => {
     if (!serverUserId || !profileLoaded) return;
+    let active = true;
     fetchServerUser(serverUserId).then((serverUser) => {
-      if (serverUser?.preferredLanguage && !profile.primaryLanguage) {
-        updateProfile({ primaryLanguage: serverUser.preferredLanguage });
-      }
+      if (!active) return;
+      const update = getRecoveredLanguageUpdate(
+        profile,
+        serverUserId,
+        serverUser?.preferredLanguage,
+      );
+      if (update) void updateProfile(update);
     });
-  }, [serverUserId, profileLoaded]);
+    return () => {
+      active = false;
+    };
+  }, [
+    fetchServerUser,
+    profile,
+    profileLoaded,
+    serverUserId,
+    updateProfile,
+  ]);
   return null;
 }
+
+/**
+ * Existing signed-in accounts receive a recovery code once, before any local
+ * storage can be lost. Child accounts use the same authenticated path after a
+ * parent hands them their credential.
+ */
+function RecoveryCodePresenter() {
+  const {
+    recoveryCodeToSave,
+    recoveryCodeNeedsReplacement,
+    acknowledgeRecoveryCode,
+    replaceRecoveryCode,
+  } = useServer();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const visible = Boolean(recoveryCodeToSave || recoveryCodeNeedsReplacement);
+
+  async function handleAcknowledge() {
+    setBusy(true);
+    setError(null);
+    if (!(await acknowledgeRecoveryCode())) {
+      setError("We couldn't confirm your code. Please try again while you're online.");
+    }
+    setBusy(false);
+  }
+
+  async function handleReplacement() {
+    setBusy(true);
+    setError(null);
+    if (!(await replaceRecoveryCode())) {
+      setError("We couldn't generate a replacement code. Please try again while you're online.");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => {}}>
+      <View style={recoveryStyles.backdrop}>
+        <View style={recoveryStyles.card}>
+          {recoveryCodeToSave ? (
+            <>
+              <Text style={recoveryStyles.title}>Save your recovery code</Text>
+              <Text style={recoveryStyles.body}>Keep this code somewhere safe. It restores this account after reinstalling ZIVR.</Text>
+              <Text selectable style={recoveryStyles.code}>{recoveryCodeToSave}</Text>
+              <Pressable disabled={busy} onPress={handleAcknowledge} style={[recoveryStyles.button, busy && recoveryStyles.disabled]}>
+                <Text style={recoveryStyles.buttonText}>{busy ? "Confirming…" : "I've saved it"}</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={recoveryStyles.title}>Create a new recovery code</Text>
+              <Text style={recoveryStyles.body}>Your earlier code was not confirmed. Generate and save a replacement before continuing.</Text>
+              <Pressable disabled={busy} onPress={handleReplacement} style={[recoveryStyles.button, busy && recoveryStyles.disabled]}>
+                <Text style={recoveryStyles.buttonText}>{busy ? "Generating…" : "Generate a new code"}</Text>
+              </Pressable>
+            </>
+          )}
+          {error && <Text style={recoveryStyles.error}>{error}</Text>}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const recoveryStyles = StyleSheet.create({
+  backdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24, backgroundColor: "rgba(0,0,0,0.58)" },
+  card: { width: "100%", maxWidth: 380, gap: 16, borderRadius: 20, padding: 24, backgroundColor: "#FFF" },
+  title: { fontFamily: "Inter_700Bold", fontSize: 21, color: "#111827", textAlign: "center" },
+  body: { fontFamily: "Inter_400Regular", fontSize: 15, lineHeight: 22, color: "#4B5563", textAlign: "center" },
+  code: { borderRadius: 12, padding: 14, backgroundColor: "#EEF2FF", color: "#3730A3", fontFamily: "Inter_700Bold", fontSize: 16, textAlign: "center" },
+  button: { borderRadius: 12, paddingVertical: 14, backgroundColor: "#0A84FF" },
+  buttonText: { color: "#FFF", fontFamily: "Inter_700Bold", fontSize: 16, textAlign: "center" },
+  disabled: { opacity: 0.55 },
+  error: { color: "#DC2626", fontFamily: "Inter_400Regular", fontSize: 13, textAlign: "center" },
+});
 
 /** AsyncStorage key for the cached account type of a specific user. */
 function accountTypeKey(userId: string) {
@@ -427,6 +517,7 @@ export default function RootLayout() {
                   <GestureHandlerRootView style={{ flex: 1 }}>
                     <KeyboardProvider>
                       <ScreenCaptureGuard>
+                        <RecoveryCodePresenter />
                         <RootLayoutNav />
                       </ScreenCaptureGuard>
                     </KeyboardProvider>

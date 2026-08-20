@@ -502,7 +502,10 @@ export default function ProfileScreen() {
                     key={lang.code}
                     onPress={() => {
                       Haptics.selectionAsync();
-                      updateProfile({ primaryLanguage: lang.code });
+                      updateProfile({
+                        primaryLanguage: lang.code,
+                        primaryLanguageUserId: serverUserId ?? undefined,
+                      });
                       if (serverUserId) {
                         updateServerProfile(serverUserId, { preferredLanguage: lang.code });
                       }

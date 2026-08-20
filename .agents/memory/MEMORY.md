@@ -1,3 +1,4 @@
 - [Server-derived identity is mandatory](auth-tokens.md) — never trust client-asserted user IDs in mutations; tokens issued only at registration or via an authenticated parent; verify ownership/membership per resource.
 - [Expo Launch build numbers](expo-launch-build-numbers.md) — App Store submissions must use a higher iOS build number than the last uploaded build; local auto-increment can repeat a number.
 - [Marketing claim integrity](marketing-claim-integrity.md) — public ZIVR copy must describe verified runtime behavior, not store metadata or planned protections.
+- [Cross-platform account recovery](account-recovery.md) — Android uninstalls erase device storage; restore accounts with a verified recovery credential, not a cached token.

@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import React, {
   createContext,
   useCallback,
@@ -9,6 +10,16 @@ import React, {
 } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import { io, Socket } from "socket.io-client";
+import {
+  buildRecoveredAccountUpdate,
+  type RegistrationOptions,
+} from "@/utils/registration";
+import { useProfile } from "@/context/ProfileContext";
+import { clearCachedLanguageForIdentitySwitch } from "@/utils/language-sync";
+import {
+  resolveServerIdentity,
+  serializeServerIdentity,
+} from "@/utils/server-identity";
 
 export type ServerUser = {
   id: string;
@@ -22,6 +33,11 @@ export type ServerUser = {
   lastSeen?: number;
   /** "child" | "parent" | null — set server-side; clients must not trust a self-asserted value. */
   accountType?: "child" | "parent" | null;
+};
+
+type RegistrationResult = {
+  userId: string;
+  recoveryCode?: string;
 };
 
 export type ServerMessage = {
@@ -85,14 +101,13 @@ interface ServerContextValue {
    */
   identityReady: boolean;
   isConnected: boolean;
-  registerOnServer: (opts: {
-    displayName: string;
-    username?: string;
-    phone?: string;
-    avatar?: string;
-    statusMessage?: string;
-    preferredLanguage?: string;
-  }) => Promise<string | null>;
+  recoveryCodeToSave: string | null;
+  recoveryCodeNeedsReplacement: boolean;
+  showRecoveryCode: (code: string) => void;
+  acknowledgeRecoveryCode: () => Promise<boolean>;
+  replaceRecoveryCode: () => Promise<boolean>;
+  registerOnServer: (opts: RegistrationOptions) => Promise<RegistrationResult | null>;
+  recoverServerAccount: (recoveryCode: string) => Promise<ServerUser | null>;
   updateServerProfile: (userId: string, updates: {
     displayName?: string;
     username?: string;
@@ -140,6 +155,9 @@ const ServerContext = createContext<ServerContextValue | null>(null);
 const SERVER_USER_KEY = "@zivr_server_user_id";
 
 const SERVER_TOKEN_KEY = "@zivr_server_auth_token";
+// Stored in the OS credential store so an authenticated account can be
+// recovered after app-local AsyncStorage is cleared by a reinstall.
+const SECURE_SERVER_IDENTITY_KEY = "@zivr_server_identity";
 // The identity that was active before the last account switch (parent handoff)
 const PREVIOUS_IDENTITY_KEY = "@zivr_previous_identity";
 const PRODUCTION_API = "https://echo-stream.replit.app/api";
@@ -159,10 +177,17 @@ function getSocketUrl(): string {
 }
 
 export function ServerProvider({ children }: { children: React.ReactNode }) {
+  const { updateProfile } = useProfile();
   const [serverUserId, setServerUserId] = useState<string | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
   const [previousUserId, setPreviousUserId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [recoveryCodeToSave, setRecoveryCodeToSave] = useState<string | null>(null);
+  const [recoveryCodeNeedsReplacement, setRecoveryCodeNeedsReplacement] = useState(false);
+  const showRecoveryCode = useCallback((code: string) => {
+    setRecoveryCodeToSave(code);
+    setRecoveryCodeNeedsReplacement(false);
+  }, []);
   const socketRef = useRef<Socket | null>(null);
   const messageHandlers = useRef<Set<MessageHandler>>(new Set());
   const typingHandlers = useRef<Set<(d: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void>>(new Set());
@@ -174,29 +199,68 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const disconnectTimeRef = useRef<number | null>(null);
   const serverUserIdRef = useRef<string | null>(null);
 
+  async function persistServerIdentity(userId: string, authToken: string): Promise<void> {
+    await AsyncStorage.multiSet([
+      [SERVER_USER_KEY, userId],
+      [SERVER_TOKEN_KEY, authToken],
+    ]);
+    try {
+      await SecureStore.setItemAsync(
+        SECURE_SERVER_IDENTITY_KEY,
+        serializeServerIdentity({ userId, authToken }),
+      );
+    } catch (error) {
+      // Keep the active app session functional if a platform does not expose
+      // secure storage. The next launch will use the regular AsyncStorage path.
+      console.warn("[ServerContext] unable to save recovery identity", error);
+    }
+  }
+
+  async function provisionRecoveryCode(userId: string, authToken: string): Promise<void> {
+    try {
+      const res = await fetch(`${getApiBase()}/users/${userId}/recovery-code`, {
+        method: "POST",
+        headers: { "X-Auth-Token": authToken },
+      });
+      if (!res.ok) return;
+      const data = await res.json() as {
+        recoveryCode?: string | null;
+        acknowledgementRequired?: boolean;
+      };
+      if (data.recoveryCode) {
+        showRecoveryCode(data.recoveryCode);
+      } else {
+        setRecoveryCodeNeedsReplacement(data.acknowledgementRequired === true);
+      }
+    } catch (error) {
+      console.warn("[ServerContext] recovery-code provisioning failed", error);
+    }
+  }
+
   useEffect(() => {
     Promise.all([
       AsyncStorage.getItem(SERVER_USER_KEY),
       AsyncStorage.getItem(SERVER_TOKEN_KEY),
       AsyncStorage.getItem(PREVIOUS_IDENTITY_KEY),
-    ]).then(async ([id, token, prevRaw]) => {
+      SecureStore.getItemAsync(SECURE_SERVER_IDENTITY_KEY).catch(() => null),
+    ]).then(async ([localId, localToken, prevRaw, secureIdentity]) => {
       if (prevRaw) {
         try { setPreviousUserId((JSON.parse(prevRaw) as { userId: string }).userId); } catch { /* ignore */ }
       }
-      if (!id) return;
-      setServerUserId(id);
-      serverUserIdRef.current = id;
-      if (token) {
-        authTokenRef.current = token;
-        cachedAuthToken = token;
-      } else {
-        // No stored credential. A user ID alone is public data, never a
-        // credential, so there is deliberately no way to "claim" a token for
-        // an existing account — the user must re-register (or, for child
-        // accounts, receive their credential from the authenticated parent).
-        console.warn("[ServerContext] no auth token stored for this account; re-registration required for authenticated actions");
+      const identity = resolveServerIdentity(localId, localToken, secureIdentity);
+      if (!identity) return;
+      if (!localId || !localToken) {
+        await AsyncStorage.multiSet([
+          [SERVER_USER_KEY, identity.userId],
+          [SERVER_TOKEN_KEY, identity.authToken],
+        ]);
       }
-      connectSocket(id);
+      setServerUserId(identity.userId);
+      serverUserIdRef.current = identity.userId;
+      authTokenRef.current = identity.authToken;
+      cachedAuthToken = identity.authToken;
+      connectSocket(identity.userId);
+      void provisionRecoveryCode(identity.userId, identity.authToken);
     }).finally(() => {
       // Signal that the stored identity has been resolved — null now means
       // "genuinely signed out", not "still loading".
@@ -296,15 +360,23 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   }
 
   const registerOnServer = useCallback(
-    async (opts: {
-      displayName: string;
-      username?: string;
-      phone?: string;
-      avatar?: string;
-      statusMessage?: string;
-      preferredLanguage?: string;
-    }): Promise<string | null> => {
+    async (opts: RegistrationOptions): Promise<RegistrationResult | null> => {
       try {
+        const recoveredUserId = serverUserIdRef.current;
+        if (recoveredUserId && authTokenRef.current) {
+          const res = await fetch(`${getApiBase()}/users/${recoveredUserId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+            body: JSON.stringify(buildRecoveredAccountUpdate(opts)),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({})) as { error?: string };
+            console.warn("[ServerContext] recovered account update failed:", err.error);
+            return null;
+          }
+          return { userId: recoveredUserId };
+        }
+
         const res = await fetch(`${getApiBase()}/users/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -315,18 +387,23 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
           console.warn("[ServerContext] register failed:", err.error);
           return null;
         }
-        const data = await res.json() as { user: { id: string }; authToken?: string };
+        const data = await res.json() as {
+          user: { id: string };
+          authToken?: string;
+          recoveryCode?: string;
+        };
         const userId = data.user.id;
         if (data.authToken) {
           authTokenRef.current = data.authToken;
           cachedAuthToken = data.authToken;
-          await AsyncStorage.setItem(SERVER_TOKEN_KEY, data.authToken);
+          await persistServerIdentity(userId, data.authToken);
+        } else {
+          await AsyncStorage.setItem(SERVER_USER_KEY, userId);
         }
-        await AsyncStorage.setItem(SERVER_USER_KEY, userId);
         setServerUserId(userId);
         serverUserIdRef.current = userId;
         connectSocket(userId);
-        return userId;
+        return { userId, recoveryCode: data.recoveryCode };
       } catch (e) {
         console.warn("[ServerContext] register error:", e);
         return null;
@@ -334,6 +411,74 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     },
     []
   );
+
+  const recoverServerAccount = useCallback(
+    async (recoveryCode: string): Promise<ServerUser | null> => {
+      try {
+        const res = await fetch(`${getApiBase()}/users/recover`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recoveryCode: recoveryCode.trim() }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json() as { user?: ServerUser; authToken?: string };
+        if (!data.user?.id || !data.authToken) return null;
+
+        authTokenRef.current = data.authToken;
+        cachedAuthToken = data.authToken;
+        await persistServerIdentity(data.user.id, data.authToken);
+        setServerUserId(data.user.id);
+        serverUserIdRef.current = data.user.id;
+        socketRef.current?.disconnect();
+        socketRef.current = null;
+        disconnectTimeRef.current = null;
+        connectSocket(data.user.id);
+        return data.user;
+      } catch (error) {
+        console.warn("[ServerContext] account recovery failed", error);
+        return null;
+      }
+    },
+    []
+  );
+
+  const acknowledgeRecoveryCode = useCallback(async (): Promise<boolean> => {
+    const userId = serverUserIdRef.current;
+    const authToken = authTokenRef.current;
+    if (!userId || !authToken) return false;
+    try {
+      const res = await fetch(`${getApiBase()}/users/${userId}/recovery-code/acknowledge`, {
+        method: "POST",
+        headers: { "X-Auth-Token": authToken },
+      });
+      if (!res.ok) return false;
+      setRecoveryCodeToSave(null);
+      setRecoveryCodeNeedsReplacement(false);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const replaceRecoveryCode = useCallback(async (): Promise<boolean> => {
+    const userId = serverUserIdRef.current;
+    const authToken = authTokenRef.current;
+    if (!userId || !authToken) return false;
+    try {
+      const res = await fetch(`${getApiBase()}/users/${userId}/recovery-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Auth-Token": authToken },
+        body: JSON.stringify({ rotate: true }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json() as { recoveryCode?: string | null };
+      if (!data.recoveryCode) return false;
+      showRecoveryCode(data.recoveryCode);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [showRecoveryCode]);
 
   const findUsers = useCallback(async (query: string): Promise<ServerUser[]> => {
     try {
@@ -385,12 +530,12 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       );
       setPreviousUserId(prevId);
     }
+    if (prevId !== userId) {
+      await updateProfile(clearCachedLanguageForIdentitySwitch());
+    }
     authTokenRef.current = authToken;
     cachedAuthToken = authToken;
-    await AsyncStorage.multiSet([
-      [SERVER_USER_KEY, userId],
-      [SERVER_TOKEN_KEY, authToken],
-    ]);
+    await persistServerIdentity(userId, authToken);
     setServerUserId(userId);
     serverUserIdRef.current = userId;
     // Reconnect the socket as the new identity
@@ -398,7 +543,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     socketRef.current = null;
     disconnectTimeRef.current = null;
     connectSocket(userId);
-  }, []);
+    void provisionRecoveryCode(userId, authToken);
+  }, [updateProfile]);
 
   const switchBackToPreviousUser = useCallback(async (): Promise<boolean> => {
     try {
@@ -408,23 +554,24 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       if (!prev.userId || !prev.authToken) return false;
       await AsyncStorage.removeItem(PREVIOUS_IDENTITY_KEY);
       setPreviousUserId(null);
+      if (serverUserIdRef.current !== prev.userId) {
+        await updateProfile(clearCachedLanguageForIdentitySwitch());
+      }
       authTokenRef.current = prev.authToken;
       cachedAuthToken = prev.authToken;
-      await AsyncStorage.multiSet([
-        [SERVER_USER_KEY, prev.userId],
-        [SERVER_TOKEN_KEY, prev.authToken],
-      ]);
+    await persistServerIdentity(prev.userId, prev.authToken);
       setServerUserId(prev.userId);
       serverUserIdRef.current = prev.userId;
       socketRef.current?.disconnect();
       socketRef.current = null;
       disconnectTimeRef.current = null;
       connectSocket(prev.userId);
+      void provisionRecoveryCode(prev.userId, prev.authToken);
       return true;
     } catch {
       return false;
     }
-  }, []);
+  }, [updateProfile]);
 
   const onContactRequest = useCallback((handler: ContactRequestHandler) => {
     contactRequestHandlers.current.add(handler);
@@ -668,7 +815,13 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         serverUserId,
         identityReady,
         isConnected,
+        recoveryCodeToSave,
+        recoveryCodeNeedsReplacement,
+        showRecoveryCode,
+        acknowledgeRecoveryCode,
+        replaceRecoveryCode,
         registerOnServer,
+        recoverServerAccount,
         updateServerProfile,
         fetchServerUser,
         findUsers,

@@ -25,6 +25,7 @@ import { useMessaging } from "@/context/MessagingContext";
 import { useServer } from "@/context/ServerContext";
 import { useContactSync } from "@/hooks/useContactSync";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
+import { buildRegistrationOptions } from "@/utils/registration";
 
 export default function OnboardingScreen() {
   const colorScheme = useColorScheme();
@@ -34,7 +35,7 @@ export default function OnboardingScreen() {
 
   const { profile, updateProfile } = useProfile();
   const { updateContacts } = useMessaging();
-  const { registerOnServer } = useServer();
+  const { registerOnServer, recoverServerAccount, showRecoveryCode } = useServer();
   const { status, syncedCount, syncContacts } = useContactSync();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -43,6 +44,9 @@ export default function OnboardingScreen() {
   const [username, setUsername] = useState("");
   const [avatarUri, setAvatarUri] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState("");
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -93,14 +97,14 @@ export default function OnboardingScreen() {
       avatar: avatarUri,
       onboardingComplete: true,
     });
-    await registerOnServer({
+    const registration = await registerOnServer(buildRegistrationOptions({
       displayName,
       username: username.trim() || undefined,
       phone: phone.trim() || undefined,
       statusMessage: "Hey there! I'm on ZIVR",
-      preferredLanguage: profile.primaryLanguage,
-    }).catch(() => {});
-    router.replace("/(tabs)");
+      primaryLanguage: profile.primaryLanguage,
+    })).catch(() => null);
+    finishOnboarding(registration?.recoveryCode);
   }
 
   async function handleSkip() {
@@ -113,12 +117,40 @@ export default function OnboardingScreen() {
       avatar: avatarUri,
       onboardingComplete: true,
     });
-    await registerOnServer({
+    const registration = await registerOnServer(buildRegistrationOptions({
       displayName,
       username: username.trim() || undefined,
       phone: phone.trim() || undefined,
-      preferredLanguage: profile.primaryLanguage,
-    }).catch(() => {});
+      primaryLanguage: profile.primaryLanguage,
+    })).catch(() => null);
+    finishOnboarding(registration?.recoveryCode);
+  }
+
+  function finishOnboarding(recoveryCode?: string) {
+    if (recoveryCode) showRecoveryCode(recoveryCode);
+    router.replace("/(tabs)");
+  }
+
+  async function handleRecoverAccount() {
+    if (!recoveryCode.trim()) return;
+    setSaving(true);
+    setRecoveryError(null);
+    const user = await recoverServerAccount(recoveryCode);
+    if (!user) {
+      setRecoveryError("That account identifier or recovery code isn't correct.");
+      setSaving(false);
+      return;
+    }
+    await updateProfile({
+      displayName: user.displayName,
+      username: user.username,
+      phone: user.phone,
+      avatar: user.avatar,
+      statusMessage: user.statusMessage ?? "Hey there! I'm on ZIVR",
+      primaryLanguage: user.preferredLanguage,
+      primaryLanguageUserId: user.id,
+      onboardingComplete: true,
+    });
     router.replace("/(tabs)");
   }
 
@@ -151,7 +183,48 @@ export default function OnboardingScreen() {
               <View style={[styles.stepDot, step >= 2 && styles.stepDotActive]} />
             </View>
 
-            {step === 1 ? (
+            {step === 1 && showRecovery ? (
+              <>
+                <Text style={[styles.headline, { color: colors.text }]}>Restore your account</Text>
+                <Text style={[styles.subline, { color: colors.textSecondary }]}>
+                  Enter the recovery code you saved when you joined ZIVR.
+                </Text>
+
+                <View style={[styles.inputCard, { backgroundColor: colors.surface }]}>
+                  <Ionicons name="key-outline" size={20} color={colors.textSecondary} style={{ marginRight: 10 }} />
+                  <TextInput
+                    value={recoveryCode}
+                    onChangeText={setRecoveryCode}
+                    placeholder="Recovery code"
+                    placeholderTextColor={colors.textSecondary}
+                    style={[styles.inputField, { color: colors.text }]}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+
+                {recoveryError && <Text style={[styles.recoveryError, { color: "#FF453A" }]}>{recoveryError}</Text>}
+
+                <Pressable
+                  onPress={handleRecoverAccount}
+                  disabled={saving || !recoveryCode.trim()}
+                  style={[styles.continueBtn, { opacity: saving || !recoveryCode.trim() ? 0.45 : 1 }]}
+                >
+                  <LinearGradient colors={["#0A84FF", "#5E5CE6"]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.continueBtnGrad}>
+                    {saving ? <ActivityIndicator color="#fff" /> : (
+                      <>
+                        <Text style={styles.continueBtnText}>Restore account</Text>
+                        <Ionicons name="arrow-forward" size={18} color="#fff" />
+                      </>
+                    )}
+                  </LinearGradient>
+                </Pressable>
+
+                <Pressable onPress={() => { setShowRecovery(false); setRecoveryError(null); }} style={styles.skipBtn}>
+                  <Text style={[styles.skipText, { color: colors.textSecondary }]}>← Set up a new account</Text>
+                </Pressable>
+              </>
+            ) : step === 1 ? (
               <>
                 <Text style={[styles.headline, { color: colors.text }]}>Set up your profile</Text>
                 <Text style={[styles.subline, { color: colors.textSecondary }]}>Tell people who you are</Text>
@@ -256,6 +329,10 @@ export default function OnboardingScreen() {
                 <Pressable onPress={handleSkip} style={styles.skipBtn}>
                   <Text style={[styles.skipText, { color: colors.textSecondary }]}>Skip for now</Text>
                 </Pressable>
+
+                <Pressable onPress={() => setShowRecovery(true)} style={styles.skipBtn}>
+                  <Text style={[styles.skipText, { color: colors.primary }]}>Restore an existing account</Text>
+                </Pressable>
               </>
             ) : (
               <>
@@ -343,6 +420,7 @@ const styles = StyleSheet.create({
   syncIconWrap: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
   syncTitle: { fontSize: 15, fontFamily: "Inter_500Medium" },
   syncSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  recoveryError: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
   autoSyncBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   autoSyncText: { fontSize: 11, color: "#fff", fontFamily: "Inter_700Bold" },
   continueBtn: { marginTop: 4 },
