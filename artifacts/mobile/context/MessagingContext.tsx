@@ -591,7 +591,11 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         });
       }
       Alert.alert(
-        data.status === "blocked" ? "Contact blocked" : "Waiting for parent approval",
+        data.status === "blocked"
+          ? "Contact blocked"
+          : data.status === "group_limit"
+            ? "Group unavailable"
+            : "Waiting for parent approval",
         data.message
       );
     });

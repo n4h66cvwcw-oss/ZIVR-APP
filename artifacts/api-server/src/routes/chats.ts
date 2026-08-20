@@ -1,9 +1,15 @@
 import { Router } from "express";
-import { query, queryOne } from "../lib/db";
-import { checkDirectContactAllowed, requestApprovalAndNotifyParents } from "../lib/approvals";
+import pool, { query, queryOne } from "../lib/db";
+import {
+  checkDirectContactAllowed,
+  checkGroupContactsAllowed,
+  MAX_GROUP_MEMBERS,
+  requestApprovalAndNotifyParents,
+} from "../lib/approvals";
 import { getAuthUserId } from "../lib/auth";
 
 const router = Router();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 router.post("/direct", async (req, res) => {
   try {
@@ -75,15 +81,76 @@ router.post("/group", async (req, res) => {
       return;
     }
 
-    const chat = await queryOne<{ id: string }>(
-      `INSERT INTO vm_chats (type, name, description, created_by) VALUES ('group', $1, $2, $3) RETURNING id`,
-      [name, description ?? null, myUserId]
-    );
-    const chatId = chat!.id;
+    if (
+      !Array.isArray(memberIds) ||
+      memberIds.length > MAX_GROUP_MEMBERS ||
+      memberIds.some((memberId) => typeof memberId !== "string" || !UUID_PATTERN.test(memberId))
+    ) {
+      res.status(400).json({
+        error: `Every group member must be valid, and groups can have up to ${MAX_GROUP_MEMBERS} members.`,
+      });
+      return;
+    }
 
     const all = [...new Set([myUserId, ...memberIds])];
-    for (const uid of all) {
-      await query(`INSERT INTO vm_chat_members (chat_id, user_id) VALUES ($1, $2)`, [chatId, uid]);
+    if (all.length > MAX_GROUP_MEMBERS) {
+      res.status(400).json({
+        error: `Groups can have up to ${MAX_GROUP_MEMBERS} members.`,
+      });
+      return;
+    }
+
+    const existingMembers = await query<{ id: string }>(
+      `SELECT id FROM vm_users WHERE id = ANY($1::uuid[])`,
+      [all]
+    );
+    if (existingMembers.length !== all.length) {
+      res.status(400).json({ error: "One or more selected group members could not be found." });
+      return;
+    }
+
+    const contactCheck = await checkGroupContactsAllowed(all);
+    if (!contactCheck.allowed) {
+      // Request approval for every non-blocked pair, even if another member is
+      // blocked. The helper skips blocked pairs and avoids duplicate notices.
+      await requestApprovalAndNotifyParents(contactCheck.unapprovedPairs);
+      if (contactCheck.status === "pending") {
+        res.status(403).json({
+          error: "Waiting for parent approval before you can create this group.",
+          approval: "pending",
+        });
+        return;
+      }
+
+      res.status(403).json({
+        error: "This group includes a contact who has been blocked by a parent.",
+        approval: "blocked",
+      });
+      return;
+    }
+
+    const client = await pool.connect();
+    let chatId: string;
+    try {
+      await client.query("BEGIN");
+      const chat = await client.query<{ id: string }>(
+        `INSERT INTO vm_chats (type, name, description, created_by) VALUES ('group', $1, $2, $3) RETURNING id`,
+        [name, description ?? null, myUserId]
+      );
+      chatId = chat.rows[0]!.id;
+
+      for (const uid of all) {
+        await client.query(
+          `INSERT INTO vm_chat_members (chat_id, user_id) VALUES ($1, $2)`,
+          [chatId, uid]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
     }
 
     res.json({ chatId });

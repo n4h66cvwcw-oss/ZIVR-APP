@@ -3,6 +3,12 @@ import { Server as SocketServer, Socket } from "socket.io";
 import { query, queryOne } from "./db";
 import { sendExpoPush } from "./push";
 import { verifyToken } from "./auth";
+import {
+  checkDirectContactAllowed,
+  checkGroupContactsAllowed,
+  MAX_GROUP_MEMBERS,
+  requestApprovalAndNotifyParents,
+} from "./approvals";
 import Anthropic from "@anthropic-ai/sdk";
 
 let ioInstance: SocketServer | null = null;
@@ -235,7 +241,6 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
             [chatId, senderId]
           );
           if (otherMember) {
-            const { checkDirectContactAllowed, requestApprovalAndNotifyParents } = await import("./approvals");
             const check = await checkDirectContactAllowed(senderId, otherMember.user_id);
             if (!check.allowed) {
               // Auto-create pending approval request(s) and notify parents,
@@ -254,6 +259,38 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
               });
               return;
             }
+          }
+        } else if (chatInfo?.type === "group") {
+          const groupMembers = await query<{ user_id: string }>(
+            `SELECT user_id FROM vm_chat_members WHERE chat_id = $1`,
+            [chatId]
+          );
+          if (groupMembers.length > MAX_GROUP_MEMBERS) {
+            socket.emit("message:blocked", {
+              chatId,
+              localId,
+              status: "group_limit",
+              message: `This group has more than ${MAX_GROUP_MEMBERS} members and can't send messages.`,
+            });
+            return;
+          }
+          const check = await checkGroupContactsAllowed(groupMembers.map((member) => member.user_id));
+          if (!check.allowed) {
+            // Keep existing groups safe if an approval is revoked after the
+            // group was created, and protect groups created before enforcement.
+            // The notifier ignores blocked pairs, but can still request other
+            // pending approvals when a group also includes a blocked contact.
+            void requestApprovalAndNotifyParents(check.unapprovedPairs);
+            socket.emit("message:blocked", {
+              chatId,
+              localId,
+              status: check.status,
+              message:
+                check.status === "blocked"
+                  ? "This group includes a contact who has been blocked by a parent."
+                  : "Waiting for parent approval before messages can be sent in this group.",
+            });
+            return;
           }
         }
 

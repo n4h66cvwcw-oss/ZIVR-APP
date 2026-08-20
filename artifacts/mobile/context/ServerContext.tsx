@@ -66,13 +66,19 @@ export type DirectChatResult = {
   approval?: "pending" | "blocked";
   error?: string;
 };
+export type GroupChatResult = {
+  chatId: string | null;
+  /** Set when a group includes an unapproved or blocked contact for a child account. */
+  approval?: "pending" | "blocked";
+  error?: string;
+};
 export type MessageDelivery = "live" | "missed";
 type MessageHandler = (msg: ServerMessage, delivery: MessageDelivery) => void;
 
 type MessageBlockedHandler = (data: {
   chatId: string;
   localId?: string;
-  status: "pending" | "blocked";
+  status: "pending" | "blocked" | "group_limit";
   message: string;
 }) => void;
 
@@ -127,7 +133,7 @@ interface ServerContextValue {
   previousUserId: string | null;
   /** Restore the identity that was active before the last switchActiveUser. */
   switchBackToPreviousUser: () => Promise<boolean>;
-  createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<string | null>;
+  createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<GroupChatResult>;
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
   sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
   fetchUserChats: (userId: string) => Promise<ServerChat[]>;
@@ -343,7 +349,12 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       readReceiptHandlers.current.forEach((h) => h(data));
     });
 
-    socket.on("message:blocked", (data: { chatId: string; localId?: string; status: "pending" | "blocked"; message: string }) => {
+    socket.on("message:blocked", (data: {
+      chatId: string;
+      localId?: string;
+      status: "pending" | "blocked" | "group_limit";
+      message: string;
+    }) => {
       messageBlockedHandlers.current.forEach((h) => h(data));
     });
 
@@ -579,19 +590,25 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const createServerGroupChat = useCallback(
-    async (myUserId: string, name: string, memberIds: string[]): Promise<string | null> => {
+    async (myUserId: string, name: string, memberIds: string[]): Promise<GroupChatResult> => {
       try {
         const res = await fetch(`${getApiBase()}/chats/group`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
           body: JSON.stringify({ myUserId, name, memberIds }),
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({})) as {
+            error?: string;
+            approval?: "pending" | "blocked";
+          };
+          return { chatId: null, approval: err.approval, error: err.error };
+        }
         const data = await res.json() as { chatId: string };
         socketRef.current?.emit("chat:join", data.chatId);
-        return data.chatId;
+        return { chatId: data.chatId };
       } catch {
-        return null;
+        return { chatId: null, error: "Network error" };
       }
     },
     []

@@ -3,6 +3,7 @@ import { sendExpoPush } from "./push";
 import { getIO } from "./socket";
 
 export type ApprovalStatus = "approved" | "pending" | "blocked" | "none";
+export const MAX_GROUP_MEMBERS = 50;
 
 /**
  * Result of checking whether two users are allowed to chat directly.
@@ -58,6 +59,66 @@ export async function checkDirectContactAllowed(
     if (status === "approved") continue;
     if (status === "blocked") blocked = true;
     unapprovedPairs.push({ childId, contactId, status });
+  }
+
+  if (unapprovedPairs.length === 0) {
+    return { allowed: true, status: "approved", unapprovedPairs };
+  }
+  return { allowed: false, status: blocked ? "blocked" : "pending", unapprovedPairs };
+}
+
+/**
+ * Check every unique member pair in a group chat. A group is allowed only
+ * when every child↔contact pair is approved (or is the child's parent).
+ */
+export async function checkGroupContactsAllowed(
+  userIds: string[]
+): Promise<ContactCheckResult> {
+  const members = [...new Set(userIds)];
+  const users = await query<{ id: string; account_type: string }>(
+    `SELECT id, account_type FROM vm_users WHERE id = ANY($1::uuid[])`,
+    [members]
+  );
+  const childIds = users
+    .filter((user) => user.account_type === "child")
+    .map((user) => user.id);
+  const unapprovedPairs: ContactCheckResult["unapprovedPairs"] = [];
+  let blocked = false;
+
+  if (childIds.length === 0) {
+    return { allowed: true, status: "approved", unapprovedPairs };
+  }
+
+  const [parentLinks, approvals] = await Promise.all([
+    query<{ parent_id: string; child_id: string }>(
+      `SELECT parent_id, child_id
+         FROM vm_parent_child
+        WHERE child_id = ANY($1::uuid[]) AND parent_id = ANY($2::uuid[])`,
+      [childIds, members]
+    ),
+    query<{ child_id: string; contact_id: string; status: ApprovalStatus }>(
+      `SELECT child_id, contact_id, status
+         FROM vm_contact_approvals
+        WHERE child_id = ANY($1::uuid[]) AND contact_id = ANY($2::uuid[])`,
+      [childIds, members]
+    ),
+  ]);
+  const parentPairs = new Set(parentLinks.map((link) => `${link.child_id}:${link.parent_id}`));
+  const approvalByPair = new Map(
+    approvals.map((approval) => [
+      `${approval.child_id}:${approval.contact_id}`,
+      approval.status,
+    ])
+  );
+
+  for (const childId of childIds) {
+    for (const contactId of members) {
+      if (childId === contactId || parentPairs.has(`${childId}:${contactId}`)) continue;
+      const status = approvalByPair.get(`${childId}:${contactId}`) ?? "none";
+      if (status === "approved") continue;
+      if (status === "blocked") blocked = true;
+      unapprovedPairs.push({ childId, contactId, status });
+    }
   }
 
   if (unapprovedPairs.length === 0) {

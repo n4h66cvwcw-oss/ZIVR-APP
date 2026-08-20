@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useState, useCallback } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   Pressable,
@@ -75,8 +76,22 @@ export default function NewGroupScreen() {
     setCreating(true);
     if (isServerGroup && serverUserId) {
       const memberIds = selectedUsers.map((u) => u.id);
-      const chatId = await createServerGroupChat(serverUserId, groupName.trim(), memberIds);
-      if (chatId) router.replace(`/chat/${chatId}`);
+      const result = await createServerGroupChat(serverUserId, groupName.trim(), memberIds);
+      if (result.chatId) {
+        router.replace(`/chat/${result.chatId}`);
+      } else if (result.approval === "blocked") {
+        Alert.alert(
+          "Contact blocked",
+          result.error ?? "A parent has blocked one of the selected contacts, so this group can't be created."
+        );
+      } else if (result.approval === "pending") {
+        Alert.alert(
+          "Waiting for parent approval",
+          result.error ?? "A parent needs to approve one or more selected contacts before this group can be created."
+        );
+      } else {
+        Alert.alert("Couldn't create group", result.error ?? "Please try again.");
+      }
     } else {
       const chatId = await createGroupChat(groupName.trim(), selected);
       router.replace(`/chat/${chatId}`);
