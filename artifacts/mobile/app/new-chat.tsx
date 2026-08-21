@@ -1,8 +1,8 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
-import React, { useCallback, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,7 +20,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging, type Contact } from "@/context/MessagingContext";
-import { useServer, type ServerUser } from "@/context/ServerContext";
+import {
+  useServer,
+  type ServerContactApproval,
+  type ServerUser,
+} from "@/context/ServerContext";
 import { useProfile } from "@/context/ProfileContext";
 import { Avatar } from "@/components/Avatar";
 
@@ -35,7 +39,13 @@ export default function NewChatScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { contacts, createDirectChat, createServerDirectChat } = useMessaging();
-  const { findUsers, serverUserId, isConnected } = useServer();
+  const {
+    findUsers,
+    serverUserId,
+    isConnected,
+    fetchContactApprovals,
+    onContactApproved,
+  } = useServer();
   const { profile } = useProfile();
 
   const [tab, setTab] = useState<Tab>("contacts");
@@ -43,6 +53,10 @@ export default function NewChatScreen() {
   const [serverResults, setServerResults] = useState<ServerUser[]>([]);
   const [searching, setSearching] = useState(false);
   const [invitedIds, setInvitedIds] = useState<Set<string>>(new Set());
+  const [approvalContacts, setApprovalContacts] = useState<ServerContactApproval[]>([]);
+  // Local/socket changes advance this value so an older contacts response
+  // cannot overwrite a request the child just made.
+  const approvalVersionRef = useRef(0);
 
   const localOthers = contacts.filter(
     (c) => c.id !== "me" && c.name.toLowerCase().includes(search.toLowerCase())
@@ -54,6 +68,48 @@ export default function NewChatScreen() {
       c.phone &&
       c.name.toLowerCase().includes(search.toLowerCase())
   );
+
+  const loadApprovalContacts = useCallback(async () => {
+    const requestVersion = ++approvalVersionRef.current;
+    if (!serverUserId) {
+      setApprovalContacts([]);
+      return;
+    }
+    const approvals = await fetchContactApprovals(serverUserId);
+    if (requestVersion !== approvalVersionRef.current) return;
+    setApprovalContacts(approvals.filter((contact) => contact.status !== "blocked"));
+  }, [fetchContactApprovals, serverUserId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadApprovalContacts();
+    }, [loadApprovalContacts]),
+  );
+
+  useEffect(() => {
+    return onContactApproved((approval) => {
+      if (approval.childId !== serverUserId) return;
+      approvalVersionRef.current += 1;
+      setApprovalContacts((previous) => {
+        const existing = previous.find((contact) => contact.contactId === approval.contactId);
+        if (existing) {
+          return previous.map((contact) =>
+            contact.contactId === approval.contactId
+              ? { ...contact, status: "approved" }
+              : contact,
+          );
+        }
+        return [{
+          contactId: approval.contactId,
+          displayName: approval.contactName,
+          username: null,
+          avatar: null,
+          status: "approved",
+          requestedAt: Date.now(),
+        }, ...previous];
+      });
+    });
+  }, [onContactApproved, serverUserId]);
 
   const handleSelectLocal = async (contactId: string) => {
     Haptics.selectionAsync();
@@ -69,6 +125,20 @@ export default function NewChatScreen() {
       return;
     }
     if (result.approval === "pending") {
+      approvalVersionRef.current += 1;
+      setApprovalContacts((previous) => {
+        const pending: ServerContactApproval = {
+          contactId: user.id,
+          displayName: user.displayName,
+          username: user.username ?? null,
+          avatar: user.avatar ?? null,
+          status: "pending",
+          requestedAt: Date.now(),
+        };
+        return previous.some((contact) => contact.contactId === user.id)
+          ? previous.map((contact) => contact.contactId === user.id ? pending : contact)
+          : [pending, ...previous];
+      });
       Alert.alert(
         "Waiting for parent approval",
         `You can chat with ${user.displayName} once a parent approves this contact. We've sent them a request.`
@@ -81,6 +151,28 @@ export default function NewChatScreen() {
     } else if (result.error) {
       Alert.alert("Couldn't start chat", result.error);
     }
+  };
+
+  const handleApprovalContact = async (contact: ServerContactApproval) => {
+    Haptics.selectionAsync();
+    if (contact.status === "pending") {
+      Alert.alert(
+        "Waiting for parent approval",
+        `${contact.displayName} will be ready to chat once a parent approves this contact.`,
+      );
+      return;
+    }
+    const result = await createServerDirectChat({
+      id: contact.contactId,
+      displayName: contact.displayName,
+      username: contact.username ?? undefined,
+      avatar: contact.avatar ?? undefined,
+    });
+    if (result.chatId) {
+      router.replace(`/chat/${result.chatId}`);
+      return;
+    }
+    Alert.alert("Couldn't start chat", result.error ?? "Please try again.");
   };
 
   const handleInviteSms = useCallback(
@@ -280,6 +372,75 @@ export default function NewChatScreen() {
     </Pressable>
   );
 
+  const renderApprovalContact = ({ item }: { item: ServerContactApproval }) => {
+    const isApproved = item.status === "approved";
+    const statusColor = isApproved ? "#34C759" : "#FF9F0A";
+    return (
+      <Pressable
+        onPress={() => { void handleApprovalContact(item); }}
+        testID={isApproved ? `approved-contact-${item.contactId}` : `pending-contact-${item.contactId}`}
+        style={({ pressed }) => [
+          styles.contactRow,
+          { backgroundColor: colors.surface, opacity: pressed ? 0.85 : 1 },
+        ]}
+      >
+        <Avatar name={item.displayName} size={48} />
+        <View style={styles.contactInfo}>
+          <Text style={[styles.contactName, { color: colors.text }]}>{item.displayName}</Text>
+          <Text style={[styles.contactStatus, { color: colors.textSecondary }]}>
+            {isApproved ? "Approved — tap to chat" : "Waiting for parent approval"}
+          </Text>
+        </View>
+        <View style={[styles.approvalBadge, { backgroundColor: statusColor + "20" }]}>
+          <Ionicons
+            name={isApproved ? "checkmark-circle-outline" : "time-outline"}
+            size={16}
+            color={statusColor}
+          />
+          <Text style={[styles.approvalBadgeText, { color: statusColor }]}>
+            {isApproved ? "Approved" : "Pending"}
+          </Text>
+        </View>
+      </Pressable>
+    );
+  };
+
+  const pendingApprovals = approvalContacts.filter((contact) => contact.status === "pending");
+  const approvedContacts = approvalContacts.filter((contact) => contact.status === "approved");
+  const approvalListHeader = approvalContacts.length > 0 ? (
+    <View>
+      {approvedContacts.length > 0 && (
+        <>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary, backgroundColor: colors.background }]}>
+            READY TO CHAT
+          </Text>
+          {approvedContacts.map((contact) => (
+            <React.Fragment key={contact.contactId}>
+              {renderApprovalContact({ item: contact })}
+              <View style={[styles.separator, { backgroundColor: colors.border, marginLeft: 76 }]} />
+            </React.Fragment>
+          ))}
+        </>
+      )}
+      {pendingApprovals.length > 0 && (
+        <>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary, backgroundColor: colors.background }]}>
+            WAITING FOR APPROVAL
+          </Text>
+          {pendingApprovals.map((contact) => (
+            <React.Fragment key={contact.contactId}>
+              {renderApprovalContact({ item: contact })}
+              <View style={[styles.separator, { backgroundColor: colors.border, marginLeft: 76 }]} />
+            </React.Fragment>
+          ))}
+        </>
+      )}
+      <Text style={[styles.sectionLabel, { color: colors.textSecondary, backgroundColor: colors.background }]}>
+        YOUR CONTACTS
+      </Text>
+    </View>
+  ) : null;
+
   const inviteListHeader = (
     <View>
       <Pressable onPress={handleInviteGeneral} style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}>
@@ -388,6 +549,7 @@ export default function NewChatScreen() {
           data={localOthers}
           keyExtractor={(item) => item.id}
           renderItem={renderLocalContact}
+          ListHeaderComponent={approvalListHeader}
           ItemSeparatorComponent={() => (
             <View style={[styles.separator, { backgroundColor: colors.border, marginLeft: 76 }]} />
           )}
@@ -395,7 +557,7 @@ export default function NewChatScreen() {
             <View style={styles.emptyState}>
               <Ionicons name="person-outline" size={48} color={colors.textTertiary} />
               <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                No contacts found
+                {approvalContacts.length > 0 ? "Find more people to chat with" : "No contacts found"}
               </Text>
             </View>
           }
@@ -526,6 +688,15 @@ const styles = StyleSheet.create({
   rowActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   serverBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   serverBadgeText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
+  approvalBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 10,
+  },
+  approvalBadgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   onlineBadge: {
     flexDirection: "row",
     alignItems: "center",

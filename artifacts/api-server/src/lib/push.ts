@@ -1,4 +1,10 @@
-export async function sendExpoPush(tokens: string[], title: string, body: string, sound: string) {
+export async function sendExpoPush(
+  tokens: string[],
+  title: string,
+  body: string,
+  sound: string,
+  data: Record<string, unknown> = {},
+) {
   if (!tokens.length) return;
   try {
     await fetch("https://exp.host/--/api/v2/push/send", {
@@ -10,7 +16,7 @@ export async function sendExpoPush(tokens: string[], title: string, body: string
           title,
           body,
           sound: sound === "none" ? undefined : "default",
-          data: { sound },
+          data: { sound, ...data },
         }))
       ),
     });

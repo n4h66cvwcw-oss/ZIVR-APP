@@ -89,6 +89,19 @@ type ContactRequestHandler = (data: {
   contactName: string;
   requestedAt: number;
 }) => void;
+export type ServerContactApproval = {
+  contactId: string;
+  displayName: string;
+  username: string | null;
+  avatar: string | null;
+  status: "pending" | "approved" | "blocked";
+  requestedAt: number;
+};
+export type ContactApprovedHandler = (data: {
+  childId: string;
+  contactId: string;
+  contactName: string;
+}) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
 
 export type ChatBackupMeta = {
@@ -127,6 +140,8 @@ interface ServerContextValue {
   getOrCreateDirectChat: (myUserId: string, theirUserId: string) => Promise<DirectChatResult>;
   onMessageBlocked: (handler: MessageBlockedHandler) => () => void;
   onContactRequest: (handler: ContactRequestHandler) => () => void;
+  onContactApproved: (handler: ContactApprovedHandler) => () => void;
+  fetchContactApprovals: (childId: string) => Promise<ServerContactApproval[]>;
   /** Switch this device's active server account (e.g. parent-mediated child handoff). */
   switchActiveUser: (userId: string, authToken: string) => Promise<void>;
   /** Non-null when a previous identity (e.g. the parent) was saved during a switch. */
@@ -200,6 +215,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const readReceiptHandlers = useRef<Set<ReadReceiptHandler>>(new Set());
   const messageBlockedHandlers = useRef<Set<MessageBlockedHandler>>(new Set());
   const contactRequestHandlers = useRef<Set<ContactRequestHandler>>(new Set());
+  const contactApprovedHandlers = useRef<Set<ContactApprovedHandler>>(new Set());
   const authTokenRef = useRef<string | null>(null);
   // Tracks when the socket last disconnected so we can request missed messages on rejoin
   const disconnectTimeRef = useRef<number | null>(null);
@@ -361,6 +377,10 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     // In-app parent notification: child attempted to contact someone new
     socket.on("contact:request", (data: { childId: string; childName: string; contactId: string; contactName: string; requestedAt: number }) => {
       contactRequestHandlers.current.forEach((h) => h(data));
+    });
+
+    socket.on("contact:approved", (data: { childId: string; contactId: string; contactName: string }) => {
+      contactApprovedHandlers.current.forEach((h) => h(data));
     });
 
     socket.on("connect_error", (err) => {
@@ -587,6 +607,24 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const onContactRequest = useCallback((handler: ContactRequestHandler) => {
     contactRequestHandlers.current.add(handler);
     return () => { contactRequestHandlers.current.delete(handler); };
+  }, []);
+
+  const onContactApproved = useCallback((handler: ContactApprovedHandler) => {
+    contactApprovedHandlers.current.add(handler);
+    return () => { contactApprovedHandlers.current.delete(handler); };
+  }, []);
+
+  const fetchContactApprovals = useCallback(async (childId: string): Promise<ServerContactApproval[]> => {
+    try {
+      const res = await fetch(`${getApiBase()}/parental/children/${childId}/contacts`, {
+        headers: await getAuthHeaders(),
+      });
+      if (!res.ok) return [];
+      const data = await res.json() as { contacts: ServerContactApproval[] };
+      return data.contacts ?? [];
+    } catch {
+      return [];
+    }
   }, []);
 
   const createServerGroupChat = useCallback(
@@ -845,6 +883,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         getOrCreateDirectChat,
         onMessageBlocked,
         onContactRequest,
+        onContactApproved,
+        fetchContactApprovals,
         switchActiveUser,
         previousUserId,
         switchBackToPreviousUser,

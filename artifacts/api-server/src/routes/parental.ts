@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { query, queryOne } from "../lib/db";
 import { getAuthUserId, signToken } from "../lib/auth";
+import { getIO } from "../lib/socket";
+import { sendExpoPush } from "../lib/push";
 
 const router = Router();
 
@@ -295,13 +297,52 @@ router.put("/children/:childId/contacts/:contactId", async (req, res) => {
       return;
     }
 
-    await query(
+    // This is a single-winner state transition: the only request that inserts
+    // or changes the status gets a returned row. Concurrent approval taps
+    // therefore cannot send duplicate child notifications.
+    const changed = await queryOne<{ status: string }>(
       `INSERT INTO vm_contact_approvals (child_id, contact_id, status, reviewed_at)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (child_id, contact_id) DO UPDATE
-         SET status = $3, reviewed_at = $4`,
+          SET status = EXCLUDED.status, reviewed_at = EXCLUDED.reviewed_at
+        WHERE vm_contact_approvals.status IS DISTINCT FROM EXCLUDED.status
+       RETURNING status`,
       [childId, contactId, status, Date.now()]
     );
+
+    // Notify the child only for the request that actually reaches approved.
+    if (status === "approved" && changed?.status === "approved") {
+      const [child, contact] = await Promise.all([
+        queryOne<{ push_token: string | null }>(
+          `SELECT push_token FROM vm_users WHERE id = $1`,
+          [childId]
+        ),
+        queryOne<{ display_name: string }>(
+          `SELECT display_name FROM vm_users WHERE id = $1`,
+          [contactId]
+        ),
+      ]);
+      const contactName = contact?.display_name ?? "this contact";
+      const notification = {
+        childId,
+        contactId,
+        contactName,
+      };
+
+      const io = getIO();
+      io?.to(`user:${childId}`).emit("contact:approved", notification);
+
+      const token = child?.push_token;
+      if (token?.startsWith("ExponentPushToken")) {
+        await sendExpoPush(
+          [token],
+          "Contact approved",
+          `You can now chat with ${contactName}`,
+          "default",
+          { type: "contact_approved", ...notification },
+        );
+      }
+    }
 
     res.json({ ok: true });
   } catch (err) {

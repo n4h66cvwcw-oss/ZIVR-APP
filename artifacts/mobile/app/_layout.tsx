@@ -8,9 +8,10 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, usePathname } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, AppStateStatus, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, AppStateStatus, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -52,6 +53,86 @@ function PushRegistrar() {
       if (token) updateServerProfile(serverUserId, { pushToken: token });
     });
   }, [serverUserId]);
+  return null;
+}
+
+type ContactApprovalNotificationData = {
+  type?: unknown;
+  childId?: unknown;
+  contactId?: unknown;
+  contactName?: unknown;
+};
+
+function getContactApprovalNotificationData(
+  data: ContactApprovalNotificationData,
+): { childId: string; contactId: string; contactName: string } | null {
+  if (
+    data.type !== "contact_approved" ||
+    typeof data.childId !== "string" ||
+    typeof data.contactId !== "string"
+  ) {
+    return null;
+  }
+  return {
+    childId: data.childId,
+    contactId: data.contactId,
+    contactName: typeof data.contactName === "string" ? data.contactName : "this contact",
+  };
+}
+
+/**
+ * Contact approvals arrive live over Socket.IO and as push notifications.
+ * Both paths lead straight to the newly approved direct chat.
+ */
+function ContactApprovalNotifications() {
+  const { serverUserId, fetchServerUser, onContactApproved } = useServer();
+  const { createServerDirectChat } = useMessaging();
+
+  const openApprovedContact = useCallback(async (contactId: string) => {
+    const contact = await fetchServerUser(contactId);
+    if (!contact) {
+      Alert.alert("Couldn't open chat", "We couldn't find this contact. Please try again.");
+      return;
+    }
+    const result = await createServerDirectChat(contact);
+    if (result.chatId) {
+      router.push(`/chat/${result.chatId}`);
+      return;
+    }
+    Alert.alert("Couldn't open chat", result.error ?? "Please try again.");
+  }, [createServerDirectChat, fetchServerUser]);
+
+  useEffect(() => {
+    return onContactApproved((data) => {
+      if (data.childId !== serverUserId) return;
+      Alert.alert(
+        "Contact approved",
+        `You can now chat with ${data.contactName}`,
+        [
+          { text: "Not now", style: "cancel" },
+          { text: "Chat now", onPress: () => { void openApprovedContact(data.contactId); } },
+        ],
+      );
+    });
+  }, [onContactApproved, openApprovedContact, serverUserId]);
+
+  useEffect(() => {
+    const handleResponse = (data: ContactApprovalNotificationData) => {
+      const approval = getContactApprovalNotificationData(data);
+      if (!approval || approval.childId !== serverUserId) return;
+      void openApprovedContact(approval.contactId);
+    };
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleResponse(response.notification.request.content.data);
+    });
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) handleResponse(response.notification.request.content.data);
+    }).catch(() => {});
+
+    return () => subscription.remove();
+  }, [openApprovedContact, serverUserId]);
+
   return null;
 }
 
@@ -380,6 +461,7 @@ function RootLayoutNav() {
     <TimeLockGate>
       <OnboardingGate />
       <PushRegistrar />
+      <ContactApprovalNotifications />
       <LanguageSyncer />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
