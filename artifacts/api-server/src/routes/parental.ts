@@ -166,13 +166,25 @@ router.get("/children/:childId", async (req, res) => {
 
     const timeRestriction = await queryOne<{
       enabled: boolean; startHour: number; endHour: number; days: string;
+      overrideUntil: number | null;
     }>(
-      `SELECT enabled, start_hour AS "startHour", end_hour AS "endHour", days
+      `SELECT enabled, start_hour AS "startHour", end_hour AS "endHour", days,
+              CASE WHEN override_until > $2 THEN override_until::double precision ELSE NULL END
+                AS "overrideUntil"
          FROM vm_time_restrictions WHERE child_id = $1`,
-      [childId]
+      [childId, Date.now()]
     );
 
-    res.json({ child, timeRestriction: timeRestriction ?? { enabled: false, startHour: 8, endHour: 21, days: "mon,tue,wed,thu,fri,sat,sun" } });
+    res.json({
+      child,
+      timeRestriction: timeRestriction ?? {
+        enabled: false,
+        startHour: 8,
+        endHour: 21,
+        days: "mon,tue,wed,thu,fri,sat,sun",
+        overrideUntil: null,
+      },
+    });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });
   }
@@ -206,6 +218,49 @@ router.put("/children/:childId/time-restrictions", async (req, res) => {
   }
 });
 
+// ── Grant a temporary schedule override ──────────────────────────────────────
+router.put("/children/:childId/override", async (req, res) => {
+  try {
+    const { childId } = req.params;
+    const { durationHours } = req.body as { durationHours?: unknown };
+    const hours = Number(durationHours);
+
+    if (!Number.isInteger(hours) || ![1, 2].includes(hours)) {
+      res.status(400).json({ error: "durationHours must be 1 or 2" });
+      return;
+    }
+
+    if (!(await requireParentOf(req, childId))) {
+      res.status(403).json({ error: "Only this child's parent can grant an override" });
+      return;
+    }
+
+    const overrideUntil = Date.now() + hours * 60 * 60 * 1000;
+    const saved = await queryOne<{ overrideUntil: number }>(
+      `INSERT INTO vm_time_restrictions (child_id, override_until)
+       VALUES ($1, $2)
+       ON CONFLICT (child_id) DO UPDATE
+         SET override_until = EXCLUDED.override_until
+       RETURNING override_until::double precision AS "overrideUntil"`,
+      [childId, overrideUntil]
+    );
+
+    if (!saved) {
+      res.status(500).json({ error: "Could not save the temporary override" });
+      return;
+    }
+
+    getIO()?.to(`user:${childId}`).emit("time:override", {
+      childId,
+      overrideUntil: saved.overrideUntil,
+    });
+
+    res.json({ ok: true, overrideUntil: saved.overrideUntil });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
 // ── Check if child has access right now ──────────────────────────────────────
 router.get("/check-access/:childId", async (req, res) => {
   try {
@@ -215,16 +270,38 @@ router.get("/check-access/:childId", async (req, res) => {
       return;
     }
 
+    const nowTimestamp = Date.now();
     const restriction = await queryOne<{
       enabled: boolean; startHour: number; endHour: number; days: string;
+      overrideUntil: number | null;
     }>(
-      `SELECT enabled, start_hour AS "startHour", end_hour AS "endHour", days
+      `SELECT enabled, start_hour AS "startHour", end_hour AS "endHour", days,
+              CASE WHEN override_until > $2 THEN override_until::double precision ELSE NULL END
+                AS "overrideUntil"
          FROM vm_time_restrictions WHERE child_id = $1`,
-      [childId]
+      [childId, nowTimestamp]
     );
 
     if (!restriction || !restriction.enabled) {
-      res.json({ allowed: true });
+      res.json({
+        allowed: true,
+        overrideUntil: restriction?.overrideUntil ?? null,
+        overrideRemainingMs: restriction?.overrideUntil
+          ? restriction.overrideUntil - nowTimestamp
+          : null,
+      });
+      return;
+    }
+
+    if (restriction.overrideUntil !== null) {
+      res.json({
+        allowed: true,
+        overrideUntil: restriction.overrideUntil,
+        overrideRemainingMs: restriction.overrideUntil - nowTimestamp,
+        startHour: restriction.startHour,
+        endHour: restriction.endHour,
+        days: restriction.days,
+      });
       return;
     }
 
@@ -242,6 +319,8 @@ router.get("/check-access/:childId", async (req, res) => {
       startHour: restriction.startHour,
       endHour: restriction.endHour,
       days: restriction.days,
+      overrideUntil: null,
+      overrideRemainingMs: null,
     });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });

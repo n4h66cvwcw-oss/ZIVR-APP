@@ -276,11 +276,18 @@ type LockStatus = "pending" | "allowed" | "denied";
  * any response that arrives after a user or identity change is silently discarded.
  */
 function TimeLockGate({ children }: { children: React.ReactNode }) {
-  const { serverUserId, identityReady, fetchServerUser } = useServer();
+  const {
+    serverUserId,
+    identityReady,
+    fetchServerUser,
+    isConnected,
+    onTimeOverride,
+  } = useServer();
   const { checkAccessStrict } = useParental();
 
   const [status, setStatus] = useState<LockStatus>("pending");
   const [lockInfo, setLockInfo] = useState<DeniedCache>({ startHour: 8, endHour: 21 });
+  const [overrideRemainingMs, setOverrideRemainingMs] = useState<number | null>(null);
 
   /**
    * Tracks the user ID that owns the current gate state.
@@ -342,6 +349,11 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
       }
 
       if (activeUserRef.current !== userId) return; // stale — discard
+      setOverrideRemainingMs(
+        result.overrideRemainingMs && result.overrideRemainingMs > 0
+          ? result.overrideRemainingMs
+          : null
+      );
       if (result.allowed) {
         setStatus("allowed");
       } else {
@@ -369,6 +381,40 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
     }
   }, [checkAccessStrict]);
 
+  // Re-check after the server-calculated remaining duration even when the app
+  // remains in the foreground. This deliberately does not use device time.
+  useEffect(() => {
+    if (!serverUserId || !overrideRemainingMs) return;
+
+    const timer = setTimeout(() => {
+      if (activeUserRef.current !== serverUserId) return;
+      setStatus("pending");
+      void runChildCheck(serverUserId);
+    }, overrideRemainingMs + 50);
+
+    return () => clearTimeout(timer);
+  }, [overrideRemainingMs, runChildCheck, serverUserId]);
+
+  // An unlocked child can receive the parent's override while on the lock
+  // screen. Always re-check the API instead of trusting the socket payload.
+  useEffect(() => {
+    return onTimeOverride(({ childId }) => {
+      if (activeUserRef.current !== childId) return;
+      setStatus("pending");
+      void runChildCheck(childId);
+    });
+  }, [onTimeOverride, runChildCheck]);
+
+  // Socket events are transient. Revalidate any active child session when its
+  // authenticated socket reconnects so a persisted override cannot be missed.
+  useEffect(() => {
+    if (!isConnected) return;
+    const childId = activeUserRef.current;
+    if (!childId) return;
+    setStatus("pending");
+    void runChildCheck(childId);
+  }, [isConnected, runChildCheck]);
+
   /**
    * Full gate evaluation for `userId`.  Determines account type then gates
    * if (and only if) the account is a child.
@@ -395,12 +441,14 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
     if (!serverUserId) {
       // Confirmed signed out.
       activeUserRef.current = null;
+      setOverrideRemainingMs(null);
       setStatus("allowed");
       return;
     }
 
     // New (or restored) authenticated user — gate until confirmed.
     activeUserRef.current = serverUserId;
+    setOverrideRemainingMs(null);
     setStatus("pending");
     evaluate(serverUserId);
   // evaluate is a stable callback; omitting it avoids spurious re-runs on

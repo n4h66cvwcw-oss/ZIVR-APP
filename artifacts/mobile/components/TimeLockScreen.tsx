@@ -11,6 +11,7 @@ import Colors from "@/constants/colors";
 type Props = {
   startHour: number;
   endHour: number;
+  overrideUntil?: number | null;
 };
 
 function formatHour(h: number): string {
@@ -19,7 +20,7 @@ function formatHour(h: number): string {
   return `${display}:00 ${suffix}`;
 }
 
-export function TimeLockScreen({ startHour, endHour }: Props) {
+export function TimeLockScreen({ startHour, endHour, overrideUntil }: Props) {
   const isDark = useColorScheme() === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
 
@@ -30,6 +31,15 @@ export function TimeLockScreen({ startHour, endHour }: Props) {
           <Ionicons name="time-outline" size={56} color="#FF6B6B" />
         </View>
         <Text style={[styles.title, { color: colors.text }]}>App is locked</Text>
+        {overrideUntil && overrideUntil > Date.now() && (
+          <Text style={[styles.override, { color: "#FF9800" }]}>
+            Unlocked until{" "}
+            {new Date(overrideUntil).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </Text>
+        )}
         <Text style={[styles.sub, { color: colors.textSecondary }]}>
           ZIVR is available between
         </Text>
@@ -81,6 +91,11 @@ const styles = StyleSheet.create({
   hours: {
     fontSize: 22,
     fontWeight: "600",
+    textAlign: "center",
+  },
+  override: {
+    fontSize: 16,
+    fontWeight: "700",
     textAlign: "center",
   },
   footer: {

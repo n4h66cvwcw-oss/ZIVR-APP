@@ -117,8 +117,13 @@ export async function migrate(): Promise<void> {
       enabled    BOOLEAN DEFAULT false,
       start_hour INT DEFAULT 8,
       end_hour   INT DEFAULT 21,
-      days       TEXT DEFAULT 'mon,tue,wed,thu,fri,sat,sun'
+      days       TEXT DEFAULT 'mon,tue,wed,thu,fri,sat,sun',
+      override_until BIGINT
     )
+  `);
+  await query(`
+    ALTER TABLE vm_time_restrictions
+    ADD COLUMN IF NOT EXISTS override_until BIGINT
   `);
 
   // Contact approval list per child

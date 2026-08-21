@@ -23,6 +23,7 @@ export type TimeRestriction = {
   startHour: number;
   endHour: number;
   days: string; // comma-separated: mon,tue,wed,thu,fri,sat,sun
+  overrideUntil?: number | null;
 };
 
 export type ContactApproval = {
@@ -61,6 +62,7 @@ interface ParentalContextValue {
   loadChildDetail: (childId: string) => Promise<{ child: ChildAccount; timeRestriction: TimeRestriction } | null>;
 
   updateTimeRestrictions: (childId: string, restriction: TimeRestriction) => Promise<void>;
+  grantTimeOverride: (childId: string, durationHours: 1 | 2) => Promise<number>;
 
   /** Auth token for a child created on this device (parent-mediated bootstrap). */
   getChildToken: (childId: string) => Promise<string | null>;
@@ -72,14 +74,26 @@ interface ParentalContextValue {
   markFlagReviewed: (childId: string, flagId: string) => Promise<void>;
 
   // For child accounts: check access (fail-open, safe for dashboards)
-  checkAccess: (childId: string) => Promise<{ allowed: boolean; startHour?: number; endHour?: number }>;
+  checkAccess: (childId: string) => Promise<{
+    allowed: boolean;
+    startHour?: number;
+    endHour?: number;
+    overrideUntil?: number | null;
+    overrideRemainingMs?: number | null;
+  }>;
 
   /**
    * Like checkAccess but throws on network/auth error instead of defaulting to
    * allowed.  Use this wherever failing silently would be a security issue (e.g.
    * the time-lock gate on app launch).
    */
-  checkAccessStrict: (childId: string) => Promise<{ allowed: boolean; startHour?: number; endHour?: number }>;
+  checkAccessStrict: (childId: string) => Promise<{
+    allowed: boolean;
+    startHour?: number;
+    endHour?: number;
+    overrideUntil?: number | null;
+    overrideRemainingMs?: number | null;
+  }>;
 }
 
 const ParentalContext = createContext<ParentalContextValue | null>(null);
@@ -198,6 +212,17 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
     });
   }, []);
 
+  const grantTimeOverride = useCallback(async (childId: string, durationHours: 1 | 2): Promise<number> => {
+    const data = await apiCall<{ ok: true; overrideUntil: number }>(
+      `/parental/children/${childId}/override`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ durationHours }),
+      }
+    );
+    return data.overrideUntil;
+  }, []);
+
   const getChildToken = useCallback(async (childId: string): Promise<string | null> => {
     try {
       const raw = await AsyncStorage.getItem(CHILD_TOKENS_KEY);
@@ -260,7 +285,13 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
 
   const checkAccess = useCallback(async (childId: string) => {
     try {
-      return await apiCall<{ allowed: boolean; startHour?: number; endHour?: number }>(
+      return await apiCall<{
+        allowed: boolean;
+        startHour?: number;
+        endHour?: number;
+        overrideUntil?: number | null;
+        overrideRemainingMs?: number | null;
+      }>(
         `/parental/check-access/${childId}`
       );
     } catch {
@@ -270,7 +301,13 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
 
   const checkAccessStrict = useCallback(async (childId: string) => {
     // Intentionally does NOT catch — callers must handle errors themselves.
-    return apiCall<{ allowed: boolean; startHour?: number; endHour?: number }>(
+    return apiCall<{
+      allowed: boolean;
+      startHour?: number;
+      endHour?: number;
+      overrideUntil?: number | null;
+      overrideRemainingMs?: number | null;
+    }>(
       `/parental/check-access/${childId}`
     );
   }, []);
@@ -285,6 +322,7 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
       createChildAccount,
       loadChildDetail,
       updateTimeRestrictions,
+      grantTimeOverride,
       getChildToken,
       loadContacts,
       updateContactStatus,

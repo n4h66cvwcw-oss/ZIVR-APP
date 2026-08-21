@@ -102,6 +102,7 @@ export type ContactApprovedHandler = (data: {
   contactId: string;
   contactName: string;
 }) => void;
+type TimeOverrideHandler = (data: { childId: string; overrideUntil: number }) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
 
 export type ChatBackupMeta = {
@@ -141,6 +142,7 @@ interface ServerContextValue {
   onMessageBlocked: (handler: MessageBlockedHandler) => () => void;
   onContactRequest: (handler: ContactRequestHandler) => () => void;
   onContactApproved: (handler: ContactApprovedHandler) => () => void;
+  onTimeOverride: (handler: TimeOverrideHandler) => () => void;
   fetchContactApprovals: (childId: string) => Promise<ServerContactApproval[]>;
   /** Switch this device's active server account (e.g. parent-mediated child handoff). */
   switchActiveUser: (userId: string, authToken: string) => Promise<void>;
@@ -216,6 +218,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const messageBlockedHandlers = useRef<Set<MessageBlockedHandler>>(new Set());
   const contactRequestHandlers = useRef<Set<ContactRequestHandler>>(new Set());
   const contactApprovedHandlers = useRef<Set<ContactApprovedHandler>>(new Set());
+  const timeOverrideHandlers = useRef<Set<TimeOverrideHandler>>(new Set());
   const authTokenRef = useRef<string | null>(null);
   // Tracks when the socket last disconnected so we can request missed messages on rejoin
   const disconnectTimeRef = useRef<number | null>(null);
@@ -381,6 +384,10 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
     socket.on("contact:approved", (data: { childId: string; contactId: string; contactName: string }) => {
       contactApprovedHandlers.current.forEach((h) => h(data));
+    });
+
+    socket.on("time:override", (data: { childId: string; overrideUntil: number }) => {
+      timeOverrideHandlers.current.forEach((h) => h(data));
     });
 
     socket.on("connect_error", (err) => {
@@ -612,6 +619,11 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const onContactApproved = useCallback((handler: ContactApprovedHandler) => {
     contactApprovedHandlers.current.add(handler);
     return () => { contactApprovedHandlers.current.delete(handler); };
+  }, []);
+
+  const onTimeOverride = useCallback((handler: TimeOverrideHandler) => {
+    timeOverrideHandlers.current.add(handler);
+    return () => { timeOverrideHandlers.current.delete(handler); };
   }, []);
 
   const fetchContactApprovals = useCallback(async (childId: string): Promise<ServerContactApproval[]> => {
@@ -884,6 +896,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         onMessageBlocked,
         onContactRequest,
         onContactApproved,
+        onTimeOverride,
         fetchContactApprovals,
         switchActiveUser,
         previousUserId,

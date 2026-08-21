@@ -92,6 +92,13 @@ function SeverityBadge({ severity }: { severity: string }) {
   );
 }
 
+function formatOverrideTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export default function ChildSettingsScreen() {
   const { childId } = useLocalSearchParams<{ childId: string }>();
   const isDark = useColorScheme() === "dark";
@@ -100,6 +107,7 @@ export default function ChildSettingsScreen() {
   const {
     loadChildDetail,
     updateTimeRestrictions,
+    grantTimeOverride,
     loadContacts,
     updateContactStatus,
     loadFlags,
@@ -120,6 +128,7 @@ export default function ChildSettingsScreen() {
   const [flags, setFlags] = useState<ContentFlag[]>([]);
   const [activeTab, setActiveTab] = useState<"overview" | "contacts" | "flags">("overview");
   const [savingTime, setSavingTime] = useState(false);
+  const [savingOverride, setSavingOverride] = useState(false);
 
   const load = useCallback(async () => {
     if (!childId) return;
@@ -156,6 +165,20 @@ export default function ChildSettingsScreen() {
       Alert.alert("Error", "Could not save time restrictions.");
     }
     setSavingTime(false);
+  };
+
+  const handleGrantOverride = async (durationHours: 1 | 2) => {
+    if (!childId || savingOverride) return;
+    setSavingOverride(true);
+    try {
+      const overrideUntil = await grantTimeOverride(childId, durationHours);
+      setTimeRestriction((current) => ({ ...current, overrideUntil }));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      Alert.alert("Error", "Could not grant a temporary unlock.");
+    } finally {
+      setSavingOverride(false);
+    }
   };
 
   const handleContactAction = async (contactId: string, status: "approved" | "blocked") => {
@@ -211,6 +234,9 @@ export default function ChildSettingsScreen() {
 
   const pendingContacts = contacts.filter((c) => c.status === "pending");
   const reviewedContacts = contacts.filter((c) => c.status !== "pending");
+  const activeOverride = timeRestriction.overrideUntil && timeRestriction.overrideUntil > Date.now()
+    ? timeRestriction.overrideUntil
+    : null;
 
   return (
     <View style={[sStyles.container, { backgroundColor: colors.background }]}>
@@ -312,6 +338,35 @@ export default function ChildSettingsScreen() {
                 </View>
               </>
             )}
+            <View style={[sStyles.divider, { backgroundColor: colors.border }]} />
+            <View style={sStyles.overrideHeader}>
+              <View style={sStyles.overrideTitleRow}>
+                <Ionicons name="flash-outline" size={18} color="#FF9800" />
+                <Text style={[sStyles.overrideTitle, { color: colors.text }]}>Temporary unlock</Text>
+              </View>
+              <Text style={[sStyles.overrideDescription, { color: colors.textSecondary }]}>
+                Let {child.displayName} use ZIVR now without changing this schedule.
+              </Text>
+              {activeOverride && (
+                <Text style={[sStyles.overrideActive, { color: "#FF9800" }]}>
+                  Unlocked until {formatOverrideTime(activeOverride)}
+                </Text>
+              )}
+              <View style={sStyles.overrideButtons}>
+                {([1, 2] as const).map((durationHours) => (
+                  <Pressable
+                    key={durationHours}
+                    style={[sStyles.overrideBtn, { borderColor: "#FF9800", opacity: savingOverride ? 0.6 : 1 }]}
+                    onPress={() => void handleGrantOverride(durationHours)}
+                    disabled={savingOverride}
+                  >
+                    <Text style={sStyles.overrideBtnText}>
+                      {durationHours} hour{durationHours > 1 ? "s" : ""}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
             <Pressable
               style={[sStyles.saveBtn, { opacity: savingTime ? 0.6 : 1 }]}
               onPress={handleSaveTimeRestrictions}
@@ -537,6 +592,20 @@ const sStyles = StyleSheet.create({
     marginTop: 4,
   },
   saveBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  overrideHeader: { gap: 8 },
+  overrideTitleRow: { flexDirection: "row", alignItems: "center", gap: 7 },
+  overrideTitle: { fontSize: 15, fontWeight: "600" },
+  overrideDescription: { fontSize: 13, lineHeight: 18 },
+  overrideActive: { fontSize: 13, fontWeight: "700" },
+  overrideButtons: { flexDirection: "row", gap: 10, marginTop: 2 },
+  overrideBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  overrideBtnText: { color: "#FF9800", fontSize: 14, fontWeight: "700" },
   empty: { paddingTop: 80, alignItems: "center", gap: 12 },
   emptyText: { fontSize: 15 },
   contactCard: {
