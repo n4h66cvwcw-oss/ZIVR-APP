@@ -29,6 +29,7 @@ import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 import { TimeLockScreen } from "@/components/TimeLockScreen";
 import { registerForPushNotificationsAsync } from "@/utils/notifications";
 import { getRecoveredLanguageUpdate } from "@/utils/language-sync";
+import { createForegroundCheckHandler } from "@/utils/time-lock-gate";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -296,6 +297,13 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
   const activeUserRef = useRef<string | null>(null);
 
   /**
+   * Timestamp (ms) of the last foreground-resume access check.
+   * Used by createForegroundCheckHandler to suppress duplicate calls within
+   * the 60-second cache window (e.g. rapid force-quit and reopen).
+   */
+  const lastForegroundCheckMsRef = useRef<number | null>(null);
+
+  /**
    * Determine whether `userId` is a child account.
    * Checks the AsyncStorage cache first; falls back to a live profile fetch.
    * Returns `null` when the type cannot be confirmed (offline + no cache).
@@ -457,22 +465,29 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
   }, [identityReady, serverUserId]);
 
   // Re-evaluate every time the app comes back to the foreground.
+  // createForegroundCheckHandler adds a 60-second cache to suppress duplicate
+  // API calls on rapid force-quit and reopen (e.g. double-press home + switch).
   useEffect(() => {
-    const sub = AppState.addEventListener("change", async (state: AppStateStatus) => {
-      if (state !== "active") return;
-      const userId = activeUserRef.current;
-      if (!userId) return;
+    const handleForeground = createForegroundCheckHandler({
+      getUserId: () => activeUserRef.current,
+      getCachedAccountType: async (userId) => {
+        try {
+          return await AsyncStorage.getItem(accountTypeKey(userId));
+        } catch {
+          return null;
+        }
+      },
+      runCheck: async (userId) => {
+        if (activeUserRef.current !== userId) return;
+        setStatus("pending");
+        await runChildCheck(userId);
+      },
+      getLastCheckMs: () => lastForegroundCheckMsRef.current,
+      setLastCheckMs: (ms) => { lastForegroundCheckMsRef.current = ms; },
+    });
 
-      // Non-child (cached): no lock check needed on foreground.
-      try {
-        const cached = await AsyncStorage.getItem(accountTypeKey(userId));
-        if (cached !== null && cached !== "child") return;
-      } catch {/* ignore */}
-
-      // Child (or unknown): always run a live check on foreground.
-      if (activeUserRef.current !== userId) return;
-      setStatus("pending");
-      runChildCheck(userId);
+    const sub = AppState.addEventListener("change", (state: AppStateStatus) => {
+      void handleForeground(state);
     });
     return () => sub.remove();
   }, [runChildCheck]);

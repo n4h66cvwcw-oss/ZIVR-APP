@@ -1,0 +1,154 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  FOREGROUND_CACHE_MS,
+  createForegroundCheckHandler,
+  selectGateOutput,
+  shouldRunForegroundCheck,
+} from "./time-lock-gate.ts";
+
+// ─── shouldRunForegroundCheck ─────────────────────────────────────────────────
+
+test("shouldRunForegroundCheck: runs when no prior check has been recorded", () => {
+  assert.equal(shouldRunForegroundCheck(null, Date.now()), true);
+});
+
+test("shouldRunForegroundCheck: skips a check made within the 60-second window", () => {
+  const lastCheckMs = 1_000_000;
+  const nowMs = lastCheckMs + FOREGROUND_CACHE_MS - 1; // 1 ms before expiry
+  assert.equal(shouldRunForegroundCheck(lastCheckMs, nowMs), false);
+});
+
+test("shouldRunForegroundCheck: runs once the 60-second window has elapsed", () => {
+  const lastCheckMs = 1_000_000;
+  const nowMs = lastCheckMs + FOREGROUND_CACHE_MS; // exactly at boundary
+  assert.equal(shouldRunForegroundCheck(lastCheckMs, nowMs), true);
+});
+
+// ─── selectGateOutput ─────────────────────────────────────────────────────────
+
+test("selectGateOutput: denied status maps to locked — TimeLockScreen should render", () => {
+  // This is the critical invariant: when checkAccess returns { allowed: false }
+  // the gate records status "denied", and selectGateOutput must direct to the
+  // TimeLockScreen ("locked") instead of passing children through.
+  assert.equal(selectGateOutput("denied"), "locked");
+});
+
+test("selectGateOutput: allowed status passes children through", () => {
+  assert.equal(selectGateOutput("allowed"), "children");
+});
+
+test("selectGateOutput: pending status shows the loading spinner", () => {
+  assert.equal(selectGateOutput("pending"), "pending");
+});
+
+// ─── createForegroundCheckHandler ────────────────────────────────────────────
+
+test("foreground handler: calls runCheck on each active transition separated by more than 60 s", async () => {
+  // Simulates the user force-quitting and reopening the app twice, with
+  // sufficient time between opens for the cache to have expired.
+  let checkCount = 0;
+  let lastCheckMs: number | null = null;
+  let currentTime = 0;
+
+  const handler = createForegroundCheckHandler({
+    getUserId: () => "child-1",
+    getCachedAccountType: async () => "child",
+    runCheck: async () => {
+      checkCount++;
+    },
+    getLastCheckMs: () => lastCheckMs,
+    setLastCheckMs: (ms) => {
+      lastCheckMs = ms;
+    },
+    now: () => currentTime,
+  });
+
+  // Background transition — must be ignored.
+  await handler("background");
+  assert.equal(checkCount, 0, "background state must not trigger a check");
+
+  // First foreground resume.
+  await handler("active");
+  assert.equal(checkCount, 1, "first foreground resume should trigger a check");
+
+  // Second resume after more than 60 seconds (cache expired).
+  currentTime += FOREGROUND_CACHE_MS + 5_000;
+  await handler("active");
+  assert.equal(
+    checkCount,
+    2,
+    "foreground resume after cache expiry should trigger another check",
+  );
+});
+
+test("foreground handler: 60-second cache prevents a duplicate network call within the window", async () => {
+  // Simulates rapid force-quit and reopen (e.g. within 30 seconds).
+  // The second activation must be suppressed to avoid duplicate API calls.
+  let checkCount = 0;
+  let lastCheckMs: number | null = null;
+  let currentTime = 1_000_000;
+
+  const handler = createForegroundCheckHandler({
+    getUserId: () => "child-1",
+    getCachedAccountType: async () => "child",
+    runCheck: async () => {
+      checkCount++;
+    },
+    getLastCheckMs: () => lastCheckMs,
+    setLastCheckMs: (ms) => {
+      lastCheckMs = ms;
+    },
+    now: () => currentTime,
+  });
+
+  // First resume: check runs.
+  await handler("active");
+  assert.equal(checkCount, 1, "first foreground resume should trigger a check");
+
+  // Second resume 30 s later — still inside the 60-second cache window.
+  currentTime += 30_000;
+  await handler("active");
+  assert.equal(
+    checkCount,
+    1,
+    "foreground resume within 60 s must not trigger another network call",
+  );
+});
+
+test("foreground handler: skips confirmed non-child accounts", async () => {
+  let checkCount = 0;
+  let lastCheckMs: number | null = null;
+
+  const handler = createForegroundCheckHandler({
+    getUserId: () => "parent-1",
+    getCachedAccountType: async () => "parent",
+    runCheck: async () => {
+      checkCount++;
+    },
+    getLastCheckMs: () => lastCheckMs,
+    setLastCheckMs: (ms) => {
+      lastCheckMs = ms;
+    },
+  });
+
+  await handler("active");
+  assert.equal(checkCount, 0, "non-child accounts must never trigger an access check");
+});
+
+test("foreground handler: skips when no user is signed in", async () => {
+  let checkCount = 0;
+
+  const handler = createForegroundCheckHandler({
+    getUserId: () => null,
+    getCachedAccountType: async () => null,
+    runCheck: async () => {
+      checkCount++;
+    },
+    getLastCheckMs: () => null,
+    setLastCheckMs: () => {},
+  });
+
+  await handler("active");
+  assert.equal(checkCount, 0, "signed-out state must not trigger an access check");
+});

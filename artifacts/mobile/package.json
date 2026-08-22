@@ -8,6 +8,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "test:language": "node --experimental-strip-types --test utils/registration.test.ts utils/language-sync.test.ts utils/server-identity.test.ts",
+    "test:time-lock": "node --experimental-strip-types --test utils/time-lock-gate.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/patch-expo-cli.js"
   },
