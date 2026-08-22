@@ -1,5 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { scheduleLocalNotification } from "@/utils/notifications";
+import {
+  buildLiveMessageNotification,
+  buildMissedMessageNotifications,
+  type NotificationMessage,
+} from "@/utils/notification-policy";
 import { BETA_CHAT_ID, queueFeedbackSubmission } from "@/utils/betaFeedback";
 import React, {
   createContext,
@@ -402,14 +407,6 @@ function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
-type MissedNotificationGroup = {
-  count: number;
-  senderId: string;
-  senderName: string;
-  lastText: string;
-  hasMultipleSenders: boolean;
-};
-
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats, translateMessage, onMessageBlocked, onContactRequest } = useServer();
   const { profile } = useProfile();
@@ -435,7 +432,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const preHydrationBuffer = useRef<ServerMessage[]>([]);
   const chatsRef = useRef(chats);
   const messagesRef = useRef(messages);
-  const missedNotificationGroups = useRef<Map<string, MissedNotificationGroup>>(new Map());
+  const missedNotificationMessages = useRef<NotificationMessage[]>([]);
   const missedNotificationFlushScheduled = useRef(false);
   useEffect(() => { chatsRef.current = chats; }, [chats]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
@@ -492,41 +489,22 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (delivery === "missed") {
-        const senderName = msg.senderName || "New message";
-        const existing = missedNotificationGroups.current.get(chatId);
-        missedNotificationGroups.current.set(chatId, existing
-          ? {
-              ...existing,
-              count: existing.count + 1,
-              lastText: msg.text,
-              hasMultipleSenders: existing.hasMultipleSenders || existing.senderId !== msg.senderId,
-            }
-          : {
-              count: 1,
-              senderId: msg.senderId,
-              senderName,
-              lastText: msg.text,
-              hasMultipleSenders: false,
-            });
+        missedNotificationMessages.current.push({
+          chatId,
+          senderId: msg.senderId,
+          senderName: msg.senderName,
+          text: msg.text,
+        });
 
         if (!missedNotificationFlushScheduled.current) {
           missedNotificationFlushScheduled.current = true;
           Promise.resolve().then(() => {
             missedNotificationFlushScheduled.current = false;
-            const pending = missedNotificationGroups.current;
-            missedNotificationGroups.current = new Map();
-
-            pending.forEach((group, pendingChatId) => {
-              const chat = chatsRef.current.find((c) => c.id === pendingChatId);
-              const sound = chat?.notificationSound ?? "default";
-              if (chat?.isMuted || sound === "none") return;
-
-              const title = group.count === 1
-                ? group.senderName
-                : group.hasMultipleSenders
-                  ? `${group.count} new messages`
-                  : `${group.count} new messages from ${group.senderName}`;
-              scheduleLocalNotification(title, group.lastText, sound).catch(() => {});
+            const pending = missedNotificationMessages.current;
+            missedNotificationMessages.current = [];
+            const requests = buildMissedMessageNotifications(pending, chatsRef.current);
+            requests.forEach((request) => {
+              scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
             });
           });
         }
@@ -534,10 +512,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
       setChats((prev) => {
         const chat = prev.find((c) => c.id === chatId);
-        const sound = chat?.notificationSound ?? "default";
-        if (delivery === "live" && !chat?.isMuted && sound !== "none") {
-          const senderName = msg.senderName || "New message";
-          scheduleLocalNotification(senderName, msg.text, sound).catch(() => {});
+        if (delivery === "live") {
+          const request = buildLiveMessageNotification({
+            chatId,
+            senderId: msg.senderId,
+            senderName: msg.senderName,
+            text: msg.text,
+          }, chat);
+          if (request) {
+            scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
+          }
         }
         // Messages the current user sent, and messages in the currently open
         // chat, should not increment the unread badge. The chat screen's own
