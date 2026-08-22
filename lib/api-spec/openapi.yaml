@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: parental
+    description: Parent safety preferences
 paths:
   /healthz:
     get:
@@ -24,6 +26,41 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /parental/alert-preferences:
+    get:
+      operationId: getParentAlertPreferences
+      tags: [parental]
+      summary: Get the authenticated parent's content alert threshold
+      responses:
+        "200":
+          description: Current alert threshold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertPreference"
+        "401":
+          description: Invalid or missing auth token
+    put:
+      operationId: updateParentAlertPreferences
+      tags: [parental]
+      summary: Update the authenticated parent's content alert threshold
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPreferenceUpdate"
+      responses:
+        "200":
+          description: Updated alert threshold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertPreference"
+        "400":
+          description: Invalid alert threshold
+        "401":
+          description: Invalid or missing auth token
 components:
   schemas:
     HealthStatus:
@@ -33,4 +70,23 @@ components:
           type: string
       required:
         - status
+    AlertPreference:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        minimumSeverity:
+          $ref: "#/components/schemas/AlertThreshold"
+      required:
+        - minimumSeverity
+    AlertPreferenceUpdate:
+      type: object
+      properties:
+        minimumSeverity:
+          $ref: "#/components/schemas/AlertThreshold"
+      required:
+        - minimumSeverity
+    AlertThreshold:
+      type: string
+      enum: [all, medium, high]
 

@@ -46,10 +46,15 @@ export type ContentFlag = {
   chatId: string | null;
 };
 
+export type ContentAlertThreshold = "all" | "medium" | "high";
+
 interface ParentalContextValue {
   isParentMode: boolean;
   parentUserId: string | null;
   setParentMode: (enabled: boolean, userId?: string) => Promise<void>;
+
+  loadAlertPreference: () => Promise<ContentAlertThreshold>;
+  updateAlertPreference: (minimumSeverity: ContentAlertThreshold) => Promise<void>;
 
   children: ChildAccount[];
   loadChildren: () => Promise<void>;
@@ -153,6 +158,27 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
       setParentUserId(userId);
       await AsyncStorage.setItem(PARENT_USER_KEY, userId);
     }
+  }, []);
+
+  const loadAlertPreference = useCallback(async (): Promise<ContentAlertThreshold> => {
+    try {
+      const data = await apiCall<{ minimumSeverity: ContentAlertThreshold }>(
+        "/parental/alert-preferences"
+      );
+      return data.minimumSeverity;
+    } catch (err) {
+      console.warn("[parental] loadAlertPreference error", err);
+      return "medium";
+    }
+  }, []);
+
+  const updateAlertPreference = useCallback(async (
+    minimumSeverity: ContentAlertThreshold
+  ): Promise<void> => {
+    await apiCall("/parental/alert-preferences", {
+      method: "PUT",
+      body: JSON.stringify({ minimumSeverity }),
+    });
   }, []);
 
   const loadChildren = useCallback(async () => {
@@ -317,6 +343,8 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
       isParentMode,
       parentUserId,
       setParentMode,
+      loadAlertPreference,
+      updateAlertPreference,
       children,
       loadChildren,
       createChildAccount,

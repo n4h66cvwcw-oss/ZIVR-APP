@@ -5,18 +5,25 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  AlertPreference,
+  AlertPreferenceUpdate,
+  HealthStatus,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +106,166 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get the authenticated parent's content alert threshold
+ */
+export const getGetParentAlertPreferencesUrl = () => {
+  return `/api/parental/alert-preferences`;
+};
+
+export const getParentAlertPreferences = async (
+  options?: RequestInit,
+): Promise<AlertPreference> => {
+  return customFetch<AlertPreference>(getGetParentAlertPreferencesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetParentAlertPreferencesQueryKey = () => {
+  return [`/api/parental/alert-preferences`] as const;
+};
+
+export const getGetParentAlertPreferencesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getParentAlertPreferences>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getParentAlertPreferences>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetParentAlertPreferencesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getParentAlertPreferences>>
+  > = ({ signal }) => getParentAlertPreferences({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getParentAlertPreferences>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetParentAlertPreferencesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getParentAlertPreferences>>
+>;
+export type GetParentAlertPreferencesQueryError = ErrorType<void>;
+
+/**
+ * @summary Get the authenticated parent's content alert threshold
+ */
+
+export function useGetParentAlertPreferences<
+  TData = Awaited<ReturnType<typeof getParentAlertPreferences>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getParentAlertPreferences>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetParentAlertPreferencesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update the authenticated parent's content alert threshold
+ */
+export const getUpdateParentAlertPreferencesUrl = () => {
+  return `/api/parental/alert-preferences`;
+};
+
+export const updateParentAlertPreferences = async (
+  alertPreferenceUpdate: AlertPreferenceUpdate,
+  options?: RequestInit,
+): Promise<AlertPreference> => {
+  return customFetch<AlertPreference>(getUpdateParentAlertPreferencesUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(alertPreferenceUpdate),
+  });
+};
+
+export const getUpdateParentAlertPreferencesMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateParentAlertPreferences>>,
+    TError,
+    { data: BodyType<AlertPreferenceUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateParentAlertPreferences>>,
+  TError,
+  { data: BodyType<AlertPreferenceUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateParentAlertPreferences"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateParentAlertPreferences>>,
+    { data: BodyType<AlertPreferenceUpdate> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateParentAlertPreferences(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateParentAlertPreferencesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateParentAlertPreferences>>
+>;
+export type UpdateParentAlertPreferencesMutationBody =
+  BodyType<AlertPreferenceUpdate>;
+export type UpdateParentAlertPreferencesMutationError = ErrorType<void>;
+
+/**
+ * @summary Update the authenticated parent's content alert threshold
+ */
+export const useUpdateParentAlertPreferences = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateParentAlertPreferences>>,
+    TError,
+    { data: BodyType<AlertPreferenceUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateParentAlertPreferences>>,
+  TError,
+  { data: BodyType<AlertPreferenceUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateParentAlertPreferencesMutationOptions(options));
+};

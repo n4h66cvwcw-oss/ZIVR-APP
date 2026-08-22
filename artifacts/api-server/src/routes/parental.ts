@@ -3,6 +3,10 @@ import { query, queryOne } from "../lib/db";
 import { getAuthUserId, signToken } from "../lib/auth";
 import { getIO } from "../lib/socket";
 import { sendExpoPush } from "../lib/push";
+import {
+  isContentAlertThreshold,
+  type ContentAlertThreshold,
+} from "../lib/content-alert-preferences";
 
 const router = Router();
 
@@ -28,6 +32,72 @@ async function requireParentOrSelf(req: Parameters<typeof getAuthUserId>[0], chi
   );
   return link ? authUserId : null;
 }
+
+// ── Content alert preferences ─────────────────────────────────────────────────
+router.get("/alert-preferences", async (req, res) => {
+  try {
+    const parentId = getAuthUserId(req);
+    if (!parentId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
+    const parent = await queryOne<{ minimumSeverity: string }>(
+      `SELECT content_alert_min_severity AS "minimumSeverity"
+         FROM vm_users
+        WHERE id = $1 AND account_type = 'parent'`,
+      [parentId]
+    );
+
+    if (!parent) {
+      res.status(404).json({ error: "Parent account not found" });
+      return;
+    }
+
+    // Treat legacy or invalid database values as the documented default.
+    const minimumSeverity = isContentAlertThreshold(parent.minimumSeverity)
+      ? parent.minimumSeverity
+      : "medium";
+    res.json({ minimumSeverity });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
+router.put("/alert-preferences", async (req, res) => {
+  try {
+    const parentId = getAuthUserId(req);
+    if (!parentId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
+    const { minimumSeverity } = req.body as { minimumSeverity?: unknown };
+    if (!isContentAlertThreshold(minimumSeverity)) {
+      res.status(400).json({
+        error: "minimumSeverity must be all, medium, or high",
+      });
+      return;
+    }
+
+    const updated = await queryOne<{ minimumSeverity: string }>(
+      `UPDATE vm_users
+          SET content_alert_min_severity = $1
+        WHERE id = $2 AND account_type = 'parent'
+        RETURNING content_alert_min_severity AS "minimumSeverity"`,
+      [minimumSeverity, parentId]
+    );
+
+    if (!updated) {
+      res.status(404).json({ error: "Parent account not found" });
+      return;
+    }
+
+    res.json({ ok: true, minimumSeverity: updated.minimumSeverity });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
 
 // ── Create a child account linked to this parent ──────────────────────────────
 router.post("/children", async (req, res) => {

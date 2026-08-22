@@ -30,6 +30,10 @@ export async function migrate(): Promise<void> {
     ALTER TABLE vm_users
     ADD COLUMN IF NOT EXISTS recovery_code_acknowledged BOOLEAN DEFAULT false
   `);
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS content_alert_min_severity TEXT NOT NULL DEFAULT 'medium'
+  `);
 
   await query(`
     CREATE TABLE IF NOT EXISTS vm_chats (

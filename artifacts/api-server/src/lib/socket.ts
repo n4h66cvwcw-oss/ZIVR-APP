@@ -9,6 +9,7 @@ import {
   MAX_GROUP_MEMBERS,
   requestApprovalAndNotifyParents,
 } from "./approvals";
+import { shouldNotifyForSeverity } from "./content-alert-preferences";
 import Anthropic from "@anthropic-ai/sdk";
 
 let ioInstance: SocketServer | null = null;
@@ -124,15 +125,21 @@ Only flag if genuinely concerning. Normal conversation should not be flagged.`;
         [userId, messageId, chatId, senderId, text.slice(0, 500), parsed.severity, parsed.reason]
       );
 
-      // Notify parents in real time for medium/high severity flags only
-      if (parsed.severity === "medium" || parsed.severity === "high") {
+      // Store every flag, but only notify each parent when their selected
+      // minimum severity allows it. The cooldown still applies per parent/child.
+      if (parsed.severity === "low" || parsed.severity === "medium" || parsed.severity === "high") {
         const child = await queryOne<{ display_name: string }>(
           `SELECT display_name FROM vm_users WHERE id = $1`,
           [userId]
         );
 
-        const parents = await query<{ id: string; push_token: string | null }>(
+        const parents = await query<{
+          id: string;
+          push_token: string | null;
+          content_alert_min_severity: string | null;
+        }>(
           `SELECT u.id, u.push_token
+                  , u.content_alert_min_severity
              FROM vm_parent_child pc
              JOIN vm_users u ON u.id = pc.parent_id
             WHERE pc.child_id = $1`,
@@ -141,6 +148,8 @@ Only flag if genuinely concerning. Normal conversation should not be flagged.`;
 
         const childName = child?.display_name ?? "your child";
         for (const parent of parents) {
+          if (!shouldNotifyForSeverity(parsed.severity, parent.content_alert_min_severity)) continue;
+
           const parentToken = parent.push_token;
           if (!parentToken || !parentToken.startsWith("ExponentPushToken")) continue;
 

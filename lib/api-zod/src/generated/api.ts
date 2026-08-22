@@ -14,3 +14,23 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary Get the authenticated parent's content alert threshold
+ */
+export const GetParentAlertPreferencesResponse = zod.object({
+  ok: zod.boolean().optional(),
+  minimumSeverity: zod.enum(["all", "medium", "high"]),
+});
+
+/**
+ * @summary Update the authenticated parent's content alert threshold
+ */
+export const UpdateParentAlertPreferencesBody = zod.object({
+  minimumSeverity: zod.enum(["all", "medium", "high"]),
+});
+
+export const UpdateParentAlertPreferencesResponse = zod.object({
+  ok: zod.boolean().optional(),
+  minimumSeverity: zod.enum(["all", "medium", "high"]),
+});

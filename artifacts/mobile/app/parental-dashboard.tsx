@@ -17,8 +17,11 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
-import { useParental, type ChildAccount } from "@/context/ParentalContext";
-import { useServer } from "@/context/ServerContext";
+import {
+  useParental,
+  type ChildAccount,
+  type ContentAlertThreshold,
+} from "@/context/ParentalContext";
 import { Avatar } from "@/components/Avatar";
 
 const DAYS = [
@@ -71,18 +74,29 @@ export default function ParentalDashboard() {
   const isDark = useColorScheme() === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
-  const { children, loadChildren, createChildAccount, isParentMode } = useParental();
-  const { serverUserId } = useServer();
+  const {
+    children,
+    loadChildren,
+    createChildAccount,
+    loadAlertPreference,
+    updateAlertPreference,
+  } = useParental();
 
   const [showAddChild, setShowAddChild] = useState(false);
   const [newName, setNewName] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [adding, setAdding] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [alertThreshold, setAlertThreshold] = useState<ContentAlertThreshold>("medium");
+  const [loadingAlertThreshold, setLoadingAlertThreshold] = useState(true);
+  const [savingAlertThreshold, setSavingAlertThreshold] = useState(false);
 
   useEffect(() => {
     void loadChildren();
-  }, [loadChildren]);
+    void loadAlertPreference()
+      .then(setAlertThreshold)
+      .finally(() => setLoadingAlertThreshold(false));
+  }, [loadAlertPreference, loadChildren]);
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -111,6 +125,22 @@ export default function ParentalDashboard() {
     }
   };
 
+  const handleAlertThresholdChange = async (next: ContentAlertThreshold) => {
+    if (next === alertThreshold || loadingAlertThreshold || savingAlertThreshold) return;
+    const previous = alertThreshold;
+    setAlertThreshold(next);
+    setSavingAlertThreshold(true);
+    try {
+      await updateAlertPreference(next);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {
+      setAlertThreshold(previous);
+      Alert.alert("Error", "Could not save alert preferences.");
+    } finally {
+      setSavingAlertThreshold(false);
+    }
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -129,6 +159,55 @@ export default function ParentalDashboard() {
         <Ionicons name="shield-checkmark-outline" size={18} color="#6C63FF" />
         <Text style={[styles.bannerText, { color: colors.textSecondary }]}>
           Monitor activity, set screen time, and approve contacts for your kids.
+        </Text>
+      </View>
+
+      <View style={[styles.alertPreferenceCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.alertPreferenceHeading}>
+          <View style={styles.alertPreferenceIcon}>
+            <Ionicons name="notifications-outline" size={18} color="#6C63FF" />
+          </View>
+          <View style={styles.alertPreferenceCopy}>
+            <Text style={[styles.alertPreferenceTitle, { color: colors.text }]}>
+              Safety alert notifications
+            </Text>
+            <Text style={[styles.alertPreferenceDescription, { color: colors.textSecondary }]}>
+              Choose which flagged messages send a push notification to you.
+            </Text>
+          </View>
+        </View>
+        <View style={styles.alertThresholdOptions}>
+          {([
+            { value: "all", label: "All", description: "Low, medium & high" },
+            { value: "medium", label: "Medium+", description: "Medium & high" },
+            { value: "high", label: "High only", description: "High severity" },
+          ] as const).map((option) => {
+            const selected = alertThreshold === option.value;
+            return (
+              <Pressable
+                key={option.value}
+                testID={`alert-threshold-${option.value}`}
+                style={[
+                  styles.alertThresholdOption,
+                  { borderColor: selected ? "#6C63FF" : colors.border },
+                  selected && styles.alertThresholdOptionSelected,
+                  (loadingAlertThreshold || savingAlertThreshold) && styles.alertThresholdOptionDisabled,
+                ]}
+                onPress={() => void handleAlertThresholdChange(option.value)}
+                disabled={loadingAlertThreshold || savingAlertThreshold}
+              >
+                <Text style={[styles.alertThresholdLabel, { color: selected ? "#6C63FF" : colors.text }]}>
+                  {option.label}
+                </Text>
+                <Text style={[styles.alertThresholdDescription, { color: colors.textSecondary }]}>
+                  {option.description}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={[styles.alertPreferenceFootnote, { color: colors.textSecondary }]}>
+          Medium+ is the default. You can change this anytime.
         </Text>
       </View>
 
@@ -229,6 +308,41 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   bannerText: { fontSize: 13, flex: 1, lineHeight: 18 },
+  alertPreferenceCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 12,
+  },
+  alertPreferenceHeading: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  alertPreferenceIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#6C63FF18",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  alertPreferenceCopy: { flex: 1, gap: 3 },
+  alertPreferenceTitle: { fontSize: 15, fontWeight: "700" },
+  alertPreferenceDescription: { fontSize: 13, lineHeight: 18 },
+  alertThresholdOptions: { flexDirection: "row", gap: 8 },
+  alertThresholdOption: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 5,
+    alignItems: "center",
+    gap: 3,
+  },
+  alertThresholdOptionSelected: { backgroundColor: "#6C63FF12" },
+  alertThresholdOptionDisabled: { opacity: 0.55 },
+  alertThresholdLabel: { fontSize: 13, fontWeight: "700", textAlign: "center" },
+  alertThresholdDescription: { fontSize: 10, textAlign: "center" },
+  alertPreferenceFootnote: { fontSize: 11, lineHeight: 15 },
   childCard: {
     flexDirection: "row",
     alignItems: "center",

@@ -5,9 +5,6 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface HealthStatus {
-  status: string;
-}
 
 export type AlertThreshold =
   (typeof AlertThreshold)[keyof typeof AlertThreshold];
@@ -17,12 +14,3 @@ export const AlertThreshold = {
   medium: "medium",
   high: "high",
 } as const;
-
-export interface AlertPreference {
-  ok?: boolean;
-  minimumSeverity: AlertThreshold;
-}
-
-export interface AlertPreferenceUpdate {
-  minimumSeverity: AlertThreshold;
-}

@@ -6,4 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./alertPreference";
+export * from "./alertPreferenceUpdate";
+export * from "./alertThreshold";
 export * from "./healthStatus";
