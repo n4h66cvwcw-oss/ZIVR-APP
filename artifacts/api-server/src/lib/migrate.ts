@@ -109,6 +109,14 @@ export async function migrate(): Promise<void> {
       PRIMARY KEY (parent_id, child_id)
     )
   `);
+  await query(`
+    ALTER TABLE vm_parent_child
+    ADD COLUMN IF NOT EXISTS content_alert_last_sent_at BIGINT
+  `);
+  await query(`
+    ALTER TABLE vm_parent_child
+    ADD COLUMN IF NOT EXISTS content_alert_suppressed_count INT NOT NULL DEFAULT 0
+  `);
 
   // Time-of-day restrictions per child
   await query(`

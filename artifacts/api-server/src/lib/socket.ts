@@ -23,6 +23,59 @@ const anthropic = new Anthropic({
   baseURL: process.env["AI_INTEGRATIONS_ANTHROPIC_BASE_URL"],
 });
 
+const CONTENT_ALERT_COOLDOWN_MS = 5 * 60 * 1000;
+
+type ContentAlertDecision = {
+  shouldNotify: boolean;
+  missedCount: number;
+};
+
+/**
+ * Atomically claim the next content alert for one parent/child pair.
+ *
+ * The row lock makes concurrent moderation checks safe: exactly one flag can
+ * open a new cooldown window, while all others increment the suppressed count.
+ */
+async function claimContentAlert(
+  parentId: string,
+  childId: string,
+  now: number,
+): Promise<ContentAlertDecision> {
+  const decision = await queryOne<ContentAlertDecision>(
+    `WITH current AS (
+       SELECT content_alert_last_sent_at, content_alert_suppressed_count
+         FROM vm_parent_child
+        WHERE parent_id = $1 AND child_id = $2
+        FOR UPDATE
+     ),
+     decision AS (
+       SELECT content_alert_last_sent_at,
+              content_alert_suppressed_count,
+              (
+                content_alert_last_sent_at IS NULL
+                OR content_alert_last_sent_at <= CAST($3 AS BIGINT) - CAST($4 AS BIGINT)
+              ) AS should_notify
+         FROM current
+     )
+     UPDATE vm_parent_child pc
+        SET content_alert_last_sent_at = CASE
+              WHEN decision.should_notify THEN CAST($3 AS BIGINT)
+              ELSE decision.content_alert_last_sent_at
+            END,
+            content_alert_suppressed_count = CASE
+              WHEN decision.should_notify THEN 0
+              ELSE COALESCE(decision.content_alert_suppressed_count, 0) + 1
+            END
+       FROM decision
+      WHERE pc.parent_id = $1 AND pc.child_id = $2
+      RETURNING decision.should_notify AS "shouldNotify",
+                COALESCE(decision.content_alert_suppressed_count, 0)::int AS "missedCount"`,
+    [parentId, childId, now, CONTENT_ALERT_COOLDOWN_MS],
+  );
+
+  return decision ?? { shouldNotify: false, missedCount: 0 };
+}
+
 // Fire-and-forget: check message for inappropriate content if sender or any
 // recipient is a child account. Stores flags in vm_content_flags.
 async function checkContentForChild(
@@ -78,24 +131,29 @@ Only flag if genuinely concerning. Normal conversation should not be flagged.`;
           [userId]
         );
 
-        const parents = await query<{ push_token: string | null }>(
-          `SELECT u.push_token
+        const parents = await query<{ id: string; push_token: string | null }>(
+          `SELECT u.id, u.push_token
              FROM vm_parent_child pc
              JOIN vm_users u ON u.id = pc.parent_id
             WHERE pc.child_id = $1`,
           [userId]
         );
 
-        const parentTokens = parents
-          .map((p) => p.push_token)
-          .filter((t): t is string => !!t && t.startsWith("ExponentPushToken"));
+        const childName = child?.display_name ?? "your child";
+        for (const parent of parents) {
+          const parentToken = parent.push_token;
+          if (!parentToken || !parentToken.startsWith("ExponentPushToken")) continue;
 
-        if (parentTokens.length > 0) {
-          const childName = child?.display_name ?? "your child";
+          const decision = await claimContentAlert(parent.id, userId, Date.now());
+          if (!decision.shouldNotify) continue;
+
+          const missedSuffix = decision.missedCount > 0
+            ? ` and ${decision.missedCount} more`
+            : "";
           await sendExpoPush(
-            parentTokens,
+            [parentToken],
             "⚠️ ZIVR Safety Alert",
-            `ZIVR flagged a message in ${childName}'s chat`,
+            `ZIVR flagged a message in ${childName}'s chat${missedSuffix}`,
             "default"
           );
         }
