@@ -79,6 +79,15 @@ export async function migrate(): Promise<void> {
     )
   `);
 
+  // Durable per-account quota for optional AI chat-export appendices.
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_ai_export_rate_limits (
+      user_id           UUID PRIMARY KEY REFERENCES vm_users(id) ON DELETE CASCADE,
+      window_started_at BIGINT NOT NULL,
+      request_count     INT NOT NULL DEFAULT 0
+    )
+  `);
+
   // Auth token bootstrap flag: tokens are issued once per user (at registration
   // or via a one-time claim for accounts created before tokens existed).
   await query(`

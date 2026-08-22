@@ -167,6 +167,15 @@ interface ServerContextValue {
     recipientLanguage?: string;
   }) => Promise<string>;
   exportServerChatAsText: (chatId: string) => Promise<string | null>;
+  exportServerChat: (chatId: string) => Promise<{
+    chatName: string | null;
+    messages: Array<{ id: string; senderId: string; senderName: string; text: string; type: string; createdAt: number }>;
+  } | null>;
+  summarizeChatForExport: (opts: {
+    chatName?: string;
+    format: "summary" | "bullets";
+    messages: Array<{ senderName?: string; text: string; timestamp?: number }>;
+  }) => Promise<{ appendix: string; sourceTruncated: boolean } | null>;
   backupLocalChat: (opts: { localChatId: string; chatName: string; encryptedData: string; messageCount: number }) => Promise<boolean>;
   listBackups: () => Promise<ChatBackupMeta[]>;
   restoreBackup: (localChatId: string) => Promise<string | null>;
@@ -789,6 +798,41 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const exportServerChat = useCallback(async (chatId: string) => {
+    try {
+      const res = await fetch(`${getApiBase()}/chats/${encodeURIComponent(chatId)}/export`, {
+        headers: await getAuthHeaders(),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as {
+        chatName?: string | null;
+        messages?: Array<{ id: string; senderId: string; senderName: string; text: string; type: string; createdAt: number }>;
+      };
+      return { chatName: data.chatName ?? null, messages: data.messages ?? [] };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const summarizeChatForExport = useCallback(async (opts: {
+    chatName?: string;
+    format: "summary" | "bullets";
+    messages: Array<{ senderName?: string; text: string; timestamp?: number }>;
+  }) => {
+    try {
+      const res = await fetch(`${getApiBase()}/chat-export-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+        body: JSON.stringify(opts),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as { appendix?: string; sourceTruncated?: boolean };
+      return data.appendix ? { appendix: data.appendix, sourceTruncated: !!data.sourceTruncated } : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const backupLocalChat = useCallback(async (opts: {
     localChatId: string;
     chatName: string;
@@ -913,6 +957,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         translateMessage,
         getSuggestedReply,
         exportServerChatAsText,
+        exportServerChat,
+        summarizeChatForExport,
         backupLocalChat,
         listBackups,
         restoreBackup,

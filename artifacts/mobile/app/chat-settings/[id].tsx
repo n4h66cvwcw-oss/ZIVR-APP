@@ -21,7 +21,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
-import { useMessaging } from "@/context/MessagingContext";
+import { useMessaging, type PdfExportAppendix, type PdfExportMessage, type PdfExportStyle } from "@/context/MessagingContext";
 import { useProfile } from "@/context/ProfileContext";
 import { useServer } from "@/context/ServerContext";
 import { PasscodeModal } from "@/components/PasscodeModal";
@@ -30,7 +30,7 @@ import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
 import { LANGUAGES, getLanguageByCode } from "@/utils/languages";
 
 export default function ChatSettingsScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, selectedIds } = useLocalSearchParams<{ id: string; selectedIds?: string }>();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
@@ -44,6 +44,7 @@ export default function ChatSettingsScreen() {
     disableChatEncryption,
     generateChatPdfHtml,
     getChatMessages,
+    getDecryptedMessages,
     replaceChatMessages,
     deleteChat,
     pinChat,
@@ -58,6 +59,8 @@ export default function ChatSettingsScreen() {
   const {
     serverUserId,
     exportServerChatAsText,
+    exportServerChat,
+    summarizeChatForExport,
     backupLocalChat,
     listBackups,
     restoreBackup,
@@ -82,6 +85,14 @@ export default function ChatSettingsScreen() {
   const [lastBackedUpAt, setLastBackedUpAt] = useState<number | null>(null);
   const [showSoundPicker, setShowSoundPicker] = useState(false);
   const [showTranslatePicker, setShowTranslatePicker] = useState(false);
+  const [showPdfExportOptions, setShowPdfExportOptions] = useState(false);
+  const [pdfScope, setPdfScope] = useState<"whole" | "selected">("whole");
+  const [pdfStyle, setPdfStyle] = useState<PdfExportStyle>("personal");
+  const [pdfAppendix, setPdfAppendix] = useState<"none" | "summary" | "bullets">("none");
+  const [aiExportConsent, setAiExportConsent] = useState(false);
+  const selectedMessageIds = typeof selectedIds === "string"
+    ? selectedIds.split(",").filter(Boolean)
+    : [];
 
   const recipientLang = chat?.recipientLanguage
     ? getLanguageByCode(chat.recipientLanguage)
@@ -282,16 +293,96 @@ export default function ChatSettingsScreen() {
     setPasscodeStep("enter");
   };
 
+  const openPdfExportOptions = () => {
+    setPdfScope(selectedMessageIds.length > 0 ? "selected" : "whole");
+    setPdfStyle("personal");
+    setPdfAppendix("none");
+    setAiExportConsent(false);
+    setShowPdfExportOptions(true);
+  };
+
   const handleExportPDF = async () => {
+    if (pdfScope === "selected" && selectedMessageIds.length === 0) {
+      Alert.alert("No messages selected", "Return to the chat and select at least one message to export.");
+      return;
+    }
+    if (pdfAppendix !== "none" && !aiExportConsent) {
+      Alert.alert("Confirm AI appendix", "Please confirm that the selected export text may be sent to ZIVR's AI service.");
+      return;
+    }
+
     setExporting(true);
     try {
-      const html = generateChatPdfHtml(id);
+      let exportMessages: PdfExportMessage[] | undefined;
+      let sourceLabel = "Messages available on this device";
+
+      if (pdfScope === "whole" && chat.isServerChat) {
+        const serverExport = await exportServerChat(id);
+        if (!serverExport) {
+          Alert.alert(
+            "Full history unavailable",
+            "ZIVR could not retrieve the complete thread. Reconnect and try again rather than exporting a partial record."
+          );
+          return;
+        }
+        exportMessages = serverExport.messages.map((message) => ({
+          id: message.id,
+          senderId: message.senderId,
+          senderName: message.senderName,
+          text: message.type === "text" ? message.text : `[${message.type} attachment]`,
+          timestamp: message.createdAt,
+        }));
+        sourceLabel = "Complete history available from ZIVR";
+      }
+
+      if (pdfScope === "selected") {
+        exportMessages = getDecryptedMessages(id).filter((message) => selectedMessageIds.includes(message.id));
+        if (exportMessages.length === 0) {
+          Alert.alert("Selected messages unavailable", "The selected messages are no longer available. Return to the chat and select them again.");
+          return;
+        }
+        sourceLabel = "Selected messages available on this device";
+      }
+
+      const messagesForAppendix: PdfExportMessage[] = exportMessages ?? getDecryptedMessages(id);
+      let appendix: PdfExportAppendix | undefined;
+      let appendixUnavailable = false;
+      if (pdfAppendix !== "none") {
+        const aiResult = await summarizeChatForExport({
+          chatName: chat.name,
+          format: pdfAppendix,
+          messages: messagesForAppendix
+            .filter((message) => !!message.text?.trim())
+            .map((message) => ({
+              senderName: message.senderName || (message.senderId === "me" ? profile.displayName : message.senderId),
+              text: message.text,
+              timestamp: message.timestamp,
+            })),
+        });
+        if (aiResult) {
+          appendix = { format: pdfAppendix, content: aiResult.appendix, sourceTruncated: aiResult.sourceTruncated };
+        } else {
+          appendixUnavailable = true;
+        }
+      }
+
+      const html = generateChatPdfHtml(id, {
+        style: pdfStyle,
+        messages: exportMessages,
+        appendix,
+        scopeLabel: pdfScope === "selected" ? `${selectedMessageIds.length} selected message${selectedMessageIds.length === 1 ? "" : "s"}` : "Whole thread",
+        sourceLabel,
+      });
       const { uri } = await Print.printToFileAsync({ html });
       await Sharing.shareAsync(uri, {
         mimeType: "application/pdf",
-        dialogTitle: `${chat.name} — Message Thread`,
+        dialogTitle: `${chat.name} — ${pdfStyle === "legal" ? "Message Record" : pdfStyle === "business" ? "Conversation Brief" : "Message Thread"}`,
         UTI: "com.adobe.pdf",
       });
+      setShowPdfExportOptions(false);
+      if (appendixUnavailable) {
+        Alert.alert("PDF exported", "The PDF was created without the optional AI appendix because it could not be generated.");
+      }
     } catch (e) {
       Alert.alert("Export failed", "Could not generate PDF. Please try again.");
     } finally {
@@ -428,9 +519,9 @@ export default function ChatSettingsScreen() {
         <SettingRow
           icon="document-outline"
           label={exporting ? "Generating PDF..." : "Export to PDF"}
-          subtitle="Save this thread as a formatted PDF"
+          subtitle={selectedMessageIds.length > 0 ? `${selectedMessageIds.length} selected message${selectedMessageIds.length === 1 ? "" : "s"} ready to export` : "Choose scope, style, and optional AI appendix"}
           colors={colors}
-          onPress={handleExportPDF}
+          onPress={openPdfExportOptions}
           disabled={exporting}
         />
 
@@ -721,7 +812,138 @@ export default function ChatSettingsScreen() {
           </ScrollView>
         </View>
       </Modal>
+
+      <Modal
+        visible={showPdfExportOptions}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowPdfExportOptions(false)}
+      >
+        <View style={[styles.pdfModal, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+            <Pressable onPress={() => setShowPdfExportOptions(false)}>
+              <Text style={[styles.cancelText, { color: colors.primary }]}>Cancel</Text>
+            </Pressable>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Export PDF</Text>
+            <View style={{ width: 52 }} />
+          </View>
+          <ScrollView contentContainerStyle={styles.pdfModalContent}>
+            <Text style={[styles.pdfIntro, { color: colors.textSecondary }]}>
+              Choose what to include and how the PDF should be formatted. Exported content is shared using your device's normal PDF share sheet.
+            </Text>
+
+            <Text style={[styles.pdfSectionTitle, { color: colors.textTertiary }]}>MESSAGES</Text>
+            <View style={[styles.pdfCard, { backgroundColor: colors.surface }]}>
+              <PdfOption
+                label="Whole thread"
+                subtitle={chat.isServerChat ? "Uses the complete history available from ZIVR when connected" : "Messages available on this device"}
+                selected={pdfScope === "whole"}
+                colors={colors}
+                onPress={() => setPdfScope("whole")}
+              />
+              <PdfOption
+                label="Selected messages"
+                subtitle={selectedMessageIds.length ? `${selectedMessageIds.length} message${selectedMessageIds.length === 1 ? "" : "s"} selected in this chat` : "Select messages from the chat screen first"}
+                selected={pdfScope === "selected"}
+                disabled={!selectedMessageIds.length}
+                colors={colors}
+                onPress={() => setPdfScope("selected")}
+              />
+            </View>
+
+            <Text style={[styles.pdfSectionTitle, { color: colors.textTertiary }]}>FORMAT</Text>
+            <View style={[styles.pdfCard, { backgroundColor: colors.surface }]}>
+              <PdfOption
+                label="Legal"
+                subtitle="Plain record layout with message IDs and export details"
+                selected={pdfStyle === "legal"}
+                colors={colors}
+                onPress={() => setPdfStyle("legal")}
+              />
+              <PdfOption
+                label="Business"
+                subtitle="Clean, structured format for working reference"
+                selected={pdfStyle === "business"}
+                colors={colors}
+                onPress={() => setPdfStyle("business")}
+              />
+              <PdfOption
+                label="Personal"
+                subtitle="Friendly, easy-to-read conversation format"
+                selected={pdfStyle === "personal"}
+                colors={colors}
+                onPress={() => setPdfStyle("personal")}
+              />
+            </View>
+
+            <Text style={[styles.pdfSectionTitle, { color: colors.textTertiary }]}>OPTIONAL AI APPENDIX</Text>
+            <View style={[styles.pdfCard, { backgroundColor: colors.surface }]}>
+              <PdfOption label="None" subtitle="Export messages only" selected={pdfAppendix === "none"} colors={colors} onPress={() => setPdfAppendix("none")} />
+              <PdfOption label="Summary" subtitle="Add a concise AI-generated overview" selected={pdfAppendix === "summary"} colors={colors} onPress={() => setPdfAppendix("summary")} />
+              <PdfOption label="Key points" subtitle="Add AI-generated bullet points" selected={pdfAppendix === "bullets"} colors={colors} onPress={() => setPdfAppendix("bullets")} />
+            </View>
+
+            {pdfAppendix !== "none" && (
+              <Pressable
+                style={[styles.aiConsent, { backgroundColor: colors.primary + "10", borderColor: colors.primary + "35" }]}
+                onPress={() => setAiExportConsent((value) => !value)}
+              >
+                <Ionicons
+                  name={aiExportConsent ? "checkbox" : "square-outline"}
+                  size={22}
+                  color={colors.primary}
+                />
+                <Text style={[styles.aiConsentText, { color: colors.textSecondary }]}>
+                  I understand that the export's text will be sent to ZIVR's AI service to generate this optional appendix.
+                </Text>
+              </Pressable>
+            )}
+
+            <Pressable
+              style={[styles.pdfExportButton, { backgroundColor: colors.primary, opacity: exporting ? 0.6 : 1 }]}
+              disabled={exporting}
+              onPress={handleExportPDF}
+            >
+              <Ionicons name="share-outline" size={19} color="#fff" />
+              <Text style={styles.pdfExportButtonText}>{exporting ? "Generating PDF…" : "Generate PDF"}</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
+  );
+}
+
+function PdfOption({
+  label,
+  subtitle,
+  selected,
+  disabled,
+  colors,
+  onPress,
+}: {
+  label: string;
+  subtitle: string;
+  selected: boolean;
+  disabled?: boolean;
+  colors: any;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.pdfOption,
+        { borderBottomColor: colors.border, opacity: disabled ? 0.45 : pressed ? 0.7 : 1 },
+      ]}
+    >
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.pdfOptionLabel, { color: selected ? colors.primary : colors.text }]}>{label}</Text>
+        <Text style={[styles.pdfOptionSubtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
+      </View>
+      <Ionicons name={selected ? "radio-button-on" : "radio-button-off"} size={21} color={selected ? colors.primary : colors.textTertiary} />
+    </Pressable>
   );
 }
 
@@ -886,6 +1108,57 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingHorizontal: 20,
   },
+  pdfModal: { flex: 1 },
+  pdfModalContent: { padding: 20, paddingBottom: 42 },
+  pdfIntro: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 19,
+    marginBottom: 18,
+  },
+  pdfSectionTitle: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    letterSpacing: 0.6,
+    marginTop: 18,
+    marginBottom: 7,
+    paddingHorizontal: 4,
+  },
+  pdfCard: {
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  pdfOption: {
+    minHeight: 64,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  pdfOptionLabel: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  pdfOptionSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 3, lineHeight: 16 },
+  aiConsent: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginTop: 12,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  aiConsentText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  pdfExportButton: {
+    marginTop: 24,
+    minHeight: 50,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  pdfExportButtonText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
   soundPickerOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",

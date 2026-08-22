@@ -187,6 +187,23 @@ export type SearchFilter = {
   senderId?: string;
 };
 
+export type PdfExportStyle = "legal" | "business" | "personal";
+export type PdfExportAppendix = {
+  format: "summary" | "bullets";
+  content: string;
+  sourceTruncated?: boolean;
+};
+export type PdfExportMessage = Pick<Message, "id" | "senderId" | "timestamp" | "text" | "audioAttachment" | "imageAttachment" | "deleted"> & {
+  senderName?: string;
+};
+export type PdfExportOptions = {
+  style?: PdfExportStyle;
+  messages?: PdfExportMessage[];
+  appendix?: PdfExportAppendix;
+  scopeLabel?: string;
+  sourceLabel?: string;
+};
+
 const STORAGE_KEYS = {
   CHATS: "@zivr_chats",
   MESSAGES: "@zivr_messages",
@@ -376,7 +393,7 @@ interface MessagingContextValue {
   disableChatEncryption: (chatId: string) => Promise<void>;
   getDecryptedMessages: (chatId: string) => Message[];
   searchMessages: (filter: SearchFilter) => Array<Message & { chatName: string }>;
-  generateChatPdfHtml: (chatId: string) => string;
+  generateChatPdfHtml: (chatId: string, options?: PdfExportOptions) => string;
 }
 
 const MessagingContext = createContext<MessagingContextValue | null>(null);
@@ -1013,15 +1030,25 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   );
 
   const generateChatPdfHtml = useCallback(
-    (chatId: string): string => {
+    (chatId: string, options: PdfExportOptions = {}): string => {
       const chat = chats.find((c) => c.id === chatId);
       if (!chat) return "<p>Chat not found</p>";
-      const msgs = getDecryptedMessages(chatId);
+      const style = options.style ?? "personal";
+      const msgs: PdfExportMessage[] = (options.messages ?? getDecryptedMessages(chatId))
+        .filter((message) => !message.deleted)
+        .sort((a, b) => a.timestamp - b.timestamp);
+      const escapeHtml = (value: unknown) => String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+      const escapedChatName = escapeHtml(chat.name);
 
       const rows = msgs
         .map((m) => {
           const sender = contacts.find((c) => c.id === m.senderId);
-          const name = sender?.name || m.senderId;
+          const name = m.senderName || sender?.name || m.senderId;
           const date = new Date(m.timestamp);
           const dateStr = date.toLocaleDateString("en-US", {
             year: "numeric",
@@ -1035,38 +1062,94 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           });
           const isMe = m.senderId === myId;
           const audioNote = m.audioAttachment
-            ? `<div style="color:#FF9F0A;font-size:12px;margin-top:4px;">🎵 ${m.audioAttachment.name}</div>`
+            ? `<div class="attachment">Audio attachment: ${escapeHtml(m.audioAttachment.name)}</div>`
+            : m.imageAttachment
+            ? `<div class="attachment">Image attachment</div>`
             : "";
           return `
-          <tr style="background:${isMe ? "#EEF4FF" : "#FFFFFF"};">
-            <td style="padding:10px 14px;font-size:12px;color:#666;white-space:nowrap;border-bottom:1px solid #E5E5EA;">${dateStr}</td>
-            <td style="padding:10px 14px;font-size:12px;color:#666;white-space:nowrap;border-bottom:1px solid #E5E5EA;">${timeStr}</td>
-            <td style="padding:10px 14px;font-size:13px;font-weight:600;color:${isMe ? "#0A84FF" : "#333"};border-bottom:1px solid #E5E5EA;">${name}</td>
-            <td style="padding:10px 14px;font-size:14px;color:#111;border-bottom:1px solid #E5E5EA;">${m.text || ""}${audioNote}</td>
+          <tr class="${isMe ? "mine" : ""}">
+            <td>${escapeHtml(dateStr)}</td>
+            <td>${escapeHtml(timeStr)}</td>
+            <td>${escapeHtml(name)}</td>
+            <td>${escapeHtml(m.text || "")}${audioNote}<div class="message-id">ID: ${escapeHtml(m.id)}</div></td>
           </tr>`;
         })
         .join("");
+
+      const styleCopy = {
+        legal: {
+          title: "Message Record",
+          subtitle: "A formatted export for review. This document does not certify authenticity, completeness, or legal admissibility.",
+          className: "legal",
+        },
+        business: {
+          title: "Conversation Brief",
+          subtitle: "A clear, chronological conversation export for working reference.",
+          className: "business",
+        },
+        personal: {
+          title: "Message Thread",
+          subtitle: "A personal copy of this conversation.",
+          className: "personal",
+        },
+      }[style];
+      const appendix = options.appendix
+        ? `<section class="appendix">
+            <h2>${options.appendix.format === "summary" ? "AI Summary" : "AI Key Points"}</h2>
+            <p class="appendix-note">Generated only at your request. Review this AI-generated text alongside the messages; it may be incomplete or inaccurate.</p>
+            <div class="appendix-content">${escapeHtml(options.appendix.content).replace(/\n/g, "<br>")}</div>
+            ${options.appendix.sourceTruncated ? '<p class="appendix-note">The AI appendix used the most recent portion of the selected export because of length limits.</p>' : ""}
+          </section>`
+        : "";
 
       return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>${chat.name} — Message Thread</title>
+<title>${escapedChatName} — ${styleCopy.title}</title>
 <style>
-  body { font-family: -apple-system, Arial, sans-serif; margin: 0; padding: 24px; background: #F2F2F7; }
-  .header { background: linear-gradient(135deg, #0A84FF, #5E5CE6); color: white; padding: 24px; border-radius: 12px; margin-bottom: 24px; }
-  .header h1 { margin: 0 0 4px; font-size: 22px; }
-  .header p { margin: 0; opacity: 0.85; font-size: 13px; }
-  table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-  th { background: #F2F2F7; padding: 10px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; text-align: left; border-bottom: 2px solid #E5E5EA; }
-  .footer { text-align: center; margin-top: 24px; font-size: 11px; color: #999; }
-  .lock { display: inline-block; margin-left: 8px; }
+  body { font-family: -apple-system, BlinkMacSystemFont, Arial, sans-serif; margin: 0; padding: 26px; color: #172033; background: #f5f7fb; }
+  .header { padding: 24px; margin-bottom: 20px; border-radius: 14px; }
+  .header h1 { margin: 0 0 6px; font-size: 23px; }
+  .header p { margin: 0; font-size: 13px; line-height: 1.5; }
+  .metadata { margin-top: 14px; font-size: 11px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; overflow: hidden; }
+  th { padding: 10px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: .7px; text-align: left; }
+  td { padding: 10px 12px; font-size: 13px; line-height: 1.42; vertical-align: top; border-bottom: 1px solid #e7ebf1; }
+  .attachment, .message-id { font-size: 11px; margin-top: 4px; color: #697386; }
+  .message-id { opacity: .75; }
+  .appendix { margin-top: 22px; padding: 20px; background: #fff; border-radius: 12px; }
+  .appendix h2 { margin: 0 0 8px; font-size: 17px; }
+  .appendix-note { margin: 0 0 12px; font-size: 11px; line-height: 1.45; color: #697386; }
+  .appendix-content { font-size: 13px; line-height: 1.6; white-space: normal; }
+  .footer { text-align: center; margin-top: 22px; font-size: 10px; color: #7b8492; }
+  body.legal { font-family: Georgia, "Times New Roman", serif; background: #fff; color: #111; }
+  .legal .header { border: 1px solid #222; border-radius: 0; background: #fff; }
+  .legal .header p { color: #333; }
+  .legal table { border: 1px solid #222; }
+  .legal th { background: #ececec; border-bottom: 1px solid #222; }
+  .legal td { border-right: 1px solid #d0d0d0; border-bottom: 1px solid #d0d0d0; }
+  .legal .appendix { border: 1px solid #222; border-radius: 0; }
+  .business .header { background: #12305d; color: #fff; }
+  .business th { background: #e8eff8; color: #17365f; }
+  .business tr.mine { background: #f5f9ff; }
+  .business .appendix { border-left: 4px solid #1b75bb; }
+  .personal .header { background: linear-gradient(135deg, #0a84ff, #7357d9); color: #fff; }
+  .personal th { background: #f0f1f8; color: #5f6373; }
+  .personal tr.mine { background: #f4f8ff; }
+  .personal .appendix { border-left: 4px solid #7357d9; }
 </style>
 </head>
-<body>
+<body class="${styleCopy.className}">
   <div class="header">
-    <h1>${chat.name} ${chat.isEncrypted ? '<span class="lock">🔐</span>' : ""}</h1>
-    <p>Exported on ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })} &bull; ${msgs.length} messages &bull; ${chat.participantIds.length} participants</p>
+    <h1>${escapedChatName} — ${styleCopy.title}</h1>
+    <p>${styleCopy.subtitle}</p>
+    <div class="metadata">
+      <span><strong>Exported:</strong> ${escapeHtml(new Date().toLocaleString("en-US"))}</span>
+      <span><strong>Messages:</strong> ${msgs.length}</span>
+      <span><strong>Scope:</strong> ${escapeHtml(options.scopeLabel ?? "Whole thread")}</span>
+      <span><strong>Source:</strong> ${escapeHtml(options.sourceLabel ?? "Messages available on this device")}</span>
+    </div>
   </div>
   <table>
     <thead>
@@ -1077,9 +1160,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         <th>Message</th>
       </tr>
     </thead>
-    <tbody>${rows || '<tr><td colspan="4" style="text-align:center;padding:32px;color:#999;">No messages</td></tr>'}</tbody>
+    <tbody>${rows || '<tr><td colspan="4" style="text-align:center;padding:32px;color:#999;">No messages selected for export</td></tr>'}</tbody>
   </table>
-  <div class="footer">Generated by ZIVR &bull; ${chat.isEncrypted ? "🔐 E2E Encrypted Thread" : "Standard Thread"}</div>
+  ${appendix}
+  <div class="footer">Generated by ZIVR. Handle exported conversation content with care.</div>
 </body>
 </html>`;
     },

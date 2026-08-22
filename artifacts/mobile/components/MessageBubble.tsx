@@ -31,6 +31,8 @@ interface MessageBubbleProps {
   showSender?: boolean;
   senderName?: string;
   onLongPress?: () => void;
+  selectionMode?: boolean;
+  isSelected?: boolean;
   onReact?: (emoji: string) => void;
   onEdit?: (newText: string) => void;
   onDelete?: () => void;
@@ -780,6 +782,8 @@ export function MessageBubble({
   showSender,
   senderName,
   onLongPress,
+  selectionMode = false,
+  isSelected = false,
   onReact,
   onEdit,
   onDelete,
@@ -963,6 +967,10 @@ export function MessageBubble({
   }, []);
 
   const handlePress = useCallback(() => {
+    if (selectionMode) {
+      onLongPress?.();
+      return;
+    }
     if (message.formatting?.backgroundGifUrl) {
       openGifLightbox();
       return;
@@ -970,9 +978,13 @@ export function MessageBubble({
     if (!hasCallHandlers) return;
     setShowCallBar((v) => !v);
     if (showReactions) setShowReactions(false);
-  }, [message.formatting?.backgroundGifUrl, hasCallHandlers, showReactions, openGifLightbox]);
+  }, [selectionMode, onLongPress, message.formatting?.backgroundGifUrl, hasCallHandlers, showReactions, openGifLightbox]);
 
   const handleLongPress = useCallback(() => {
+    if (selectionMode) {
+      onLongPress?.();
+      return;
+    }
     setShowReactions(true);
     setShowCallBar(false);
     Animated.spring(scaleAnim, {
@@ -982,7 +994,7 @@ export function MessageBubble({
       friction: 8,
     }).start();
     onLongPress?.();
-  }, [onLongPress, scaleAnim]);
+  }, [selectionMode, onLongPress, scaleAnim]);
 
   const handleReact = useCallback(
     (emoji: string) => {
@@ -1030,6 +1042,7 @@ export function MessageBubble({
       style={[
         styles.container,
         isMine ? styles.myContainer : styles.theirContainer,
+        isSelected && { borderWidth: 2, borderColor: colors.primary, borderRadius: 18, backgroundColor: colors.primary + "12" },
         { opacity: bubbleOpacity, transform: [{ scale: bubbleScale }] },
       ]}
     >

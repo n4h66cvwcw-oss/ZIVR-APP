@@ -74,6 +74,8 @@ export default function ChatScreen() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [aiTextToInject, setAiTextToInject] = useState<string | undefined>(undefined);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
   const suggestionSlide = useRef(new Animated.Value(60)).current;
 
   const chat = chats.find((c) => c.id === id);
@@ -233,6 +235,32 @@ export default function ChatScreen() {
     [id, addReaction]
   );
 
+  const toggleMessageSelection = useCallback((messageId: string) => {
+    setSelectedMessageIds((current) => {
+      if (current.includes(messageId)) return current.filter((id) => id !== messageId);
+      if (current.length >= 150) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        return current;
+      }
+      Haptics.selectionAsync();
+      return [...current, messageId];
+    });
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedMessageIds([]);
+  }, []);
+
+  const openSelectedMessageExport = useCallback(() => {
+    if (selectedMessageIds.length === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push({
+      pathname: "/chat-settings/[id]",
+      params: { id, selectedIds: selectedMessageIds.join(",") },
+    });
+  }, [id, selectedMessageIds]);
+
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
   const isBetaChat = id === BETA_CHAT_ID;
 
@@ -275,6 +303,9 @@ export default function ChatScreen() {
         onVoiceCall={!isMine ? () => handleCallFromMessage(item.senderId, "voice") : undefined}
         onVideoCall={!isMine ? () => handleCallFromMessage(item.senderId, "video") : undefined}
         onImageViewed={handleImageViewed}
+        selectionMode={selectionMode}
+        isSelected={selectedMessageIds.includes(item.id)}
+        onLongPress={selectionMode ? () => toggleMessageSelection(item.id) : undefined}
       />
     );
   };
@@ -369,12 +400,43 @@ export default function ChatScreen() {
           <Pressable
             hitSlop={10}
             style={styles.headerActionBtn}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setSelectionMode(true);
+              setSelectedMessageIds([]);
+            }}
+          >
+            <Feather name="check-square" size={19} color={colors.primary} />
+          </Pressable>
+          <Pressable
+            hitSlop={10}
+            style={styles.headerActionBtn}
             onPress={() => router.push(`/chat-settings/${id}`)}
           >
             <Feather name="more-horizontal" size={20} color={colors.primary} />
           </Pressable>
         </View>
       </View>
+
+      {selectionMode && (
+        <View style={[styles.selectionToolbar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+          <Pressable hitSlop={8} onPress={exitSelectionMode} style={styles.selectionToolbarBtn}>
+            <Text style={[styles.selectionToolbarText, { color: colors.primary }]}>Cancel</Text>
+          </Pressable>
+          <Text style={[styles.selectionCount, { color: colors.text }]}>
+            {selectedMessageIds.length === 0 ? "Tap messages to select" : `${selectedMessageIds.length} selected`}
+          </Text>
+          <Pressable
+            hitSlop={8}
+            disabled={selectedMessageIds.length === 0}
+            onPress={openSelectedMessageExport}
+            style={[styles.selectionToolbarBtn, { opacity: selectedMessageIds.length === 0 ? 0.4 : 1 }]}
+          >
+            <Feather name="download" size={17} color={colors.primary} />
+            <Text style={[styles.selectionToolbarText, { color: colors.primary }]}>Export</Text>
+          </Pressable>
+        </View>
+      )}
 
       {isBetaChat && (
         <View style={[chatStyles.betaBanner, { backgroundColor: "#7B5EA720", borderBottomColor: "#7B5EA740" }]}>
@@ -454,7 +516,7 @@ export default function ChatScreen() {
           }
         />
         {/* AI Suggestion Card */}
-        {aiSuggestion && (
+        {aiSuggestion && !selectionMode && (
           <Animated.View
             style={[
               chatStyles.suggestionCard,
@@ -513,7 +575,7 @@ export default function ChatScreen() {
           </Animated.View>
         )}
 
-        <View style={[styles.bottomBar, { paddingBottom: insets.bottom, backgroundColor: colors.background }]}>
+        {!selectionMode && <View style={[styles.bottomBar, { paddingBottom: insets.bottom, backgroundColor: colors.background }]}>
           <Pressable
             onPress={() => router.back()}
             hitSlop={12}
@@ -548,7 +610,7 @@ export default function ChatScreen() {
               onSuggestedTextConsumed={() => setAiTextToInject(undefined)}
             />
           </View>
-        </View>
+        </View>}
       </KeyboardAvoidingView>
 
       {shieldVisible && (
@@ -585,6 +647,28 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 8,
+  },
+  selectionToolbar: {
+    minHeight: 48,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+  },
+  selectionToolbarBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 64,
+    gap: 5,
+  },
+  selectionToolbarText: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+  },
+  selectionCount: {
+    fontSize: 14,
+    fontFamily: "Inter_600SemiBold",
   },
   bottomBar: {
     flexDirection: "row",
