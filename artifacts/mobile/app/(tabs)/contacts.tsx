@@ -379,7 +379,7 @@ function ContactRow({
         <Ionicons name="bookmark-outline" size={15} color={colors.primary} />
       </Pressable>
 
-      <Avatar name={contact.name} size={48} isOnline={contact.isOnline} />
+      <Avatar name={contact.name} size={48} isOnline={contact.isOnline} hasApp={contact.hasApp} />
       <View style={styles.contactInfo}>
         <Text style={[styles.contactName, { color: colors.text }]}>
           {contact.name}

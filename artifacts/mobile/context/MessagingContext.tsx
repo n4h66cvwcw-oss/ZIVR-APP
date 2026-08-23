@@ -180,6 +180,8 @@ export type Contact = {
   status?: string;
   lastSeen?: number;
   isOnline?: boolean;
+  /** True when this contact is a registered ZIVR user. */
+  hasApp?: boolean;
 };
 
 export type SearchFilter = {
@@ -268,13 +270,14 @@ const SEED_RECEIVED_BROADCAST: CheckInBroadcast = {
 };
 
 const SAMPLE_CONTACTS: Contact[] = [
-  { id: "me", name: "You", isOnline: true },
+  { id: "me", name: "You", isOnline: true, hasApp: true },
   {
     id: "c1",
     name: "Sarah Johnson",
     status: "Always up for an adventure",
     isOnline: true,
     lastSeen: Date.now() - 60000,
+    hasApp: true,
   },
   {
     id: "c2",
@@ -282,6 +285,7 @@ const SAMPLE_CONTACTS: Contact[] = [
     status: "Living life to the fullest",
     isOnline: false,
     lastSeen: Date.now() - 3600000,
+    hasApp: true,
   },
   {
     id: "c3",
@@ -289,6 +293,7 @@ const SAMPLE_CONTACTS: Contact[] = [
     status: "Coffee and code",
     isOnline: true,
     lastSeen: Date.now() - 120000,
+    hasApp: true,
   },
   {
     id: "c4",
@@ -296,6 +301,7 @@ const SAMPLE_CONTACTS: Contact[] = [
     status: "Making music every day",
     isOnline: false,
     lastSeen: Date.now() - 86400000,
+    hasApp: true,
   },
   {
     id: "c5",
@@ -303,6 +309,7 @@ const SAMPLE_CONTACTS: Contact[] = [
     status: "Spreading good vibes",
     isOnline: true,
     lastSeen: Date.now() - 300000,
+    hasApp: true,
   },
   {
     id: "c6",
@@ -310,6 +317,7 @@ const SAMPLE_CONTACTS: Contact[] = [
     status: "Building something great",
     isOnline: false,
     lastSeen: Date.now() - 7200000,
+    hasApp: true,
   },
   {
     id: "c7",
@@ -317,12 +325,14 @@ const SAMPLE_CONTACTS: Contact[] = [
     status: "Music is my therapy",
     isOnline: true,
     lastSeen: Date.now() - 30000,
+    hasApp: true,
   },
   {
     id: "zivr-team",
     name: "ZIVR Team",
     status: "Reading your feedback 👀",
     isOnline: true,
+    hasApp: true,
   },
 ];
 

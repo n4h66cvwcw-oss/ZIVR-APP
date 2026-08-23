@@ -9,6 +9,8 @@ interface AvatarProps {
   color?: string;
   /** Optional image URI; falls back to initials when absent. */
   avatar?: string;
+  /** When true, shows a small ZIVR badge indicating this person is on the app. */
+  hasApp?: boolean;
 }
 
 const AVATAR_COLORS = [
@@ -40,7 +42,7 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-export function Avatar({ name, size = 44, isOnline, color, avatar }: AvatarProps) {
+export function Avatar({ name, size = 44, isOnline, color, avatar, hasApp }: AvatarProps) {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
   const bgColor = color || getColorForName(name);
@@ -71,6 +73,27 @@ export function Avatar({ name, size = 44, isOnline, color, avatar }: AvatarProps
           </Text>
         )}
       </View>
+      {/* ZIVR app badge — bottom-left, only when not online (online dot takes priority) */}
+      {hasApp && !isOnline && (
+        <View
+          style={[
+            styles.appBadge,
+            {
+              width: size * 0.32,
+              height: size * 0.32,
+              borderRadius: (size * 0.32) / 2,
+              left: -1,
+              bottom: -1,
+              borderWidth: Math.max(1, size * 0.04),
+              borderColor: isDark ? "#000000" : "#FFFFFF",
+            },
+          ]}
+        >
+          <Text style={{ fontSize: size * 0.15, color: "#FFFFFF", fontFamily: "Inter_700Bold", lineHeight: size * 0.18 }}>
+            Z
+          </Text>
+        </View>
+      )}
       {isOnline && (
         <View
           style={[
@@ -104,5 +127,11 @@ const styles = StyleSheet.create({
   onlineDot: {
     position: "absolute",
     backgroundColor: "#30D158",
+  },
+  appBadge: {
+    position: "absolute",
+    backgroundColor: "#0A84FF",
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

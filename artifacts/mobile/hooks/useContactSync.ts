@@ -70,8 +70,28 @@ export function useContactSync() {
 
       const stored = await AsyncStorage.getItem(CONTACTS_KEY);
       let existing: Contact[] = stored ? JSON.parse(stored) : [];
-      const systemIds = existing.filter((c) => !c.id.startsWith("synced_"));
-      const merged = [...systemIds, ...appContacts];
+
+      // Server-registered contacts (non-synced IDs) are ZIVR users.
+      const systemContacts = existing
+        .filter((c) => !c.id.startsWith("synced_"))
+        .map((c) => ({ ...c, hasApp: true }));
+
+      // Build a set of phone numbers belonging to ZIVR users so we can skip
+      // device-only duplicates and correctly tag unmatched device contacts.
+      const systemPhones = new Set(
+        systemContacts.map((c) => c.phone?.replace(/\D/g, "")).filter(Boolean)
+      );
+
+      // Device contacts: mark as on the app if their number matches a ZIVR user,
+      // otherwise flag as not yet on the app.
+      const taggedDeviceContacts = appContacts.map((c) => ({
+        ...c,
+        hasApp: c.phone
+          ? systemPhones.has(c.phone.replace(/\D/g, ""))
+          : false,
+      }));
+
+      const merged = [...systemContacts, ...taggedDeviceContacts];
       await AsyncStorage.setItem(CONTACTS_KEY, JSON.stringify(merged));
 
       setSyncedCount(appContacts.length);
