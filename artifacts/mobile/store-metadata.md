@@ -74,13 +74,13 @@ messaging,encrypted,secure,calls,music,group chat,privacy,E2E,voice call,video c
 - Unrestricted Web Access: No
 
 ## Support URL
-https://YOUR_DEPLOYED_DOMAIN/support
+https://YOUR_DEPLOYED_DOMAIN/zivr-website/support
 
 ## Privacy Policy URL
-https://YOUR_DEPLOYED_DOMAIN/privacy
+https://YOUR_DEPLOYED_DOMAIN/zivr-website/privacy
 
 ## Marketing URL (optional)
-https://YOUR_DEPLOYED_DOMAIN
+https://YOUR_DEPLOYED_DOMAIN/zivr-website/
 
 ## Copyright
 © 2026 VibeMsg. All rights reserved.

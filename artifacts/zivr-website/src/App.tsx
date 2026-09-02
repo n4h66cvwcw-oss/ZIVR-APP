@@ -4,7 +4,9 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { Route, Switch, Router as WouterRouter } from 'wouter';
+import Privacy from '@/pages/privacy';
+import Support from '@/pages/support';
+import { Route, Switch, Router as WouterRouter, Link } from 'wouter';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Mockups
@@ -621,16 +623,25 @@ function DownloadSection() {
 
 function Footer() {
   return (
-    <footer className="bg-slate-950 py-12 border-t border-white/10 text-center">
+    <footer className="bg-slate-950 py-12 border-t border-white/10">
       <div className="max-w-7xl mx-auto px-6">
         <div className="flex flex-col items-center gap-6">
           <div className="flex items-center gap-3">
             <img src={import.meta.env.BASE_URL + "brand/zivr-icon.png"} alt="ZIVR Logo" className="w-8 h-8 rounded-lg opacity-80 grayscale" />
             <span className="font-display font-bold text-lg tracking-tight text-white/80">ZIVR</span>
           </div>
-          <p className="text-sm text-slate-500 max-w-md">
+          <p className="text-sm text-slate-500 max-w-md text-center">
             The family-centered messaging app for kids, parents, and trusted circles.
           </p>
+          <nav className="flex items-center gap-6 text-sm" aria-label="Footer navigation">
+            <Link href="/privacy" className="text-slate-400 hover:text-white transition-colors">
+              Privacy Policy
+            </Link>
+            <span className="text-slate-700" aria-hidden="true">·</span>
+            <Link href="/support" className="text-slate-400 hover:text-white transition-colors">
+              Support
+            </Link>
+          </nav>
           <div className="text-xs text-slate-600">
             &copy; {new Date().getFullYear()} ZIVR. All rights reserved.
           </div>
@@ -659,6 +670,8 @@ export default function App() {
                   <BentoFeatures />
                   <DownloadSection />
                 </Route>
+                <Route path="/privacy" component={Privacy} />
+                <Route path="/support" component={Support} />
                 <Route component={NotFound} />
               </Switch>
             </main>
