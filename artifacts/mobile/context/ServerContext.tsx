@@ -102,7 +102,7 @@ export type ContactApprovedHandler = (data: {
   contactId: string;
   contactName: string;
 }) => void;
-type TimeOverrideHandler = (data: { childId: string; overrideUntil: number }) => void;
+type TimeOverrideHandler = (data: { childId: string; overrideUntil: number | null }) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
 
 export type ChatBackupMeta = {
@@ -395,7 +395,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       contactApprovedHandlers.current.forEach((h) => h(data));
     });
 
-    socket.on("time:override", (data: { childId: string; overrideUntil: number }) => {
+    socket.on("time:override", (data: { childId: string; overrideUntil: number | null }) => {
       timeOverrideHandlers.current.forEach((h) => h(data));
     });
 

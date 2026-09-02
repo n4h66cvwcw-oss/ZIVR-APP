@@ -30,6 +30,28 @@ export type GateStatus = "pending" | "allowed" | "denied";
 export type GateOutput = "pending" | "locked" | "children";
 
 /**
+ * Tracks access-check ordering so only the newest request may update the gate.
+ * This is especially important when a parent's revocation check races an older
+ * request that still reports the previous active override.
+ */
+export function createLatestAccessCheckGuard() {
+  let generation = 0;
+
+  return {
+    begin(): number {
+      generation += 1;
+      return generation;
+    },
+    isCurrent(candidate: number): boolean {
+      return candidate === generation;
+    },
+    invalidate(): void {
+      generation += 1;
+    },
+  };
+}
+
+/**
  * Maps the TimeLockGate's internal status to what should be rendered.
  *  - "pending"  → loading spinner
  *  - "denied"   → TimeLockScreen (access blocked)

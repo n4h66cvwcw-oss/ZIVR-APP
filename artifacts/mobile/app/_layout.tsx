@@ -29,7 +29,10 @@ import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 import { TimeLockScreen } from "@/components/TimeLockScreen";
 import { registerForPushNotificationsAsync } from "@/utils/notifications";
 import { getRecoveredLanguageUpdate } from "@/utils/language-sync";
-import { createForegroundCheckHandler } from "@/utils/time-lock-gate";
+import {
+  createForegroundCheckHandler,
+  createLatestAccessCheckGuard,
+} from "@/utils/time-lock-gate";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -295,6 +298,7 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
    * Any async result for a different user is discarded.
    */
   const activeUserRef = useRef<string | null>(null);
+  const accessCheckGuardRef = useRef(createLatestAccessCheckGuard());
 
   /**
    * Timestamp (ms) of the last foreground-resume access check.
@@ -344,8 +348,16 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
    * - On failure: use cached denied result; if none, fail closed.
    */
   const runChildCheck = useCallback(async (userId: string) => {
+    const generation = accessCheckGuardRef.current.begin();
+    const isCurrentCheck = () => (
+      activeUserRef.current === userId &&
+      accessCheckGuardRef.current.isCurrent(generation)
+    );
+
     try {
       const result = await checkAccessStrict(userId);
+
+      if (!isCurrentCheck()) return;
 
       // Persist denied results so an offline reopen can show the correct hours.
       // Allowed results are deliberately NOT cached to prevent schedule-boundary bypass.
@@ -356,7 +368,6 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
         ).catch(() => {});
       }
 
-      if (activeUserRef.current !== userId) return; // stale — discard
       setOverrideRemainingMs(
         result.overrideRemainingMs && result.overrideRemainingMs > 0
           ? result.overrideRemainingMs
@@ -370,11 +381,11 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
       }
     } catch {
       // Network / auth error — use cached denied result if available.
-      if (activeUserRef.current !== userId) return;
+      if (!isCurrentCheck()) return;
       try {
         const raw = await AsyncStorage.getItem(deniedCacheKey(userId));
-        // Re-check after the await: user may have changed while we read storage.
-        if (activeUserRef.current !== userId) return;
+        // Re-check after the await: the user or latest request may have changed.
+        if (!isCurrentCheck()) return;
         if (raw) {
           const dc = JSON.parse(raw) as DeniedCache;
           setLockInfo(dc);
@@ -383,7 +394,7 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
         }
       } catch {/* ignore */}
       // Re-check after any potential async gap before mutating state.
-      if (activeUserRef.current !== userId) return;
+      if (!isCurrentCheck()) return;
       // No usable cache — fail closed.
       setStatus("denied");
     }
@@ -403,7 +414,7 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
     return () => clearTimeout(timer);
   }, [overrideRemainingMs, runChildCheck, serverUserId]);
 
-  // An unlocked child can receive the parent's override while on the lock
+  // Override changes can arrive while the child app is open or on the lock
   // screen. Always re-check the API instead of trusting the socket payload.
   useEffect(() => {
     return onTimeOverride(({ childId }) => {
@@ -428,6 +439,7 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
    * if (and only if) the account is a child.
    */
   const evaluate = useCallback(async (userId: string) => {
+    accessCheckGuardRef.current.invalidate();
     const isChild = await resolveIsChild(userId);
 
     if (activeUserRef.current !== userId) return; // user changed while resolving
@@ -449,6 +461,7 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
     if (!serverUserId) {
       // Confirmed signed out.
       activeUserRef.current = null;
+      accessCheckGuardRef.current.invalidate();
       setOverrideRemainingMs(null);
       setStatus("allowed");
       return;

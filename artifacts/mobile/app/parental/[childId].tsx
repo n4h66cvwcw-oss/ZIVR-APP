@@ -108,6 +108,7 @@ export default function ChildSettingsScreen() {
     loadChildDetail,
     updateTimeRestrictions,
     grantTimeOverride,
+    endTimeOverride,
     loadContacts,
     updateContactStatus,
     loadFlags,
@@ -179,6 +180,42 @@ export default function ChildSettingsScreen() {
     } finally {
       setSavingOverride(false);
     }
+  };
+
+  const handleEndOverride = () => {
+    if (
+      !child ||
+      !childId ||
+      savingOverride ||
+      !timeRestriction.overrideUntil ||
+      timeRestriction.overrideUntil <= Date.now()
+    ) {
+      return;
+    }
+
+    Alert.alert(
+      "End temporary unlock?",
+      `${child.displayName} will return to the normal schedule now.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "End unlock",
+          style: "destructive",
+          onPress: async () => {
+            setSavingOverride(true);
+            try {
+              await endTimeOverride(childId);
+              setTimeRestriction((current) => ({ ...current, overrideUntil: null }));
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch {
+              Alert.alert("Error", "Could not end the temporary unlock.");
+            } finally {
+              setSavingOverride(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const handleContactAction = async (contactId: string, status: "approved" | "blocked") => {
@@ -366,6 +403,16 @@ export default function ChildSettingsScreen() {
                   </Pressable>
                 ))}
               </View>
+              {activeOverride && (
+                <Pressable
+                  style={[sStyles.endOverrideBtn, { borderColor: colors.border, opacity: savingOverride ? 0.6 : 1 }]}
+                  onPress={handleEndOverride}
+                  disabled={savingOverride}
+                >
+                  <Ionicons name="lock-closed-outline" size={16} color={colors.textSecondary} />
+                  <Text style={[sStyles.endOverrideBtnText, { color: colors.textSecondary }]}>End unlock</Text>
+                </Pressable>
+              )}
             </View>
             <Pressable
               style={[sStyles.saveBtn, { opacity: savingTime ? 0.6 : 1 }]}
@@ -606,6 +653,17 @@ const sStyles = StyleSheet.create({
     alignItems: "center",
   },
   overrideBtnText: { color: "#FF9800", fontSize: 14, fontWeight: "700" },
+  endOverrideBtn: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  endOverrideBtnText: { fontSize: 13, fontWeight: "600" },
   empty: { paddingTop: 80, alignItems: "center", gap: 12 },
   emptyText: { fontSize: 15 },
   contactCard: {

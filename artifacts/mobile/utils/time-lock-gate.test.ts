@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   FOREGROUND_CACHE_MS,
   createForegroundCheckHandler,
+  createLatestAccessCheckGuard,
   selectGateOutput,
   shouldRunForegroundCheck,
 } from "./time-lock-gate.ts";
@@ -40,6 +41,43 @@ test("selectGateOutput: allowed status passes children through", () => {
 
 test("selectGateOutput: pending status shows the loading spinner", () => {
   assert.equal(selectGateOutput("pending"), "pending");
+});
+
+test("latest access check wins when revocation races an older allowed response", async () => {
+  const guard = createLatestAccessCheckGuard();
+  let status: "allowed" | "denied" = "allowed";
+
+  let resolveBeforeRevocation!: (allowed: boolean) => void;
+  const beforeRevocation = new Promise<boolean>((resolve) => {
+    resolveBeforeRevocation = resolve;
+  });
+  let resolveAfterRevocation!: (allowed: boolean) => void;
+  const afterRevocation = new Promise<boolean>((resolve) => {
+    resolveAfterRevocation = resolve;
+  });
+
+  const runCheck = async (resultPromise: Promise<boolean>) => {
+    const generation = guard.begin();
+    const allowed = await resultPromise;
+    if (guard.isCurrent(generation)) {
+      status = allowed ? "allowed" : "denied";
+    }
+  };
+
+  const olderCheck = runCheck(beforeRevocation);
+  const revocationCheck = runCheck(afterRevocation);
+
+  resolveAfterRevocation(false);
+  await revocationCheck;
+  assert.equal(status, "denied", "the revocation check should lock the child");
+
+  resolveBeforeRevocation(true);
+  await olderCheck;
+  assert.equal(
+    status,
+    "denied",
+    "a late pre-revocation response must not unlock the child again",
+  );
 });
 
 // ─── createForegroundCheckHandler ────────────────────────────────────────────

@@ -68,6 +68,7 @@ interface ParentalContextValue {
 
   updateTimeRestrictions: (childId: string, restriction: TimeRestriction) => Promise<void>;
   grantTimeOverride: (childId: string, durationHours: 1 | 2) => Promise<number>;
+  endTimeOverride: (childId: string) => Promise<void>;
 
   /** Auth token for a child created on this device (parent-mediated bootstrap). */
   getChildToken: (childId: string) => Promise<string | null>;
@@ -249,6 +250,12 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
     return data.overrideUntil;
   }, []);
 
+  const endTimeOverride = useCallback(async (childId: string): Promise<void> => {
+    await apiCall(`/parental/children/${childId}/override`, {
+      method: "DELETE",
+    });
+  }, []);
+
   const getChildToken = useCallback(async (childId: string): Promise<string | null> => {
     try {
       const raw = await AsyncStorage.getItem(CHILD_TOKENS_KEY);
@@ -351,6 +358,7 @@ export function ParentalProvider({ children: reactChildren }: { children: React.
       loadChildDetail,
       updateTimeRestrictions,
       grantTimeOverride,
+      endTimeOverride,
       getChildToken,
       loadContacts,
       updateContactStatus,

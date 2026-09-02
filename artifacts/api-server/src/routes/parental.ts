@@ -331,6 +331,36 @@ router.put("/children/:childId/override", async (req, res) => {
   }
 });
 
+// ── End a temporary schedule override ────────────────────────────────────────
+router.delete("/children/:childId/override", async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    if (!(await requireParentOf(req, childId))) {
+      res.status(403).json({ error: "Only this child's parent can end an override" });
+      return;
+    }
+
+    await query(
+      `UPDATE vm_time_restrictions
+          SET override_until = NULL
+        WHERE child_id = $1`,
+      [childId]
+    );
+
+    // The child gate treats this as a signal to re-check the server, so an
+    // already-open child app returns to its normal schedule immediately.
+    getIO()?.to(`user:${childId}`).emit("time:override", {
+      childId,
+      overrideUntil: null,
+    });
+
+    res.json({ ok: true, overrideUntil: null });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
 // ── Check if child has access right now ──────────────────────────────────────
 router.get("/check-access/:childId", async (req, res) => {
   try {
