@@ -1,0 +1,81 @@
+Replit prompt — paste this whole thing in
+
+Build a marketing landing page for ZIVR, a messaging app. Follow this brief closely — it's opinionated on purpose, not a rough sketch.
+
+Positioning
+
+ZIVR is one app that does three things most messaging apps split across three apps: expressive everyday chat, real family/parental controls, and privacy features explained honestly (not oversold). The design should feel bold and modern, warm and a little playful, and premium/uncluttered — all three at once, not competing.
+
+Design concept: ZIVR's real feature set — typing indicators, online status, check-in responses, read receipts — is literally about small signals of presence. Build the whole visual identity around that idea: a recurring "pulse dot" motif (small colored circles, sometimes animated) used consistently as a bullet/marker/status indicator throughout the page, and a hero built around a live, self-animating chat conversation rather than a static phone screenshot.
+
+Do NOT default to these (very common AI-generated patterns) — actively avoid:
+Warm cream background (~
+#F4F1EA) with a high-contrast serif and a terracotta/clay accent (~
+#D97757)
+Near-black background with one single bright neon/acid accent color
+A grid of identical rounded cards, all the same border-radius, all with the same soft grey drop shadow (rgba(0,0,0,.1)), used for every feature list
+ALL-CAPS tracked-out "eyebrow" labels above every heading
+Numbered 01 / 02 / 03 section markers when the content isn't actually a sequence
+Arrows (→) tacked onto every button and link
+A literal phone-bezel-with-notch mockup graphic (overused app-landing cliché)
+Generic scroll-triggered fade-up animation on every single section
+Color tokens
+--ink: #10162B — primary dark / text color (deep indigo-navy, NOT pure black)
+--paper: #F2F3F7 — light background (cool off-white, not cream)
+--paper-2: #FFFFFF — card/surface white
+--coral: #FF5A5F — primary accent, all CTAs
+--coral-dark: #E14549 — CTA hover state
+--mint: #2FD9A6 — secondary accent, used specifically for "online," "safe," "responded" states
+--violet: #7C6FF0 — tertiary accent, used for the family/safety section
+--slate: #5B6478 — muted body text on light backgrounds
+--slate-light: #8790A3 — muted text on the dark section
+
+Use coral, mint, and violet each for a specific meaning (CTA / presence-safety / family), not interchangeably as decoration.
+
+Typography
+Display/headings: Space Grotesk (weights 500/600/700) — bold, geometric, a little technical
+Body: Plus Jakarta Sans (weights 400/500/600/700) — warm, humanist, highly readable
+Both from Google Fonts. Headline sizes should use clamp() for fluid scaling (e.g. hero h1 clamp(2.4rem, 4.6vw, 3.9rem)).
+Sentence case everywhere, no all-caps labels.
+Body paragraphs capped around 55–65 characters per line.
+Structure (in order)
+Sticky nav — "ZIVR" wordmark with a small pulsing mint dot next to it. Links: Message, Family, Privacy, and a coral pill "Get ZIVR" button. Collapses to a hamburger menu under ~860px.
+Hero — two-column (stacks on mobile). Left: headline "Message like you mean it." + one-sentence subhead about blending expressive chat, family controls, and honest privacy + two buttons (primary "Get ZIVR", ghost "See what's inside"). Right: a dark card (background --ink, rounded ~28px, colored soft shadow using violet/coral at low opacity — NOT a grey shadow) containing a self-animating fake conversation that plays once on page load:
+Header row: avatar circle + "Mom" + a small pulsing mint online dot
+Incoming bubble: "Landed! 🛬 all good"
+Outgoing bubble: "so relieved, love you" — a small ❤️ reaction badge pops onto it a beat later
+Incoming bubble: "🎵 sent a song" (represents the musical-message feature)
+A check-in card: "Family Check-In — everyone home safe?" with 4 small dots, 3 filling mint one after another, label "3 of 4 responded"
+A typing indicator: "Mom is typing" with three bouncing dots
+Stagger all of this with animation-delay so it plays like a real conversation arriving, over about 4–5 seconds, then settles. This is the ONE big orchestrated animation on the page — don't add more animated flourishes elsewhere.
+Section: "Say more, your way" (id="message") — intro: "Every kind of message, minus the flat texting-app feel." A 2-column grid of 6 feature tiles (stack to 1 column on mobile). Instead of identical rounded cards, give odd tiles a border-radius like 22px 22px 22px 4px (mimicking a received bubble) and even tiles 22px 22px 4px 22px (mimicking a sent bubble), with even tiles offset ~26px lower than odd ones for a staggered, conversational feel. Content:
+Voice & musical messages — record a voice note or drop in a song when words alone won't cut it
+Photos with rules — view-once, timed, or password-protected pictures; you decide how long a moment lasts
+Reactions & typing indicators — feel a conversation as it happens
+Pre-send translation — write in your language, send in theirs, original stays available
+AI suggested replies — a quick assist when you want one, never in the way when you don't
+GIFs, emoji & contact cards — say it with a GIF, react in a tap, drop a contact into the chat
+Section: "A safety net for the people you love" (id="family", violet accent) — two-column split. Left: intro line + 4 bullet points, each marked with a small violet dot (not a number):
+Parent and child modes with a shared family dashboard
+Recurring access schedules (school, bedtime) plus temporary unlocks a parent can end early
+Contact and group requests held for approval before a child sees them
+Safety alerts calibrated by severity (all flagged / medium-and-up / high only) Right: a small card mockup titled "Weekend Check-In" showing 4 colored avatar circles (3 with a small mint checkmark badge = responded, 1 dimmed = pending), and a caption noting replies stay private to the check-in creator.
+Section: "Privacy you can actually explain" (id="privacy", dark --ink background, mint accent) — intro: "No jargon, no overselling — here's exactly what's protected." Bullet list:
+Lock any chat with a 4–6 digit passcode, optional hint, biometric unlock where supported
+Optional local AES-256 encryption for messages kept on-device
+Screen-capture protection requests on qualifying self-destructing pictures
+Block and report controls Below that, in smaller muted text: an honest disclaimer that ZIVR is not an end-to-end encrypted messenger, and that full detail lives in the Privacy Policy. This line matters — don't cut it or soften it into a vague claim of full encryption.
+Section: "Built for the conversations that matter" — 3-column grid (stacks on mobile), each with a thin 2px top border in --ink instead of a card box:
+Export-ready PDFs (personal, business, or legal-ready formats)
+Pick what's included (full thread or hand-picked messages)
+Optional AI summary or key-points appendix, added only after explicit consent
+Section: "Make it feel like yours" — intro: "The parts nobody needs, but everybody ends up loving." A row of pill-shaped chips (not cards): light/dark/system appearance, chat bubble skins from the skin store, custom typing emoji, VibeCoin for extras.
+Thin "Preview" strip — a small violet "Preview" tag + one line: "Voice and video calling — the interface is live now, with the full calling experience on the way." Keep this honest and low-key; don't present calling as fully live.
+Footer CTA band — large centered "Get ZIVR" headline, "Available for iOS and Android," two plain text buttons reading "Get ZIVR — App Store" / "Get ZIVR — Google Play" (do not use real Apple/Google logos or trademarked badge artwork — text-only buttons).
+Footer — ZIVR wordmark + mint dot, nav links (Message, Family, Privacy, Support, Privacy Policy), small copyright line "ZIVR — message like you mean it."
+Technical requirements
+Single responsive page, mobile breakpoint around 720–900px (hero and split sections go to one column, nav collapses to hamburger).
+Respect prefers-reduced-motion: disable/shorten animations for users who request it.
+Visible focus states on all interactive elements (don't strip default outlines without replacing them).
+No fabricated statistics (user counts, ratings, press logos) — don't invent numbers that aren't in the product spec.
+Don't claim end-to-end encryption anywhere on the page, don't claim location sharing/geofencing (not a supported feature), and keep voice/video calling framed as a preview, not a finished feature.

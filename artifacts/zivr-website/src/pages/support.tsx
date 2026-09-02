@@ -21,18 +21,18 @@ function Accordion({ items }: { items: FaqItem[] }) {
       {items.map((item, i) => (
         <div key={i}>
           <button
-            className="w-full flex items-start justify-between gap-4 py-4 text-left font-semibold text-slate-800 hover:text-primary transition-colors"
+            className="w-full flex items-start justify-between gap-4 py-4 text-left font-semibold text-ink hover:text-coral transition-colors"
             onClick={() => setOpenIndex(openIndex === i ? null : i)}
             aria-expanded={openIndex === i}
           >
             <span>{item.question}</span>
             {openIndex === i
-              ? <ChevronUp className="w-5 h-5 shrink-0 text-primary mt-0.5" />
-              : <ChevronDown className="w-5 h-5 shrink-0 text-slate-400 mt-0.5" />
+              ? <ChevronUp className="w-5 h-5 shrink-0 text-coral mt-0.5" />
+              : <ChevronDown className="w-5 h-5 shrink-0 text-slate-light mt-0.5" />
             }
           </button>
           {openIndex === i && (
-            <p className="pb-5 text-slate-600 leading-relaxed">{item.answer}</p>
+            <p className="pb-5 text-slate leading-relaxed">{item.answer}</p>
           )}
         </div>
       ))}
@@ -43,7 +43,7 @@ function Accordion({ items }: { items: FaqItem[] }) {
 const faqSections: FaqSection[] = [
   {
     title: 'Getting Started',
-    icon: <MessageSquare className="w-5 h-5 text-primary" />,
+    icon: <MessageSquare className="w-5 h-5 text-coral" />,
     items: [
       {
         question: 'How do I create a ZIVR account?',
@@ -131,7 +131,7 @@ const faqSections: FaqSection[] = [
   },
   {
     title: 'Chat Passcode & Encryption',
-    icon: <Lock className="w-5 h-5 text-slate-700" />,
+    icon: <Lock className="w-5 h-5 text-ink" />,
     items: [
       {
         question: 'What is the difference between a chat passcode and chat encryption?',
@@ -238,16 +238,16 @@ const faqSections: FaqSection[] = [
 
 export default function Support() {
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-paper-2">
       {/* Header */}
-      <header className="bg-slate-950 text-white py-16 px-6">
+      <header className="bg-ink text-paper-2 py-16 px-6">
         <div className="max-w-3xl mx-auto">
-          <Link href="/" className="inline-flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm mb-8">
+          <Link href="/" className="inline-flex items-center gap-2 text-slate-light hover:text-paper-2 transition-colors text-sm mb-8">
             <ArrowLeft className="w-4 h-4" />
             Back to ZIVR
           </Link>
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">Support</h1>
-          <p className="text-slate-400 text-lg max-w-2xl">
+          <p className="text-slate-light text-lg max-w-2xl">
             Answers to common questions about ZIVR's features, privacy settings, and parental controls.
           </p>
         </div>
@@ -263,9 +263,9 @@ export default function Support() {
                 <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
                   {section.icon}
                 </div>
-                <h2 className="text-xl font-bold text-slate-900">{section.title}</h2>
+                <h2 className="text-xl font-bold text-ink">{section.title}</h2>
               </div>
-              <div className="bg-slate-50 rounded-2xl px-6">
+              <div className="bg-paper rounded-2xl px-6">
                 <Accordion items={section.items} />
               </div>
             </section>
@@ -273,19 +273,19 @@ export default function Support() {
         </div>
 
         {/* Still need help */}
-        <section className="mt-16 bg-slate-950 rounded-2xl p-8 text-white text-center">
+        <section className="mt-16 bg-ink rounded-2xl p-8 text-paper-2 text-center">
           <h2 className="text-2xl font-bold mb-3">Still need help?</h2>
-          <p className="text-slate-400 mb-6 max-w-md mx-auto">
+          <p className="text-slate-light mb-6 max-w-md mx-auto">
             If you can't find the answer above, please reach out through the app store listing.
             We aim to respond within one business day.
           </p>
-          <div className="inline-block bg-white/10 border border-white/20 rounded-xl px-6 py-4 text-slate-200 text-sm">
-            <p className="font-semibold text-white mb-1">ZIVR Support</p>
+          <div className="inline-block bg-paper-2/10 border border-white/20 rounded-xl px-6 py-4 text-slate-200 text-sm">
+            <p className="font-semibold text-paper-2 mb-1">ZIVR Support</p>
             <p>Contact us through the ZIVR listing on the App Store or Google Play — tap "App Support" on the listing page.</p>
           </div>
-          <p className="text-slate-500 text-sm mt-6">
+          <p className="text-slate-light text-sm mt-6">
             For privacy-related requests (data access, deletion, COPPA inquiries), see our{' '}
-            <Link href="/privacy" className="text-slate-300 underline underline-offset-2 hover:text-white transition-colors">
+            <Link href="/privacy" className="text-slate-300 underline underline-offset-2 hover:text-paper-2 transition-colors">
               Privacy Policy
             </Link>
             .
@@ -295,14 +295,14 @@ export default function Support() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border py-8 px-6 text-center text-sm text-slate-500">
+      <footer className="border-t border-border py-8 px-6 text-center text-sm text-slate-light">
         <div className="max-w-3xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <Link href="/" className="font-semibold text-slate-700 hover:text-primary transition-colors">
+          <Link href="/" className="font-semibold text-ink hover:text-coral transition-colors">
             ZIVR
           </Link>
           <div className="flex items-center gap-6">
-            <Link href="/privacy" className="hover:text-slate-700 transition-colors">Privacy</Link>
-            <Link href="/support" className="hover:text-slate-700 transition-colors font-medium text-primary">Support</Link>
+            <Link href="/privacy" className="hover:text-ink transition-colors">Privacy</Link>
+            <Link href="/support" className="hover:text-ink transition-colors font-medium text-coral">Support</Link>
           </div>
           <span>&copy; {new Date().getFullYear()} ZIVR. All rights reserved.</span>
         </div>
