@@ -32,6 +32,8 @@ import { getRecoveredLanguageUpdate } from "@/utils/language-sync";
 import {
   createForegroundCheckHandler,
   createLatestAccessCheckGuard,
+  DeniedCache,
+  runChildCheck as runChildAccessCheck,
 } from "@/utils/time-lock-gate";
 
 SplashScreen.preventAutoHideAsync();
@@ -257,7 +259,6 @@ function deniedCacheKey(userId: string) {
   return `@zivr_lock_denied:${userId}`;
 }
 
-type DeniedCache = { startHour: number; endHour: number };
 type LockStatus = "pending" | "allowed" | "denied";
 
 /**
@@ -349,55 +350,22 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
    */
   const runChildCheck = useCallback(async (userId: string) => {
     const generation = accessCheckGuardRef.current.begin();
-    const isCurrentCheck = () => (
-      activeUserRef.current === userId &&
-      accessCheckGuardRef.current.isCurrent(generation)
-    );
-
-    try {
-      const result = await checkAccessStrict(userId);
-
-      if (!isCurrentCheck()) return;
-
-      // Persist denied results so an offline reopen can show the correct hours.
-      // Allowed results are deliberately NOT cached to prevent schedule-boundary bypass.
-      if (!result.allowed) {
-        AsyncStorage.setItem(
-          deniedCacheKey(userId),
-          JSON.stringify({ startHour: result.startHour ?? 8, endHour: result.endHour ?? 21 })
-        ).catch(() => {});
-      }
-
-      setOverrideRemainingMs(
-        result.overrideRemainingMs && result.overrideRemainingMs > 0
-          ? result.overrideRemainingMs
-          : null
-      );
-      if (result.allowed) {
-        setStatus("allowed");
-      } else {
-        setLockInfo({ startHour: result.startHour ?? 8, endHour: result.endHour ?? 21 });
-        setStatus("denied");
-      }
-    } catch {
-      // Network / auth error — use cached denied result if available.
-      if (!isCurrentCheck()) return;
-      try {
-        const raw = await AsyncStorage.getItem(deniedCacheKey(userId));
-        // Re-check after the await: the user or latest request may have changed.
-        if (!isCurrentCheck()) return;
-        if (raw) {
-          const dc = JSON.parse(raw) as DeniedCache;
-          setLockInfo(dc);
-          setStatus("denied");
-          return;
-        }
-      } catch {/* ignore */}
-      // Re-check after any potential async gap before mutating state.
-      if (!isCurrentCheck()) return;
-      // No usable cache — fail closed.
-      setStatus("denied");
-    }
+    await runChildAccessCheck({
+      userId,
+      checkAccess: checkAccessStrict,
+      getDeniedCache: (id) => AsyncStorage.getItem(deniedCacheKey(id)),
+      setDeniedCache: (id, cache) => AsyncStorage.setItem(
+        deniedCacheKey(id),
+        JSON.stringify(cache),
+      ),
+      isCurrent: () => (
+        activeUserRef.current === userId &&
+        accessCheckGuardRef.current.isCurrent(generation)
+      ),
+      setOverrideRemainingMs,
+      setLockInfo,
+      setStatus,
+    });
   }, [checkAccessStrict]);
 
   // Re-check after the server-calculated remaining duration even when the app

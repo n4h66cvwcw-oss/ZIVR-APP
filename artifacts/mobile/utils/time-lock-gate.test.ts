@@ -4,6 +4,7 @@ import {
   FOREGROUND_CACHE_MS,
   createForegroundCheckHandler,
   createLatestAccessCheckGuard,
+  runChildCheck,
   selectGateOutput,
   shouldRunForegroundCheck,
 } from "./time-lock-gate.ts";
@@ -41,6 +42,54 @@ test("selectGateOutput: allowed status passes children through", () => {
 
 test("selectGateOutput: pending status shows the loading spinner", () => {
   assert.equal(selectGateOutput("pending"), "pending");
+});
+
+test("runChildCheck: network failure with no denied cache keeps the gate locked", async () => {
+  let status: "allowed" | "denied" = "allowed";
+
+  await runChildCheck({
+    userId: "child-1",
+    checkAccess: async () => {
+      throw new Error("time-check server unavailable");
+    },
+    getDeniedCache: async () => null,
+    setDeniedCache: () => {},
+    isCurrent: () => true,
+    setOverrideRemainingMs: () => {},
+    setLockInfo: () => {},
+    setStatus: (nextStatus) => {
+      status = nextStatus;
+    },
+  });
+
+  assert.equal(status, "denied");
+  assert.equal(selectGateOutput(status), "locked");
+});
+
+test("runChildCheck: network failure with a denied cache shows the cached hours", async () => {
+  const cachedHours = { startHour: 7, endHour: 19 };
+  let status: "allowed" | "denied" = "allowed";
+  let lockInfo: typeof cachedHours | null = null;
+
+  await runChildCheck({
+    userId: "child-1",
+    checkAccess: async () => {
+      throw new Error("time-check server unavailable");
+    },
+    getDeniedCache: async () => JSON.stringify(cachedHours),
+    setDeniedCache: () => {},
+    isCurrent: () => true,
+    setOverrideRemainingMs: () => {},
+    setLockInfo: (nextLockInfo) => {
+      lockInfo = nextLockInfo;
+    },
+    setStatus: (nextStatus) => {
+      status = nextStatus;
+    },
+  });
+
+  assert.equal(status, "denied");
+  assert.deepEqual(lockInfo, cachedHours);
 });
 
 test("latest access check wins when revocation races an older allowed response", async () => {

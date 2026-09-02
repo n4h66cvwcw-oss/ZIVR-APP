@@ -63,6 +63,95 @@ export function selectGateOutput(status: GateStatus): GateOutput {
   return "children";
 }
 
+export type DeniedCache = { startHour: number; endHour: number };
+
+export type TimeLockAccessResult = {
+  allowed: boolean;
+  startHour?: number;
+  endHour?: number;
+  overrideRemainingMs?: number | null;
+};
+
+export type ChildCheckOptions = {
+  userId: string;
+  checkAccess: (userId: string) => Promise<TimeLockAccessResult>;
+  getDeniedCache: (userId: string) => Promise<string | null>;
+  setDeniedCache: (userId: string, cache: DeniedCache) => void | Promise<void>;
+  /** Returns false when the user or a newer access check has superseded this request. */
+  isCurrent: () => boolean;
+  setOverrideRemainingMs: (remainingMs: number | null) => void;
+  setLockInfo: (cache: DeniedCache) => void;
+  setStatus: (status: Exclude<GateStatus, "pending">) => void;
+};
+
+/**
+ * Runs a live access check for a confirmed (or fail-closed unknown) child.
+ *
+ * Allowed results are never cached. When the live check fails, only a cached
+ * denied result may provide its hours; without one, the status is denied.
+ * The caller supplies isCurrent so late responses cannot update a newer gate.
+ */
+export async function runChildCheck(opts: ChildCheckOptions): Promise<void> {
+  const {
+    userId,
+    checkAccess,
+    getDeniedCache,
+    setDeniedCache,
+    isCurrent,
+    setOverrideRemainingMs,
+    setLockInfo,
+    setStatus,
+  } = opts;
+
+  try {
+    const result = await checkAccess(userId);
+
+    if (!isCurrent()) return;
+
+    // Persist denied results so an offline reopen can show the correct hours.
+    // Allowed results are deliberately NOT cached to prevent schedule-boundary bypass.
+    if (!result.allowed) {
+      const deniedCache = {
+        startHour: result.startHour ?? 8,
+        endHour: result.endHour ?? 21,
+      };
+      void Promise.resolve(setDeniedCache(userId, deniedCache)).catch(() => {});
+    }
+
+    setOverrideRemainingMs(
+      result.overrideRemainingMs && result.overrideRemainingMs > 0
+        ? result.overrideRemainingMs
+        : null,
+    );
+    if (result.allowed) {
+      setStatus("allowed");
+    } else {
+      setLockInfo({ startHour: result.startHour ?? 8, endHour: result.endHour ?? 21 });
+      setStatus("denied");
+    }
+  } catch {
+    // Network / auth error — use cached denied result if available.
+    if (!isCurrent()) return;
+    try {
+      const raw = await getDeniedCache(userId);
+      // Re-check after the await: the user or latest request may have changed.
+      if (!isCurrent()) return;
+      if (raw) {
+        const deniedCache = JSON.parse(raw) as DeniedCache;
+        setLockInfo(deniedCache);
+        setStatus("denied");
+        return;
+      }
+    } catch {
+      // A missing or unreadable cache still fails closed below.
+    }
+    // Re-check after any potential async gap before mutating state.
+    if (!isCurrent()) return;
+    // No usable cache — fail closed.
+    setStatus("denied");
+  }
+}
+
 export type ForegroundCheckOptions = {
   /** Current authenticated user ID, or null when signed out. */
   getUserId: () => string | null;
