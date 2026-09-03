@@ -203,6 +203,38 @@ test("foreground handler: 60-second cache prevents a duplicate network call with
   );
 });
 
+test("foreground handler: a reset cache runs on the next active transition", async () => {
+  let checkCount = 0;
+  let lastCheckMs: number | null = null;
+  let currentTime = 1_000_000;
+
+  const handler = createForegroundCheckHandler({
+    getUserId: () => "child-2",
+    getCachedAccountType: async () => "child",
+    runCheck: async () => {
+      checkCount++;
+    },
+    getLastCheckMs: () => lastCheckMs,
+    setLastCheckMs: (ms) => {
+      lastCheckMs = ms;
+    },
+    now: () => currentTime,
+  });
+
+  await handler("active");
+  assert.equal(checkCount, 1, "the previous user's foreground check should run");
+
+  // Identity changes reset the component's cache before the new user's resume.
+  lastCheckMs = null;
+  currentTime += 1_000;
+  await handler("active");
+  assert.equal(
+    checkCount,
+    2,
+    "a freshly reset cache must trigger the next active transition",
+  );
+});
+
 test("foreground handler: skips confirmed non-child accounts", async () => {
   let checkCount = 0;
   let lastCheckMs: number | null = null;

@@ -426,6 +426,10 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!identityReady) return; // Still loading from AsyncStorage — keep pending.
 
+    // The foreground cache belongs to the signed-in identity. Never let a
+    // previous user's recent check suppress the next user's first resume.
+    lastForegroundCheckMsRef.current = null;
+
     if (!serverUserId) {
       // Confirmed signed out.
       activeUserRef.current = null;
