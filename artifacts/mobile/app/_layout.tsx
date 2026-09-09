@@ -34,6 +34,7 @@ import {
   createLatestAccessCheckGuard,
   DeniedCache,
   runChildCheck as runChildAccessCheck,
+  scheduleOverrideExpiryCheck,
 } from "@/utils/time-lock-gate";
 
 SplashScreen.preventAutoHideAsync();
@@ -424,13 +425,15 @@ function TimeLockGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!serverUserId || !overrideRemainingMs) return;
 
-    const timer = setTimeout(() => {
-      if (activeUserRef.current !== serverUserId) return;
-      setStatus("pending");
-      void runChildCheck(serverUserId);
-    }, overrideRemainingMs + 50);
-
-    return () => clearTimeout(timer);
+    return scheduleOverrideExpiryCheck({
+      userId: serverUserId,
+      remainingMs: overrideRemainingMs,
+      isCurrentUser: (userId) => activeUserRef.current === userId,
+      onExpire: (userId) => {
+        setStatus("pending");
+        void runChildCheck(userId);
+      },
+    });
   }, [overrideRemainingMs, runChildCheck, serverUserId]);
 
   // Override changes can arrive while the child app is open or on the lock

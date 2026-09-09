@@ -72,6 +72,34 @@ export type TimeLockAccessResult = {
   overrideRemainingMs?: number | null;
 };
 
+export type OverrideExpirySchedulerOptions = {
+  userId: string;
+  /** Server-calculated duration until the override expires. */
+  remainingMs: number;
+  /** Confirms that the scheduled check still belongs to the active identity. */
+  isCurrentUser: (userId: string) => boolean;
+  onExpire: (userId: string) => void;
+  setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+};
+
+/**
+ * Schedules a strict access recheck from the server-provided remaining duration.
+ * No wall-clock timestamp is read, so device clock skew cannot extend access.
+ */
+export function scheduleOverrideExpiryCheck(
+  opts: OverrideExpirySchedulerOptions,
+): () => void {
+  const setTimer = opts.setTimer ?? setTimeout;
+  const clearTimer = opts.clearTimer ?? clearTimeout;
+  const timer = setTimer(() => {
+    if (!opts.isCurrentUser(opts.userId)) return;
+    opts.onExpire(opts.userId);
+  }, opts.remainingMs);
+
+  return () => clearTimer(timer);
+}
+
 export type ChildCheckOptions = {
   userId: string;
   checkAccess: (userId: string) => Promise<TimeLockAccessResult>;

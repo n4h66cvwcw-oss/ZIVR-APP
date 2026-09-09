@@ -5,6 +5,7 @@ import {
   createForegroundCheckHandler,
   createLatestAccessCheckGuard,
   runChildCheck,
+  scheduleOverrideExpiryCheck,
   selectGateOutput,
   shouldRunForegroundCheck,
 } from "./time-lock-gate.ts";
@@ -126,6 +127,69 @@ test("latest access check wins when revocation races an older allowed response",
     status,
     "denied",
     "a late pre-revocation response must not unlock the child again",
+  );
+});
+
+test("override expiry scheduler rechecks an allowed child at the server-provided boundary", () => {
+  let scheduledDelay: number | null = null;
+  let scheduledCallback: () => void = () => {
+    assert.fail("expiry callback was not scheduled");
+  };
+  const recheckedUsers: string[] = [];
+
+  scheduleOverrideExpiryCheck({
+    userId: "child-1",
+    remainingMs: 12_345,
+    isCurrentUser: (userId) => userId === "child-1",
+    onExpire: (userId) => {
+      recheckedUsers.push(userId);
+    },
+    setTimer: (callback, delayMs) => {
+      scheduledCallback = callback;
+      scheduledDelay = delayMs;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: () => {},
+  });
+
+  assert.equal(scheduledDelay, 12_345);
+  assert.deepEqual(recheckedUsers, [], "access remains allowed before the boundary");
+
+  scheduledCallback();
+  assert.deepEqual(
+    recheckedUsers,
+    ["child-1"],
+    "expiry must apply a fresh server check while the app remains open",
+  );
+});
+
+test("override expiry scheduler ignores a pending recheck after identity changes", () => {
+  let activeUserId = "child-1";
+  let scheduledCallback: () => void = () => {
+    assert.fail("expiry callback was not scheduled");
+  };
+  const recheckedUsers: string[] = [];
+
+  scheduleOverrideExpiryCheck({
+    userId: "child-1",
+    remainingMs: 5_000,
+    isCurrentUser: (userId) => activeUserId === userId,
+    onExpire: (userId) => {
+      recheckedUsers.push(userId);
+    },
+    setTimer: (callback) => {
+      scheduledCallback = callback;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: () => {},
+  });
+
+  activeUserId = "child-2";
+  scheduledCallback();
+  assert.deepEqual(
+    recheckedUsers,
+    [],
+    "the previous child's timer must not affect the newer identity",
   );
 });
 
