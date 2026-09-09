@@ -489,7 +489,9 @@ function InviteModal({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [inviteSearch, setInviteSearch] = useState("");
 
-  const phoneContacts = contacts.filter((c) => c.id !== "me" && c.phone);
+  const phoneContacts = contacts.filter(
+    (c) => c.id !== "me" && c.phone && !c.hasApp
+  );
   const filtered = phoneContacts.filter((c) =>
     c.name.toLowerCase().includes(inviteSearch.toLowerCase())
   );
@@ -564,7 +566,7 @@ function InviteModal({
         </View>
 
         <Text style={[styles.inviteHint, { color: colors.textSecondary }]}>
-          Select contacts to send them an invite link via your messaging app.
+          Select contacts who aren't on ZIVR yet to send them an invite link.
         </Text>
 
         <FlatList
@@ -585,7 +587,9 @@ function InviteModal({
             <View style={styles.inviteEmpty}>
               <Ionicons name="people-outline" size={40} color={colors.textTertiary} />
               <Text style={[styles.inviteEmptyText, { color: colors.textSecondary }]}>
-                {inviteSearch ? "No matching contacts" : "Sync your contacts first to invite friends"}
+                {phoneContacts.length === 0
+                  ? "All your contacts with a phone number are already on ZIVR!"
+                  : "No matching contacts"}
               </Text>
             </View>
           }
