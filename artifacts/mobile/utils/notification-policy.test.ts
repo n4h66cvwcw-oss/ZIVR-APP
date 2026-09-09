@@ -109,3 +109,25 @@ test("muted and silent chats schedule no notifications", () => {
   assert.equal(mutedLive, null);
   assert.equal(silentLive, null);
 });
+
+test("startup replay uses chat settings loaded after messages arrive", () => {
+  const replay = [
+    message("muted", "alex", "Muted during startup"),
+    message("silent", "sam", "Silent during startup", "Sam"),
+    message("audible", "jo", "Audible during startup", "Jo"),
+  ];
+
+  // This mirrors startup ordering: replay messages are buffered first, then
+  // notification policy runs against the newly hydrated settings snapshot.
+  const hydratedChats = [
+    chat("muted", { isMuted: true }),
+    chat("silent", { notificationSound: "none" }),
+    chat("audible", { notificationSound: "chime" }),
+  ];
+
+  assert.deepEqual(buildMissedMessageNotifications(replay, hydratedChats), [{
+    title: "Jo",
+    body: "Audible during startup",
+    sound: "chime",
+  }]);
+});

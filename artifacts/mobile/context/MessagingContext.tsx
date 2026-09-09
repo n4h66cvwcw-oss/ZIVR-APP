@@ -444,7 +444,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   // here and replayed once hydration finishes, preventing a race where a
   // setMessages(loadedSnapshot) call would silently overwrite them.
   const hydrationComplete = useRef(false);
-  const preHydrationBuffer = useRef<ServerMessage[]>([]);
+  const preHydrationBuffer = useRef<Array<{ msg: ServerMessage; delivery: MessageDelivery }>>([]);
   const chatsRef = useRef(chats);
   const messagesRef = useRef(messages);
   const missedNotificationMessages = useRef<NotificationMessage[]>([]);
@@ -477,7 +477,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       // the upcoming setMessages(loadedSnapshot) call cannot silently overwrite
       // it. The buffer is drained synchronously at the end of loadData().
       if (!hydrationComplete.current) {
-        preHydrationBuffer.current.push(msg);
+        preHydrationBuffer.current.push({ msg, delivery });
         return;
       }
       // Atomically mark this server ID as seen. If it was already in the set
@@ -700,17 +700,20 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         setContactsState(hasMe ? saved : [SAMPLE_CONTACTS[0], ...saved]);
       }
 
+      let hydratedChats: Chat[];
       if (chatsStr) {
         const loadedChats: Chat[] = JSON.parse(chatsStr);
         const hasBetaChat = loadedChats.some((c) => c.id === BETA_CHAT_ID);
         const finalChats = hasBetaChat ? loadedChats : [BETA_CHAT, ...loadedChats];
+        hydratedChats = finalChats;
         setChats(finalChats);
         if (!hasBetaChat) {
           await AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(finalChats));
         }
       } else {
-        setChats([BETA_CHAT]);
-        await AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify([BETA_CHAT]));
+        hydratedChats = [BETA_CHAT];
+        setChats(hydratedChats);
+        await AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(hydratedChats));
       }
 
       // Collect the persisted message snapshot; do NOT call setMessages yet —
@@ -767,7 +770,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       //    includes both persisted and buffered messages.
       const buffered = preHydrationBuffer.current.splice(0);
       const bufferedForChats: ServerMessage[] = [];
-      for (const msg of buffered) {
+      const bufferedMissedNotifications: NotificationMessage[] = [];
+      for (const { msg, delivery } of buffered) {
         if (seenMessageIds.current.has(msg.id)) continue;
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
@@ -782,7 +786,23 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         };
         finalMsgs = { ...finalMsgs, [chatId]: [...existing, newMsg] };
         bufferedForChats.push(msg);
+        if (delivery === "missed") {
+          bufferedMissedNotifications.push({
+            chatId,
+            senderId: msg.senderId,
+            senderName: msg.senderName,
+            text: msg.text,
+          });
+        }
       }
+
+      // Use the just-hydrated snapshot directly. React refs still contain the
+      // pre-hydration state until the next render, which could otherwise turn
+      // muted or silent replay notifications into default notifications.
+      buildMissedMessageNotifications(bufferedMissedNotifications, hydratedChats)
+        .forEach((request) => {
+          scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
+        });
 
       // 3. Commit messages state (single call covers both persisted + buffered).
       setMessages(finalMsgs);
@@ -841,7 +861,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       // Drain any messages that were buffered before the error by dispatching
       // them through the normal handler path (seenMessageIds + state updates).
       const bufferedOnError = preHydrationBuffer.current.splice(0);
-      for (const msg of bufferedOnError) {
+      for (const { msg } of bufferedOnError) {
         if (seenMessageIds.current.has(msg.id)) continue;
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
