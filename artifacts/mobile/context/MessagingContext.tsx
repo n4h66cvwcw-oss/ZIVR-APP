@@ -200,6 +200,10 @@ export type PdfExportAppendix = {
   content: string;
   sourceTruncated?: boolean;
 };
+export type PdfExportPrivacy = {
+  showParticipantNames?: boolean;
+  excludedMessageIds?: string[];
+};
 export type PdfExportMessage = Pick<Message, "id" | "senderId" | "timestamp" | "text" | "audioAttachment" | "imageAttachment" | "deleted"> & {
   senderName?: string;
 };
@@ -209,6 +213,7 @@ export type PdfExportOptions = {
   appendix?: PdfExportAppendix;
   scopeLabel?: string;
   sourceLabel?: string;
+  privacy?: PdfExportPrivacy;
 };
 
 const STORAGE_KEYS = {
@@ -1028,21 +1033,28 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       const chat = chats.find((c) => c.id === chatId);
       if (!chat) return "<p>Chat not found</p>";
       const style = options.style ?? "personal";
-      const msgs: PdfExportMessage[] = (options.messages ?? getDecryptedMessages(chatId))
+      const allMsgs: PdfExportMessage[] = (options.messages ?? getDecryptedMessages(chatId))
         .filter((message) => !message.deleted)
         .sort((a, b) => a.timestamp - b.timestamp);
+      const showParticipantNames = options.privacy?.showParticipantNames !== false;
+      const excludedMessageIds = new Set(options.privacy?.excludedMessageIds ?? []);
+      const excludedMessages = allMsgs.filter((message) => excludedMessageIds.has(message.id));
+      const msgs = allMsgs.filter((message) => !excludedMessageIds.has(message.id));
+      const isRedacted = !showParticipantNames || excludedMessages.length > 0;
       const escapeHtml = (value: unknown) => String(value ?? "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
-      const escapedChatName = escapeHtml(chat.name);
+      const escapedChatName = escapeHtml(showParticipantNames ? chat.name : "Private conversation");
 
-      const rows = msgs
+      const rows = allMsgs
         .map((m) => {
           const sender = contacts.find((c) => c.id === m.senderId);
-          const name = m.senderName || sender?.name || m.senderId;
+          const name = showParticipantNames
+            ? m.senderName || sender?.name || m.senderId
+            : "[Participant name redacted]";
           const date = new Date(m.timestamp);
           const dateStr = date.toLocaleDateString("en-US", {
             year: "numeric",
@@ -1055,8 +1067,18 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             second: "2-digit",
           });
           const isMe = m.senderId === myId;
+          const isExcluded = excludedMessageIds.has(m.id);
+          if (isExcluded) {
+            return `
+          <tr class="${isMe ? "mine " : ""}redacted-row">
+            <td>${escapeHtml(dateStr)}</td>
+            <td>${escapeHtml(timeStr)}</td>
+            <td>${escapeHtml(name)}</td>
+            <td><span class="redacted-label">Message excluded from this privacy-redacted copy</span><div class="message-id">ID: ${escapeHtml(m.id)}</div></td>
+          </tr>`;
+          }
           const audioNote = m.audioAttachment
-            ? `<div class="attachment">Audio attachment: ${escapeHtml(m.audioAttachment.name)}</div>`
+            ? `<div class="attachment">${showParticipantNames ? `Audio attachment: ${escapeHtml(m.audioAttachment.name)}` : "Audio attachment (name redacted)"}</div>`
             : m.imageAttachment
             ? `<div class="attachment">Image attachment</div>`
             : "";
@@ -1070,7 +1092,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         })
         .join("");
 
-      const styleCopy = {
+      const baseStyleCopy = {
         legal: {
           title: "Message Record",
           subtitle: "A formatted export for review. This document does not certify authenticity, completeness, or legal admissibility.",
@@ -1087,6 +1109,13 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           className: "personal",
         },
       }[style];
+      const styleCopy = isRedacted
+        ? {
+            ...baseStyleCopy,
+            title: "Redacted Message Copy",
+            subtitle: "A privacy-redacted copy for sharing. It is not an original record and does not certify authenticity, completeness, or legal admissibility.",
+          }
+        : baseStyleCopy;
       const appendix = options.appendix
         ? `<section class="appendix">
             <h2>${options.appendix.format === "summary" ? "AI Summary" : "AI Key Points"}</h2>
@@ -1112,6 +1141,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   td { padding: 10px 12px; font-size: 13px; line-height: 1.42; vertical-align: top; border-bottom: 1px solid #e7ebf1; }
   .attachment, .message-id { font-size: 11px; margin-top: 4px; color: #697386; }
   .message-id { opacity: .75; }
+  .privacy-notice { margin: 0 0 20px; padding: 14px 16px; border: 1px solid #b36b00; border-radius: 10px; background: #fff5df; color: #5c3900; font-size: 12px; line-height: 1.5; }
+  .privacy-notice strong { display: block; margin-bottom: 3px; font-size: 11px; letter-spacing: .7px; text-transform: uppercase; }
+  .redacted-row { background: #fff8eb; }
+  .redacted-label { color: #875400; font-style: italic; }
   .appendix { margin-top: 22px; padding: 20px; background: #fff; border-radius: 12px; }
   .appendix h2 { margin: 0 0 8px; font-size: 17px; }
   .appendix-note { margin: 0 0 12px; font-size: 11px; line-height: 1.45; color: #697386; }
@@ -1140,11 +1173,13 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     <p>${styleCopy.subtitle}</p>
     <div class="metadata">
       <span><strong>Exported:</strong> ${escapeHtml(new Date().toLocaleString("en-US"))}</span>
-      <span><strong>Messages:</strong> ${msgs.length}</span>
+      <span><strong>Messages:</strong> ${isRedacted ? `${msgs.length} included of ${allMsgs.length}` : msgs.length}</span>
       <span><strong>Scope:</strong> ${escapeHtml(options.scopeLabel ?? "Whole thread")}</span>
       <span><strong>Source:</strong> ${escapeHtml(options.sourceLabel ?? "Messages available on this device")}</span>
+      ${isRedacted ? `<span><strong>Privacy:</strong> Redacted copy — ${!showParticipantNames ? "participant names hidden" : "participant names shown"}${excludedMessages.length ? `; ${excludedMessages.length} message${excludedMessages.length === 1 ? "" : "s"} excluded` : ""}.</span>` : ""}
     </div>
   </div>
+  ${isRedacted ? `<div class="privacy-notice"><strong>Privacy-redacted copy</strong>This PDF has been modified for sharing. It is not an original record. ${!showParticipantNames ? "Participant names are hidden. " : ""}${excludedMessages.length ? `${excludedMessages.length} message${excludedMessages.length === 1 ? "" : "s"} ${excludedMessages.length === 1 ? "is" : "are"} excluded below without its text.` : ""}</div>` : ""}
   <table>
     <thead>
       <tr>

@@ -7,6 +7,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Modal,
   Platform,
@@ -45,6 +46,7 @@ export default function ChatSettingsScreen() {
     generateChatPdfHtml,
     getChatMessages,
     getDecryptedMessages,
+    getContactById,
     replaceChatMessages,
     deleteChat,
     pinChat,
@@ -90,6 +92,14 @@ export default function ChatSettingsScreen() {
   const [pdfStyle, setPdfStyle] = useState<PdfExportStyle>("personal");
   const [pdfAppendix, setPdfAppendix] = useState<"none" | "summary" | "bullets">("none");
   const [aiExportConsent, setAiExportConsent] = useState(false);
+  const [pdfPrivacyReview, setPdfPrivacyReview] = useState(false);
+  const [pdfShowParticipantNames, setPdfShowParticipantNames] = useState(true);
+  const [pdfExcludedMessageIds, setPdfExcludedMessageIds] = useState<string[]>([]);
+  const [pdfLocalMessages, setPdfLocalMessages] = useState<PdfExportMessage[]>([]);
+  const [pdfResolvedMessages, setPdfResolvedMessages] = useState<PdfExportMessage[]>([]);
+  const [pdfSourceLabel, setPdfSourceLabel] = useState("Messages available on this device");
+  const [pdfLoadingMessages, setPdfLoadingMessages] = useState(false);
+  const [pdfFullHistoryAvailable, setPdfFullHistoryAvailable] = useState(true);
   const selectedMessageIds = typeof selectedIds === "string"
     ? selectedIds.split(",").filter(Boolean)
     : [];
@@ -293,12 +303,38 @@ export default function ChatSettingsScreen() {
     setPasscodeStep("enter");
   };
 
-  const openPdfExportOptions = () => {
+  const openPdfExportOptions = async () => {
     setPdfScope(selectedMessageIds.length > 0 ? "selected" : "whole");
     setPdfStyle("personal");
     setPdfAppendix("none");
     setAiExportConsent(false);
+    setPdfPrivacyReview(false);
+    setPdfShowParticipantNames(true);
+    setPdfExcludedMessageIds([]);
+    const localMessages = getDecryptedMessages(id);
+    setPdfLocalMessages(localMessages);
+    setPdfResolvedMessages(localMessages);
+    setPdfSourceLabel("Messages available on this device");
+    setPdfFullHistoryAvailable(!chat.isServerChat);
     setShowPdfExportOptions(true);
+
+    if (!chat.isServerChat) return;
+    setPdfLoadingMessages(true);
+    const serverExport = await exportServerChat(id);
+    if (serverExport) {
+      setPdfResolvedMessages(serverExport.messages.map((message) => ({
+        id: message.id,
+        senderId: message.senderId,
+        senderName: message.senderName,
+        text: message.type === "text" ? message.text : `[${message.type} attachment]`,
+        timestamp: message.createdAt,
+      })));
+      setPdfSourceLabel("Complete history available from ZIVR");
+      setPdfFullHistoryAvailable(true);
+    } else {
+      setPdfFullHistoryAvailable(false);
+    }
+    setPdfLoadingMessages(false);
   };
 
   const handleExportPDF = async () => {
@@ -310,51 +346,52 @@ export default function ChatSettingsScreen() {
       Alert.alert("Confirm AI appendix", "Please confirm that the selected export text may be sent to ZIVR's AI service.");
       return;
     }
+    if (pdfLoadingMessages) {
+      Alert.alert("Preparing messages", "Wait for the complete message list to finish loading before generating the PDF.");
+      return;
+    }
+    if (pdfScope === "whole" && chat.isServerChat && !pdfFullHistoryAvailable) {
+      Alert.alert(
+        "Full history unavailable",
+        "ZIVR could not retrieve the complete thread. Reconnect and reopen PDF export rather than sharing an unreviewed partial copy."
+      );
+      return;
+    }
 
     setExporting(true);
     try {
-      let exportMessages: PdfExportMessage[] | undefined;
-      let sourceLabel = "Messages available on this device";
-
-      if (pdfScope === "whole" && chat.isServerChat) {
-        const serverExport = await exportServerChat(id);
-        if (!serverExport) {
-          Alert.alert(
-            "Full history unavailable",
-            "ZIVR could not retrieve the complete thread. Reconnect and try again rather than exporting a partial record."
-          );
-          return;
-        }
-        exportMessages = serverExport.messages.map((message) => ({
-          id: message.id,
-          senderId: message.senderId,
-          senderName: message.senderName,
-          text: message.type === "text" ? message.text : `[${message.type} attachment]`,
-          timestamp: message.createdAt,
-        }));
-        sourceLabel = "Complete history available from ZIVR";
-      }
-
+      const exportMessages = pdfScope === "selected"
+        ? pdfLocalMessages.filter((message) => selectedMessageIds.includes(message.id))
+        : pdfResolvedMessages;
       if (pdfScope === "selected") {
-        exportMessages = getDecryptedMessages(id).filter((message) => selectedMessageIds.includes(message.id));
-        if (exportMessages.length === 0) {
-          Alert.alert("Selected messages unavailable", "The selected messages are no longer available. Return to the chat and select them again.");
+        if (exportMessages.length !== selectedMessageIds.length) {
+          Alert.alert("Selected messages unavailable", "One or more selected messages are no longer available. Return to the chat and select them again.");
           return;
         }
-        sourceLabel = "Selected messages available on this device";
       }
 
-      const messagesForAppendix: PdfExportMessage[] = exportMessages ?? getDecryptedMessages(id);
+      const privacy = pdfPrivacyReview
+        ? {
+            showParticipantNames: pdfShowParticipantNames,
+            excludedMessageIds: pdfExcludedMessageIds,
+          }
+        : undefined;
+      const showParticipantNames = privacy?.showParticipantNames !== false;
+      const excludedMessageIds = new Set(privacy?.excludedMessageIds ?? []);
+      const messagesForAppendix: PdfExportMessage[] = exportMessages;
+      const messagesForAi = messagesForAppendix.filter((message) => !excludedMessageIds.has(message.id));
       let appendix: PdfExportAppendix | undefined;
       let appendixUnavailable = false;
       if (pdfAppendix !== "none") {
         const aiResult = await summarizeChatForExport({
-          chatName: chat.name,
+          chatName: showParticipantNames ? chat.name : "Private conversation",
           format: pdfAppendix,
-          messages: messagesForAppendix
+          messages: messagesForAi
             .filter((message) => !!message.text?.trim())
             .map((message) => ({
-              senderName: message.senderName || (message.senderId === "me" ? profile.displayName : message.senderId),
+              senderName: showParticipantNames
+                ? message.senderName || (message.senderId === "me" ? profile.displayName : message.senderId)
+                : "[Participant name redacted]",
               text: message.text,
               timestamp: message.timestamp,
             })),
@@ -371,7 +408,8 @@ export default function ChatSettingsScreen() {
         messages: exportMessages,
         appendix,
         scopeLabel: pdfScope === "selected" ? `${selectedMessageIds.length} selected message${selectedMessageIds.length === 1 ? "" : "s"}` : "Whole thread",
-        sourceLabel,
+        sourceLabel: pdfScope === "selected" ? "Selected messages available on this device" : pdfSourceLabel,
+        privacy,
       });
       const { uri } = await Print.printToFileAsync({ html });
       await Sharing.shareAsync(uri, {
@@ -836,8 +874,17 @@ export default function ChatSettingsScreen() {
             <View style={[styles.pdfCard, { backgroundColor: colors.surface }]}>
               <PdfOption
                 label="Whole thread"
-                subtitle={chat.isServerChat ? "Uses the complete history available from ZIVR when connected" : "Messages available on this device"}
+                subtitle={
+                  chat.isServerChat
+                    ? pdfLoadingMessages
+                      ? "Loading the complete history from ZIVR…"
+                      : pdfFullHistoryAvailable
+                        ? "Complete history loaded and ready for review"
+                        : "Complete history unavailable — reconnect and reopen export"
+                    : "Messages available on this device"
+                }
                 selected={pdfScope === "whole"}
+                disabled={chat.isServerChat && (pdfLoadingMessages || !pdfFullHistoryAvailable)}
                 colors={colors}
                 onPress={() => setPdfScope("whole")}
               />
@@ -876,6 +923,127 @@ export default function ChatSettingsScreen() {
               />
             </View>
 
+            <Text style={[styles.pdfSectionTitle, { color: colors.textTertiary }]}>PRIVACY REVIEW (OPTIONAL)</Text>
+            <View style={[styles.pdfCard, { backgroundColor: colors.surface }]}>
+              {pdfLoadingMessages && (
+                <View style={styles.pdfLoadingReview}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pdfOptionLabel, { color: colors.text }]}>Loading the review set</Text>
+                    <Text style={[styles.pdfOptionSubtitle, { color: colors.textSecondary }]}>
+                      Privacy controls will appear after the complete server history is ready.
+                    </Text>
+                  </View>
+                </View>
+              )}
+              {!pdfLoadingMessages && (
+                <>
+              <View style={[styles.pdfPrivacyToggle, { borderBottomColor: colors.border }]}>
+                <View style={styles.pdfPrivacyIcon}>
+                  <Ionicons name="shield-checkmark-outline" size={20} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.pdfOptionLabel, { color: colors.text }]}>Review for privacy before sharing</Text>
+                  <Text style={[styles.pdfOptionSubtitle, { color: colors.textSecondary }]}>
+                    Hide participant names or leave out individual messages without changing this chat.
+                  </Text>
+                </View>
+                <Switch
+                  testID="pdf-privacy-review-toggle"
+                  value={pdfPrivacyReview}
+                  onValueChange={(value) => {
+                    Haptics.selectionAsync();
+                    setPdfPrivacyReview(value);
+                  }}
+                  trackColor={{ false: colors.border, true: colors.primary + "80" }}
+                  thumbColor={pdfPrivacyReview ? colors.primary : colors.textTertiary}
+                />
+              </View>
+
+              {pdfPrivacyReview && (
+                <>
+                  <View style={styles.pdfPrivacyToggle}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.pdfOptionLabel, { color: colors.text }]}>Show participant names</Text>
+                      <Text style={[styles.pdfOptionSubtitle, { color: colors.textSecondary }]}>
+                        {pdfShowParticipantNames ? "Names will appear in the PDF." : "Names and the conversation title will be replaced."}
+                      </Text>
+                    </View>
+                    <Switch
+                      testID="pdf-show-participant-names-toggle"
+                      value={pdfShowParticipantNames}
+                      onValueChange={(value) => {
+                        Haptics.selectionAsync();
+                        setPdfShowParticipantNames(value);
+                      }}
+                      trackColor={{ false: colors.border, true: colors.primary + "80" }}
+                      thumbColor={pdfShowParticipantNames ? colors.primary : colors.textTertiary}
+                    />
+                  </View>
+
+                  <View style={[styles.pdfExcludedSection, { borderTopColor: colors.border }]}>
+                    <Text style={[styles.pdfOptionLabel, { color: colors.text }]}>Messages to exclude</Text>
+                    <Text style={[styles.pdfOptionSubtitle, { color: colors.textSecondary }]}>
+                      Tap a message to exclude its text from the shared PDF.
+                    </Text>
+                    {(() => {
+                      const reviewMessages = (pdfScope === "selected" ? pdfLocalMessages : pdfResolvedMessages)
+                        .filter((message) => !message.deleted)
+                        .filter((message) => pdfScope === "whole" || selectedMessageIds.includes(message.id))
+                        .sort((a, b) => a.timestamp - b.timestamp);
+                      if (!reviewMessages.length) {
+                        return (
+                          <Text style={[styles.pdfEmptyReview, { color: colors.textTertiary }]}>
+                            No messages are available for review on this device.
+                          </Text>
+                        );
+                      }
+                      return reviewMessages.map((message) => {
+                        const excluded = pdfExcludedMessageIds.includes(message.id);
+                        const sender = message.senderId === "me"
+                          ? profile.displayName
+                          : getContactById(message.senderId)?.name ?? message.senderId ?? "Participant";
+                        const preview = message.text?.trim() || (message.audioAttachment ? "Audio message" : message.imageAttachment ? "Image message" : "Attachment");
+                        return (
+                          <Pressable
+                            key={message.id}
+                            testID={`pdf-exclude-message-${message.id}`}
+                            onPress={() => {
+                              Haptics.selectionAsync();
+                              setPdfExcludedMessageIds((current) =>
+                                current.includes(message.id)
+                                  ? current.filter((messageId) => messageId !== message.id)
+                                  : [...current, message.id]
+                              );
+                            }}
+                            style={({ pressed }) => [
+                              styles.pdfMessageReviewRow,
+                              { borderTopColor: colors.border, opacity: pressed ? 0.7 : 1 },
+                            ]}
+                          >
+                            <Ionicons
+                              name={excluded ? "checkbox" : "square-outline"}
+                              size={21}
+                              color={excluded ? colors.primary : colors.textTertiary}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.pdfReviewSender, { color: colors.text }]} numberOfLines={1}>{sender}</Text>
+                              <Text style={[styles.pdfReviewPreview, { color: colors.textSecondary }]} numberOfLines={2}>{preview}</Text>
+                            </View>
+                            <Text style={[styles.pdfReviewDate, { color: colors.textTertiary }]}>
+                              {new Date(message.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                            </Text>
+                          </Pressable>
+                        );
+                      });
+                    })()}
+                  </View>
+                </>
+              )}
+                </>
+              )}
+            </View>
+
             <Text style={[styles.pdfSectionTitle, { color: colors.textTertiary }]}>OPTIONAL AI APPENDIX</Text>
             <View style={[styles.pdfCard, { backgroundColor: colors.surface }]}>
               <PdfOption label="None" subtitle="Export messages only" selected={pdfAppendix === "none"} colors={colors} onPress={() => setPdfAppendix("none")} />
@@ -901,8 +1069,9 @@ export default function ChatSettingsScreen() {
 
             <Pressable
               style={[styles.pdfExportButton, { backgroundColor: colors.primary, opacity: exporting ? 0.6 : 1 }]}
-              disabled={exporting}
+              disabled={exporting || pdfLoadingMessages || (pdfScope === "whole" && chat.isServerChat && !pdfFullHistoryAvailable)}
               onPress={handleExportPDF}
+              testID="pdf-generate-button"
             >
               <Ionicons name="share-outline" size={19} color="#fff" />
               <Text style={styles.pdfExportButtonText}>{exporting ? "Generating PDF…" : "Generate PDF"}</Text>
@@ -1139,6 +1308,53 @@ const styles = StyleSheet.create({
   },
   pdfOptionLabel: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   pdfOptionSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 3, lineHeight: 16 },
+  pdfPrivacyToggle: {
+    minHeight: 72,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+  },
+  pdfLoadingReview: {
+    minHeight: 82,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 14,
+  },
+  pdfPrivacyIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(10,132,255,0.10)",
+  },
+  pdfExcludedSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 15,
+    paddingTop: 13,
+    paddingBottom: 4,
+  },
+  pdfEmptyReview: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    paddingVertical: 14,
+  },
+  pdfMessageReviewRow: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 12,
+    paddingTop: 10,
+  },
+  pdfReviewSender: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  pdfReviewPreview: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2, lineHeight: 16 },
+  pdfReviewDate: { fontSize: 11, fontFamily: "Inter_400Regular", alignSelf: "flex-start", paddingTop: 2 },
   aiConsent: {
     flexDirection: "row",
     alignItems: "flex-start",
