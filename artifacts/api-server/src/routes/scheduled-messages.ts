@@ -28,6 +28,8 @@ type ScheduledRow = {
   updated_at: string | number;
   sent_message_id: string | null;
   failure_reason: string | null;
+  approval_reminder_minutes: number | null;
+  reminder_sent_at: string | number | null;
 };
 
 function serialize(row: ScheduledRow) {
@@ -42,6 +44,8 @@ function serialize(row: ScheduledRow) {
     updatedAt: Number(row.updated_at),
     sentMessageId: row.sent_message_id,
     failureReason: row.failure_reason,
+    approvalReminderMinutes: row.approval_reminder_minutes,
+    reminderSentAt: row.reminder_sent_at == null ? null : Number(row.reminder_sent_at),
   };
 }
 
@@ -49,6 +53,11 @@ function parseInput(body: unknown, partial = false) {
   const value = body && typeof body === "object" ? body as Record<string, unknown> : {};
   const text = typeof value.text === "string" ? value.text.trim() : undefined;
   const scheduledFor = typeof value.scheduledFor === "number" ? value.scheduledFor : undefined;
+  const hasReminder = Object.prototype.hasOwnProperty.call(value, "approvalReminderMinutes");
+  const approvalReminderMinutes =
+    value.approvalReminderMinutes === null ? null :
+    typeof value.approvalReminderMinutes === "number" ? value.approvalReminderMinutes :
+    undefined;
   const now = Date.now();
 
   if (!partial && typeof value.chatId !== "string") return { error: "chatId is required" };
@@ -63,13 +72,19 @@ function parseInput(body: unknown, partial = false) {
   if (scheduledFor !== undefined && scheduledFor > now + MAX_LEAD_MS) {
     return { error: "Scheduled time must be within one year" };
   }
-  if (partial && text === undefined && scheduledFor === undefined) {
+  if (hasReminder && approvalReminderMinutes !== null &&
+      (!Number.isInteger(approvalReminderMinutes) || ![1, 5, 15, 30, 60].includes(approvalReminderMinutes!))) {
+    return { error: "Approval reminder must be 1, 5, 15, 30, or 60 minutes" };
+  }
+  if (partial && text === undefined && scheduledFor === undefined && !hasReminder) {
     return { error: "Provide text or scheduledFor to update" };
   }
   return {
     chatId: typeof value.chatId === "string" ? value.chatId : undefined,
     text,
     scheduledFor,
+    approvalReminderMinutes,
+    hasReminder,
   };
 }
 
@@ -143,10 +158,10 @@ router.post("/", async (req, res) => {
   const now = Date.now();
   const row = await queryOne<ScheduledRow>(
     `INSERT INTO vm_scheduled_messages
-       (sender_id, chat_id, text, scheduled_for, status, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, 'pending', $5, $5)
-     RETURNING *, $6::text AS chat_name`,
-    [senderId, input.chatId, input.text, input.scheduledFor, now, permission.chatName ?? "Chat"],
+       (sender_id, chat_id, text, scheduled_for, approval_reminder_minutes, status, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6)
+     RETURNING *, $7::text AS chat_name`,
+    [senderId, input.chatId, input.text, input.scheduledFor, input.approvalReminderMinutes, now, permission.chatName ?? "Chat"],
   );
   return res.status(201).json(serialize(row!));
 });
@@ -169,10 +184,24 @@ router.patch("/:scheduledMessageId", async (req, res) => {
     `UPDATE vm_scheduled_messages
         SET text = COALESCE($3, text),
             scheduled_for = COALESCE($4, scheduled_for),
-            updated_at = $5
+            approval_reminder_minutes = CASE WHEN $5::boolean THEN $6 ELSE approval_reminder_minutes END,
+            reminder_sent_at = CASE
+              WHEN $4 IS NOT NULL OR $5::boolean THEN NULL
+              ELSE reminder_sent_at
+            END,
+            updated_at = $7
       WHERE id = $1 AND sender_id = $2 AND status = 'pending'
-      RETURNING *, $6::text AS chat_name`,
-    [existing.id, senderId, input.text ?? null, input.scheduledFor ?? null, Date.now(), existing.chat_name],
+      RETURNING *, $8::text AS chat_name`,
+    [
+      existing.id,
+      senderId,
+      input.text ?? null,
+      input.scheduledFor ?? null,
+      input.hasReminder,
+      input.approvalReminderMinutes ?? null,
+      Date.now(),
+      existing.chat_name,
+    ],
   );
   if (!row) return res.status(409).json({ error: "This message is already being sent" });
   return res.json(serialize(row));
@@ -194,6 +223,39 @@ router.delete("/:scheduledMessageId", async (req, res) => {
 
 async function dispatchDueMessages() {
   const now = Date.now();
+  const reminders = await query<ScheduledRow & { push_token: string | null }>(
+    `UPDATE vm_scheduled_messages sm
+        SET reminder_sent_at = $1, updated_at = $1
+       FROM vm_users sender, vm_chats c
+      WHERE sm.sender_id = sender.id
+        AND sm.chat_id = c.id
+        AND sm.status = 'pending'
+        AND sm.approval_reminder_minutes IS NOT NULL
+        AND sm.reminder_sent_at IS NULL
+        AND sm.scheduled_for > $1
+        AND sm.scheduled_for - (sm.approval_reminder_minutes * 60000::bigint) <= $1
+      RETURNING sm.*, sender.push_token, COALESCE(c.name, 'Chat') AS chat_name`,
+    [now],
+  );
+  for (const reminder of reminders) {
+    if (!reminder.push_token?.startsWith("ExponentPushToken")) continue;
+    const sendTime = new Date(Number(reminder.scheduled_for)).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    await sendExpoPush(
+      [reminder.push_token],
+      "Scheduled message ready",
+      `“${reminder.text.slice(0, 70)}${reminder.text.length > 70 ? "…" : ""}” sends to ${reminder.chat_name ?? "your chat"} at ${sendTime}.`,
+      "default",
+      {
+        type: "scheduled_message_approval",
+        scheduledMessageId: reminder.id,
+        chatId: reminder.chat_id,
+      },
+      "scheduled-message-approval",
+    );
+  }
   await query(
     `UPDATE vm_scheduled_messages SET status = 'pending', updated_at = $1
       WHERE status = 'sending' AND updated_at < $2`,

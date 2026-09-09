@@ -51,6 +51,17 @@ export const ListScheduledMessagesResponse = zod.object({
       updatedAt: zod.number(),
       sentMessageId: zod.string().nullish(),
       failureReason: zod.string().nullish(),
+      approvalReminderMinutes: zod
+        .union([
+          zod.literal(1),
+          zod.literal(5),
+          zod.literal(15),
+          zod.literal(30),
+          zod.literal(60),
+          zod.literal(null),
+        ])
+        .nullish(),
+      reminderSentAt: zod.number().nullish(),
     }),
   ),
 });
@@ -64,6 +75,16 @@ export const CreateScheduledMessageBody = zod.object({
   chatId: zod.string(),
   text: zod.string().min(1).max(createScheduledMessageBodyTextMax),
   scheduledFor: zod.number(),
+  approvalReminderMinutes: zod
+    .union([
+      zod.literal(1),
+      zod.literal(5),
+      zod.literal(15),
+      zod.literal(30),
+      zod.literal(60),
+      zod.literal(null),
+    ])
+    .nullish(),
 });
 
 /**
@@ -78,6 +99,16 @@ export const updateScheduledMessageBodyTextMax = 2000;
 export const UpdateScheduledMessageBody = zod.object({
   text: zod.string().min(1).max(updateScheduledMessageBodyTextMax).optional(),
   scheduledFor: zod.number().optional(),
+  approvalReminderMinutes: zod
+    .union([
+      zod.literal(1),
+      zod.literal(5),
+      zod.literal(15),
+      zod.literal(30),
+      zod.literal(60),
+      zod.literal(null),
+    ])
+    .nullish(),
 });
 
 export const UpdateScheduledMessageResponse = zod.object({
@@ -91,6 +122,17 @@ export const UpdateScheduledMessageResponse = zod.object({
   updatedAt: zod.number(),
   sentMessageId: zod.string().nullish(),
   failureReason: zod.string().nullish(),
+  approvalReminderMinutes: zod
+    .union([
+      zod.literal(1),
+      zod.literal(5),
+      zod.literal(15),
+      zod.literal(30),
+      zod.literal(60),
+      zod.literal(null),
+    ])
+    .nullish(),
+  reminderSentAt: zod.number().nullish(),
 });
 
 /**

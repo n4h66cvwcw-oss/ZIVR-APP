@@ -38,6 +38,21 @@ export const ScheduledMessageStatus = {
   failed: "failed",
 } as const;
 
+/**
+ * @nullable
+ */
+export type ScheduledMessageApprovalReminderMinutes =
+  | (typeof ScheduledMessageApprovalReminderMinutes)[keyof typeof ScheduledMessageApprovalReminderMinutes]
+  | null;
+
+export const ScheduledMessageApprovalReminderMinutes = {
+  NUMBER_1: 1,
+  NUMBER_5: 5,
+  NUMBER_15: 15,
+  NUMBER_30: 30,
+  NUMBER_60: 60,
+} as const;
+
 export interface ScheduledMessage {
   id: string;
   chatId: string;
@@ -51,7 +66,26 @@ export interface ScheduledMessage {
   sentMessageId?: string | null;
   /** @nullable */
   failureReason?: string | null;
+  /** @nullable */
+  approvalReminderMinutes?: ScheduledMessageApprovalReminderMinutes;
+  /** @nullable */
+  reminderSentAt?: number | null;
 }
+
+/**
+ * @nullable
+ */
+export type ScheduledMessageInputApprovalReminderMinutes =
+  | (typeof ScheduledMessageInputApprovalReminderMinutes)[keyof typeof ScheduledMessageInputApprovalReminderMinutes]
+  | null;
+
+export const ScheduledMessageInputApprovalReminderMinutes = {
+  NUMBER_1: 1,
+  NUMBER_5: 5,
+  NUMBER_15: 15,
+  NUMBER_30: 30,
+  NUMBER_60: 60,
+} as const;
 
 export interface ScheduledMessageInput {
   chatId: string;
@@ -61,7 +95,24 @@ export interface ScheduledMessageInput {
    */
   text: string;
   scheduledFor: number;
+  /** @nullable */
+  approvalReminderMinutes?: ScheduledMessageInputApprovalReminderMinutes;
 }
+
+/**
+ * @nullable
+ */
+export type ScheduledMessageUpdateApprovalReminderMinutes =
+  | (typeof ScheduledMessageUpdateApprovalReminderMinutes)[keyof typeof ScheduledMessageUpdateApprovalReminderMinutes]
+  | null;
+
+export const ScheduledMessageUpdateApprovalReminderMinutes = {
+  NUMBER_1: 1,
+  NUMBER_5: 5,
+  NUMBER_15: 15,
+  NUMBER_30: 30,
+  NUMBER_60: 60,
+} as const;
 
 export interface ScheduledMessageUpdate {
   /**
@@ -70,6 +121,8 @@ export interface ScheduledMessageUpdate {
    */
   text?: string;
   scheduledFor?: number;
+  /** @nullable */
+  approvalReminderMinutes?: ScheduledMessageUpdateApprovalReminderMinutes;
 }
 
 export type ListScheduledMessages200 = {

@@ -124,6 +124,8 @@ export type ScheduledMessage = {
   updatedAt: number;
   sentMessageId?: string | null;
   failureReason?: string | null;
+  approvalReminderMinutes?: number | null;
+  reminderSentAt?: number | null;
 };
 
 interface ServerContextValue {
@@ -167,8 +169,8 @@ interface ServerContextValue {
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
   sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
   listScheduledMessages: () => Promise<ScheduledMessage[]>;
-  createScheduledMessage: (input: { chatId: string; text: string; scheduledFor: number }) => Promise<ScheduledMessage>;
-  updateScheduledMessage: (id: string, input: { text?: string; scheduledFor?: number }) => Promise<ScheduledMessage>;
+  createScheduledMessage: (input: { chatId: string; text: string; scheduledFor: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
+  updateScheduledMessage: (id: string, input: { text?: string; scheduledFor?: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
   cancelScheduledMessage: (id: string) => Promise<void>;
   fetchUserChats: (userId: string) => Promise<ServerChat[]>;
   onNewMessage: (handler: MessageHandler) => () => void;
@@ -738,13 +740,13 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   }, [scheduledRequest]);
 
   const createScheduledMessage = useCallback(
-    (input: { chatId: string; text: string; scheduledFor: number }) =>
+    (input: { chatId: string; text: string; scheduledFor: number; approvalReminderMinutes?: number | null }) =>
       scheduledRequest<ScheduledMessage>("", { method: "POST", body: JSON.stringify(input) }),
     [scheduledRequest],
   );
 
   const updateScheduledMessage = useCallback(
-    (id: string, input: { text?: string; scheduledFor?: number }) =>
+    (id: string, input: { text?: string; scheduledFor?: number; approvalReminderMinutes?: number | null }) =>
       scheduledRequest<ScheduledMessage>(`/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
     [scheduledRequest],
   );

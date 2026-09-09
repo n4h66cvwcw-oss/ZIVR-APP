@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ScheduledMessageUpdateApprovalReminderMinutes } from "./scheduledMessageUpdateApprovalReminderMinutes";
 
 export interface ScheduledMessageUpdate {
   /**
@@ -13,4 +14,6 @@ export interface ScheduledMessageUpdate {
    */
   text?: string;
   scheduledFor?: number;
+  /** @nullable */
+  approvalReminderMinutes?: ScheduledMessageUpdateApprovalReminderMinutes;
 }

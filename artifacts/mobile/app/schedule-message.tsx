@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useColorScheme } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useColorScheme } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Colors from "@/constants/colors";
 import { useMessaging } from "@/context/MessagingContext";
@@ -27,6 +27,8 @@ export default function ScheduleMessageScreen() {
   const [dateText, setDateText] = useState(initial.date);
   const [timeText, setTimeText] = useState(initial.time);
   const [saving, setSaving] = useState(false);
+  const [approvalReminderEnabled, setApprovalReminderEnabled] = useState(false);
+  const [approvalReminderMinutes, setApprovalReminderMinutes] = useState(5);
 
   useEffect(() => {
     if (!scheduledId) return;
@@ -38,6 +40,8 @@ export default function ScheduleMessageScreen() {
       setText(item.text);
       setDateText(value.date);
       setTimeText(value.time);
+      setApprovalReminderEnabled(item.approvalReminderMinutes != null);
+      setApprovalReminderMinutes(item.approvalReminderMinutes ?? 5);
     }).catch(() => Alert.alert("Couldn't load message", "It may already have been sent or cancelled."));
   }, [listScheduledMessages, scheduledId]);
 
@@ -50,8 +54,9 @@ export default function ScheduleMessageScreen() {
     }
     setSaving(true);
     try {
-      if (scheduledId) await updateScheduledMessage(scheduledId, { text: text.trim(), scheduledFor: timestamp });
-      else await createScheduledMessage({ chatId: selectedChatId, text: text.trim(), scheduledFor: timestamp });
+      const reminder = approvalReminderEnabled ? approvalReminderMinutes : null;
+      if (scheduledId) await updateScheduledMessage(scheduledId, { text: text.trim(), scheduledFor: timestamp, approvalReminderMinutes: reminder });
+      else await createScheduledMessage({ chatId: selectedChatId, text: text.trim(), scheduledFor: timestamp, approvalReminderMinutes: reminder });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace("/scheduled");
     } catch (error) {
@@ -103,6 +108,39 @@ export default function ScheduleMessageScreen() {
           </View>
         </View>
         <Text style={[styles.help, { color: colors.textSecondary }]}>Uses this device's local time. The message will send even if the app is closed.</Text>
+
+        <View style={[styles.reminderCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={{ flex: 1, gap: 3 }}>
+            <Text style={[styles.reminderTitle, { color: colors.text }]}>Final approval reminder</Text>
+            <Text style={[styles.help, { color: colors.textSecondary }]}>Get a notification with options to keep or cancel this message. Ignoring it sends as planned.</Text>
+          </View>
+          <Switch
+            value={approvalReminderEnabled}
+            onValueChange={setApprovalReminderEnabled}
+            trackColor={{ true: colors.primary }}
+          />
+        </View>
+        {approvalReminderEnabled && (
+          <View style={styles.reminderOptions}>
+            {[1, 5, 15, 30].map((minutes) => (
+              <Pressable
+                key={minutes}
+                onPress={() => setApprovalReminderMinutes(minutes)}
+                style={[
+                  styles.reminderChip,
+                  {
+                    backgroundColor: approvalReminderMinutes === minutes ? colors.primary : colors.surface,
+                    borderColor: approvalReminderMinutes === minutes ? colors.primary : colors.border,
+                  },
+                ]}
+              >
+                <Text style={{ color: approvalReminderMinutes === minutes ? "#fff" : colors.text, fontFamily: "Inter_600SemiBold" }}>
+                  {minutes} min
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
         <Pressable onPress={save} disabled={saving} style={[styles.saveButton, { backgroundColor: saving ? colors.textTertiary : colors.primary }]}>
           <Ionicons name="time-outline" size={20} color="#fff" />
           <Text style={styles.saveText}>{saving ? "Saving…" : scheduledId ? "Update scheduled message" : "Schedule message"}</Text>
@@ -128,6 +166,10 @@ const styles = StyleSheet.create({
   fieldLabel: { fontSize: 12, marginBottom: 5 },
   field: { height: 48, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 12, fontSize: 16 },
   help: { fontSize: 13, lineHeight: 18 },
+  reminderCard: { marginTop: 14, padding: 14, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, flexDirection: "row", alignItems: "center", gap: 12 },
+  reminderTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  reminderOptions: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  reminderChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth },
   saveButton: { marginTop: 20, height: 52, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   saveText: { color: "#fff", fontSize: 16, fontFamily: "Inter_600SemiBold" },
 });

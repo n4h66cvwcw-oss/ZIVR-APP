@@ -93,6 +93,14 @@ export async function migrate(): Promise<void> {
       ON vm_scheduled_messages (sender_id, scheduled_for)
       WHERE status IN ('pending', 'sending')
   `);
+  await query(`
+    ALTER TABLE vm_scheduled_messages
+    ADD COLUMN IF NOT EXISTS approval_reminder_minutes INT
+  `);
+  await query(`
+    ALTER TABLE vm_scheduled_messages
+    ADD COLUMN IF NOT EXISTS reminder_sent_at BIGINT
+  `);
 
   // Cloud backup for local chats
   await query(`

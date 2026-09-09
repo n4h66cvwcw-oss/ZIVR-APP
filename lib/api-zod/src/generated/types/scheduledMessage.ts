@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ScheduledMessageApprovalReminderMinutes } from "./scheduledMessageApprovalReminderMinutes";
 import type { ScheduledMessageStatus } from "./scheduledMessageStatus";
 
 export interface ScheduledMessage {
@@ -20,4 +21,8 @@ export interface ScheduledMessage {
   sentMessageId?: string | null;
   /** @nullable */
   failureReason?: string | null;
+  /** @nullable */
+  approvalReminderMinutes?: ScheduledMessageApprovalReminderMinutes;
+  /** @nullable */
+  reminderSentAt?: number | null;
 }

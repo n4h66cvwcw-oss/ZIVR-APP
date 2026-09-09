@@ -79,6 +79,14 @@ export default function ScheduledMessagesScreen() {
                 <Text style={[styles.time, { color: colors.primary }]}>
                   {new Date(item.scheduledFor).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
                 </Text>
+                {item.approvalReminderMinutes != null && (
+                  <View style={styles.reminderLabel}>
+                    <Ionicons name="notifications-outline" size={12} color={colors.textSecondary} />
+                    <Text style={[styles.reminderText, { color: colors.textSecondary }]}>
+                      Final reminder {item.approvalReminderMinutes} min before
+                    </Text>
+                  </View>
+                )}
               </View>
               <View style={styles.actions}>
                 <Pressable onPress={() => router.push({ pathname: "/schedule-message", params: { scheduledId: item.id } })}>
@@ -119,6 +127,8 @@ const styles = StyleSheet.create({
   chatName: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   message: { fontSize: 14, lineHeight: 19, fontFamily: "Inter_400Regular" },
   time: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
+  reminderLabel: { flexDirection: "row", alignItems: "center", gap: 4 },
+  reminderText: { fontSize: 11, fontFamily: "Inter_500Medium" },
   actions: { justifyContent: "space-around", paddingLeft: 6 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 40, gap: 12 },
   emptyTitle: { fontSize: 21, fontFamily: "Inter_700Bold" },

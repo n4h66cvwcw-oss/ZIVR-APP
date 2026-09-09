@@ -54,11 +54,62 @@ function OnboardingGate() {
 function PushRegistrar() {
   const { serverUserId, updateServerProfile } = useServer();
   useEffect(() => {
+    void Notifications.setNotificationCategoryAsync("scheduled-message-approval", [
+      {
+        identifier: "scheduled-send-as-planned",
+        buttonTitle: "Send as planned",
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: "scheduled-cancel",
+        buttonTitle: "Cancel message",
+        options: { isDestructive: true, opensAppToForeground: true },
+      },
+    ]);
+  }, []);
+  useEffect(() => {
     if (!serverUserId) return;
     registerForPushNotificationsAsync().then((token) => {
       if (token) updateServerProfile(serverUserId, { pushToken: token });
     });
   }, [serverUserId]);
+  return null;
+}
+
+function ScheduledMessageNotifications() {
+  const { cancelScheduledMessage } = useServer();
+
+  useEffect(() => {
+    const handleResponse = async (response: Notifications.NotificationResponse) => {
+      const data = response.notification.request.content.data;
+      if (data?.type !== "scheduled_message_approval" || typeof data.scheduledMessageId !== "string") return;
+      if (response.actionIdentifier === "scheduled-cancel") {
+        try {
+          await cancelScheduledMessage(data.scheduledMessageId);
+          Alert.alert("Scheduled message cancelled", "The message will not be sent.");
+        } catch (error) {
+          Alert.alert(
+            "Couldn't cancel message",
+            error instanceof Error ? error.message : "It may already have been sent.",
+          );
+        }
+        router.push("/scheduled");
+        return;
+      }
+      if (response.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER) {
+        router.push("/scheduled");
+      }
+    };
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      void handleResponse(response);
+    });
+    Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (response) void handleResponse(response);
+    }).catch(() => {});
+    return () => subscription.remove();
+  }, [cancelScheduledMessage]);
+
   return null;
 }
 
@@ -510,6 +561,7 @@ function RootLayoutNav() {
       <OnboardingGate />
       <PushRegistrar />
       <ContactApprovalNotifications />
+      <ScheduledMessageNotifications />
       <LanguageSyncer />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

@@ -212,6 +212,12 @@ components:
           type: [string, "null"]
         failureReason:
           type: [string, "null"]
+        approvalReminderMinutes:
+          type: [integer, "null"]
+          enum: [1, 5, 15, 30, 60, null]
+        reminderSentAt:
+          type: [integer, "null"]
+          format: int64
     ScheduledMessageInput:
       type: object
       required: [chatId, text, scheduledFor]
@@ -225,6 +231,9 @@ components:
         scheduledFor:
           type: integer
           format: int64
+        approvalReminderMinutes:
+          type: [integer, "null"]
+          enum: [1, 5, 15, 30, 60, null]
     ScheduledMessageUpdate:
       type: object
       properties:
@@ -235,4 +244,7 @@ components:
         scheduledFor:
           type: integer
           format: int64
+        approvalReminderMinutes:
+          type: [integer, "null"]
+          enum: [1, 5, 15, 30, 60, null]
 

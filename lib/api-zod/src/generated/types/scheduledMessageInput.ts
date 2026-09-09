@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ScheduledMessageInputApprovalReminderMinutes } from "./scheduledMessageInputApprovalReminderMinutes";
 
 export interface ScheduledMessageInput {
   chatId: string;
@@ -14,4 +15,6 @@ export interface ScheduledMessageInput {
    */
   text: string;
   scheduledFor: number;
+  /** @nullable */
+  approvalReminderMinutes?: ScheduledMessageInputApprovalReminderMinutes;
 }

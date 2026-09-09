@@ -4,6 +4,7 @@ export async function sendExpoPush(
   body: string,
   sound: string,
   data: Record<string, unknown> = {},
+  categoryId?: string,
 ) {
   if (!tokens.length) return;
   try {
@@ -17,6 +18,7 @@ export async function sendExpoPush(
           body,
           sound: sound === "none" ? undefined : "default",
           data: { sound, ...data },
+          categoryId,
         }))
       ),
     });
