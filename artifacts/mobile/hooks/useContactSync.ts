@@ -82,16 +82,18 @@ export function useContactSync() {
         systemContacts.map((c) => c.phone?.replace(/\D/g, "")).filter(Boolean)
       );
 
-      // Device contacts: mark as on the app if their number matches a ZIVR user,
-      // otherwise flag as not yet on the app.
+      // Device contacts that remain after matching are not yet on the app.
       const taggedDeviceContacts = appContacts.map((c) => ({
         ...c,
-        hasApp: c.phone
-          ? systemPhones.has(c.phone.replace(/\D/g, ""))
-          : false,
+        hasApp: false,
       }));
 
-      const merged = [...systemContacts, ...taggedDeviceContacts];
+      const unmatchedDeviceContacts = taggedDeviceContacts.filter((c) => {
+        const normalizedPhone = c.phone?.replace(/\D/g, "");
+        return !normalizedPhone || !systemPhones.has(normalizedPhone);
+      });
+
+      const merged = [...systemContacts, ...unmatchedDeviceContacts];
       await AsyncStorage.setItem(CONTACTS_KEY, JSON.stringify(merged));
 
       setSyncedCount(appContacts.length);
