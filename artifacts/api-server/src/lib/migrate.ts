@@ -69,6 +69,31 @@ export async function migrate(): Promise<void> {
     )
   `);
 
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_scheduled_messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      sender_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      chat_id UUID NOT NULL REFERENCES vm_chats(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      scheduled_for BIGINT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'sending', 'sent', 'cancelled', 'failed')),
+      sent_message_id UUID REFERENCES vm_messages(id) ON DELETE SET NULL,
+      failure_reason TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due
+      ON vm_scheduled_messages (scheduled_for) WHERE status = 'pending'
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_scheduled_messages_sender
+      ON vm_scheduled_messages (sender_id, scheduled_for)
+      WHERE status IN ('pending', 'sending')
+  `);
+
   // Cloud backup for local chats
   await query(`
     CREATE TABLE IF NOT EXISTS vm_chat_backups (

@@ -34,3 +34,68 @@ export const UpdateParentAlertPreferencesResponse = zod.object({
   ok: zod.boolean().optional(),
   minimumSeverity: zod.enum(["all", "medium", "high"]),
 });
+
+/**
+ * @summary List the authenticated sender's pending scheduled messages
+ */
+export const ListScheduledMessagesResponse = zod.object({
+  scheduledMessages: zod.array(
+    zod.object({
+      id: zod.string(),
+      chatId: zod.string(),
+      chatName: zod.string(),
+      text: zod.string(),
+      scheduledFor: zod.number(),
+      status: zod.enum(["pending", "sending", "sent", "cancelled", "failed"]),
+      createdAt: zod.number(),
+      updatedAt: zod.number(),
+      sentMessageId: zod.string().nullish(),
+      failureReason: zod.string().nullish(),
+    }),
+  ),
+});
+
+/**
+ * @summary Schedule a text message in a direct or group chat
+ */
+export const createScheduledMessageBodyTextMax = 2000;
+
+export const CreateScheduledMessageBody = zod.object({
+  chatId: zod.string(),
+  text: zod.string().min(1).max(createScheduledMessageBodyTextMax),
+  scheduledFor: zod.number(),
+});
+
+/**
+ * @summary Edit a pending scheduled message owned by the authenticated sender
+ */
+export const UpdateScheduledMessageParams = zod.object({
+  scheduledMessageId: zod.coerce.string(),
+});
+
+export const updateScheduledMessageBodyTextMax = 2000;
+
+export const UpdateScheduledMessageBody = zod.object({
+  text: zod.string().min(1).max(updateScheduledMessageBodyTextMax).optional(),
+  scheduledFor: zod.number().optional(),
+});
+
+export const UpdateScheduledMessageResponse = zod.object({
+  id: zod.string(),
+  chatId: zod.string(),
+  chatName: zod.string(),
+  text: zod.string(),
+  scheduledFor: zod.number(),
+  status: zod.enum(["pending", "sending", "sent", "cancelled", "failed"]),
+  createdAt: zod.number(),
+  updatedAt: zod.number(),
+  sentMessageId: zod.string().nullish(),
+  failureReason: zod.string().nullish(),
+});
+
+/**
+ * @summary Cancel a pending scheduled message owned by the authenticated sender
+ */
+export const CancelScheduledMessageParams = zod.object({
+  scheduledMessageId: zod.coerce.string(),
+});

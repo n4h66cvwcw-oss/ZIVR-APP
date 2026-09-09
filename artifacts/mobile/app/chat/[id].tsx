@@ -584,6 +584,15 @@ export default function ChatScreen() {
             <Ionicons name="chevron-back" size={22} color={colors.primary} />
           </Pressable>
           {/* AI Smart Reply button */}
+          {chat.isServerChat && !isBetaChat && (
+            <Pressable
+              onPress={() => router.push({ pathname: "/schedule-message", params: { chatId: id } })}
+              hitSlop={10}
+              style={[styles.floatingBackBtn, { backgroundColor: colors.surface, borderColor: colors.border, marginLeft: 6 }]}
+            >
+              <Ionicons name="time-outline" size={20} color={colors.primary} />
+            </Pressable>
+          )}
           <Pressable
             onPress={handleAiSuggest}
             hitSlop={10}

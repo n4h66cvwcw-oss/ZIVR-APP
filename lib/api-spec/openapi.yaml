@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: parental
     description: Parent safety preferences
+  - name: scheduled-messages
+    description: Authenticated scheduled chat message operations
 paths:
   /healthz:
     get:
@@ -61,7 +63,100 @@ paths:
           description: Invalid alert threshold
         "401":
           description: Invalid or missing auth token
+  /scheduled-messages:
+    get:
+      operationId: listScheduledMessages
+      tags: [scheduled-messages]
+      summary: List the authenticated sender's pending scheduled messages
+      responses:
+        "200":
+          description: Pending scheduled messages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scheduledMessages]
+                properties:
+                  scheduledMessages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ScheduledMessage"
+        "401":
+          description: Invalid or missing auth token
+    post:
+      operationId: createScheduledMessage
+      tags: [scheduled-messages]
+      summary: Schedule a text message in a direct or group chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduledMessageInput"
+      responses:
+        "201":
+          description: Scheduled message created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduledMessage"
+        "400":
+          description: Invalid message or scheduled time
+        "401":
+          description: Invalid or missing auth token
+        "403":
+          description: Sender is not allowed to message this chat
+        "404":
+          description: Chat not found
+  /scheduled-messages/{scheduledMessageId}:
+    patch:
+      operationId: updateScheduledMessage
+      tags: [scheduled-messages]
+      summary: Edit a pending scheduled message owned by the authenticated sender
+      parameters:
+        - $ref: "#/components/parameters/ScheduledMessageId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduledMessageUpdate"
+      responses:
+        "200":
+          description: Scheduled message updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduledMessage"
+        "400":
+          description: Invalid message or scheduled time
+        "401":
+          description: Invalid or missing auth token
+        "404":
+          description: Pending scheduled message not found
+        "409":
+          description: Message is already being sent
+    delete:
+      operationId: cancelScheduledMessage
+      tags: [scheduled-messages]
+      summary: Cancel a pending scheduled message owned by the authenticated sender
+      parameters:
+        - $ref: "#/components/parameters/ScheduledMessageId"
+      responses:
+        "204":
+          description: Scheduled message cancelled
+        "401":
+          description: Invalid or missing auth token
+        "404":
+          description: Pending scheduled message not found
 components:
+  parameters:
+    ScheduledMessageId:
+      name: scheduledMessageId
+      in: path
+      required: true
+      schema:
+        type: string
   schemas:
     HealthStatus:
       type: object
@@ -89,4 +184,55 @@ components:
     AlertThreshold:
       type: string
       enum: [all, medium, high]
+    ScheduledMessage:
+      type: object
+      required: [id, chatId, chatName, text, scheduledFor, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        chatId:
+          type: string
+        chatName:
+          type: string
+        text:
+          type: string
+        scheduledFor:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [pending, sending, sent, cancelled, failed]
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        sentMessageId:
+          type: [string, "null"]
+        failureReason:
+          type: [string, "null"]
+    ScheduledMessageInput:
+      type: object
+      required: [chatId, text, scheduledFor]
+      properties:
+        chatId:
+          type: string
+        text:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        scheduledFor:
+          type: integer
+          format: int64
+    ScheduledMessageUpdate:
+      type: object
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        scheduledFor:
+          type: integer
+          format: int64
 

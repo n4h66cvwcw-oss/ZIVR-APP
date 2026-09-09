@@ -194,6 +194,13 @@ export default function ChatsScreen() {
           </View>
           <View style={styles.headerActions}>
             <Pressable
+              onPress={() => router.push("/scheduled")}
+              style={[styles.headerBtn, { backgroundColor: colors.surfaceSecondary }]}
+              hitSlop={8}
+            >
+              <Ionicons name="time-outline" size={19} color={colors.primary} />
+            </Pressable>
+            <Pressable
               onPress={() => router.push("/search")}
               style={[styles.headerBtn, { backgroundColor: colors.surfaceSecondary }]}
               hitSlop={8}

@@ -79,7 +79,7 @@ async function claimContentAlert(
 
 // Fire-and-forget: check message for inappropriate content if sender or any
 // recipient is a child account. Stores flags in vm_content_flags.
-async function checkContentForChild(
+export async function checkContentForChild(
   messageId: string,
   chatId: string,
   senderId: string,

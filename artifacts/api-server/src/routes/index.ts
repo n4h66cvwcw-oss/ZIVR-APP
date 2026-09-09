@@ -7,6 +7,7 @@ import translateRouter from "./translate";
 import suggestReplyRouter from "./suggestReply";
 import chatExportSummaryRouter from "./chatExportSummary";
 import parentalRouter from "./parental";
+import scheduledMessagesRouter from "./scheduled-messages";
 import backupRouter from "./backup";
 
 const router: IRouter = Router();
@@ -19,6 +20,7 @@ router.use(translateRouter);
 router.use(suggestReplyRouter);
 router.use(chatExportSummaryRouter);
 router.use("/parental", parentalRouter);
+router.use("/scheduled-messages", scheduledMessagesRouter);
 router.use(backupRouter);
 
 export default router;

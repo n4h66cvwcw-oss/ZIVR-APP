@@ -20,6 +20,10 @@ import type {
   AlertPreference,
   AlertPreferenceUpdate,
   HealthStatus,
+  ListScheduledMessages200,
+  ScheduledMessage,
+  ScheduledMessageInput,
+  ScheduledMessageUpdate,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -268,4 +272,341 @@ export const useUpdateParentAlertPreferences = <
   TContext
 > => {
   return useMutation(getUpdateParentAlertPreferencesMutationOptions(options));
+};
+
+/**
+ * @summary List the authenticated sender's pending scheduled messages
+ */
+export const getListScheduledMessagesUrl = () => {
+  return `/api/scheduled-messages`;
+};
+
+export const listScheduledMessages = async (
+  options?: RequestInit,
+): Promise<ListScheduledMessages200> => {
+  return customFetch<ListScheduledMessages200>(getListScheduledMessagesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListScheduledMessagesQueryKey = () => {
+  return [`/api/scheduled-messages`] as const;
+};
+
+export const getListScheduledMessagesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listScheduledMessages>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listScheduledMessages>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListScheduledMessagesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listScheduledMessages>>
+  > = ({ signal }) => listScheduledMessages({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listScheduledMessages>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListScheduledMessagesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listScheduledMessages>>
+>;
+export type ListScheduledMessagesQueryError = ErrorType<void>;
+
+/**
+ * @summary List the authenticated sender's pending scheduled messages
+ */
+
+export function useListScheduledMessages<
+  TData = Awaited<ReturnType<typeof listScheduledMessages>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listScheduledMessages>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListScheduledMessagesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Schedule a text message in a direct or group chat
+ */
+export const getCreateScheduledMessageUrl = () => {
+  return `/api/scheduled-messages`;
+};
+
+export const createScheduledMessage = async (
+  scheduledMessageInput: ScheduledMessageInput,
+  options?: RequestInit,
+): Promise<ScheduledMessage> => {
+  return customFetch<ScheduledMessage>(getCreateScheduledMessageUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(scheduledMessageInput),
+  });
+};
+
+export const getCreateScheduledMessageMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createScheduledMessage>>,
+    TError,
+    { data: BodyType<ScheduledMessageInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createScheduledMessage>>,
+  TError,
+  { data: BodyType<ScheduledMessageInput> },
+  TContext
+> => {
+  const mutationKey = ["createScheduledMessage"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createScheduledMessage>>,
+    { data: BodyType<ScheduledMessageInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createScheduledMessage(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateScheduledMessageMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createScheduledMessage>>
+>;
+export type CreateScheduledMessageMutationBody =
+  BodyType<ScheduledMessageInput>;
+export type CreateScheduledMessageMutationError = ErrorType<void>;
+
+/**
+ * @summary Schedule a text message in a direct or group chat
+ */
+export const useCreateScheduledMessage = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createScheduledMessage>>,
+    TError,
+    { data: BodyType<ScheduledMessageInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createScheduledMessage>>,
+  TError,
+  { data: BodyType<ScheduledMessageInput> },
+  TContext
+> => {
+  return useMutation(getCreateScheduledMessageMutationOptions(options));
+};
+
+/**
+ * @summary Edit a pending scheduled message owned by the authenticated sender
+ */
+export const getUpdateScheduledMessageUrl = (scheduledMessageId: string) => {
+  return `/api/scheduled-messages/${scheduledMessageId}`;
+};
+
+export const updateScheduledMessage = async (
+  scheduledMessageId: string,
+  scheduledMessageUpdate: ScheduledMessageUpdate,
+  options?: RequestInit,
+): Promise<ScheduledMessage> => {
+  return customFetch<ScheduledMessage>(
+    getUpdateScheduledMessageUrl(scheduledMessageId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(scheduledMessageUpdate),
+    },
+  );
+};
+
+export const getUpdateScheduledMessageMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateScheduledMessage>>,
+    TError,
+    { scheduledMessageId: string; data: BodyType<ScheduledMessageUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateScheduledMessage>>,
+  TError,
+  { scheduledMessageId: string; data: BodyType<ScheduledMessageUpdate> },
+  TContext
+> => {
+  const mutationKey = ["updateScheduledMessage"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateScheduledMessage>>,
+    { scheduledMessageId: string; data: BodyType<ScheduledMessageUpdate> }
+  > = (props) => {
+    const { scheduledMessageId, data } = props ?? {};
+
+    return updateScheduledMessage(scheduledMessageId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateScheduledMessageMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateScheduledMessage>>
+>;
+export type UpdateScheduledMessageMutationBody =
+  BodyType<ScheduledMessageUpdate>;
+export type UpdateScheduledMessageMutationError = ErrorType<void>;
+
+/**
+ * @summary Edit a pending scheduled message owned by the authenticated sender
+ */
+export const useUpdateScheduledMessage = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateScheduledMessage>>,
+    TError,
+    { scheduledMessageId: string; data: BodyType<ScheduledMessageUpdate> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateScheduledMessage>>,
+  TError,
+  { scheduledMessageId: string; data: BodyType<ScheduledMessageUpdate> },
+  TContext
+> => {
+  return useMutation(getUpdateScheduledMessageMutationOptions(options));
+};
+
+/**
+ * @summary Cancel a pending scheduled message owned by the authenticated sender
+ */
+export const getCancelScheduledMessageUrl = (scheduledMessageId: string) => {
+  return `/api/scheduled-messages/${scheduledMessageId}`;
+};
+
+export const cancelScheduledMessage = async (
+  scheduledMessageId: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getCancelScheduledMessageUrl(scheduledMessageId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getCancelScheduledMessageMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelScheduledMessage>>,
+    TError,
+    { scheduledMessageId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof cancelScheduledMessage>>,
+  TError,
+  { scheduledMessageId: string },
+  TContext
+> => {
+  const mutationKey = ["cancelScheduledMessage"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof cancelScheduledMessage>>,
+    { scheduledMessageId: string }
+  > = (props) => {
+    const { scheduledMessageId } = props ?? {};
+
+    return cancelScheduledMessage(scheduledMessageId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CancelScheduledMessageMutationResult = NonNullable<
+  Awaited<ReturnType<typeof cancelScheduledMessage>>
+>;
+
+export type CancelScheduledMessageMutationError = ErrorType<void>;
+
+/**
+ * @summary Cancel a pending scheduled message owned by the authenticated sender
+ */
+export const useCancelScheduledMessage = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof cancelScheduledMessage>>,
+    TError,
+    { scheduledMessageId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof cancelScheduledMessage>>,
+  TError,
+  { scheduledMessageId: string },
+  TContext
+> => {
+  return useMutation(getCancelScheduledMessageMutationOptions(options));
 };

@@ -10,3 +10,8 @@ export * from "./alertPreference";
 export * from "./alertPreferenceUpdate";
 export * from "./alertThreshold";
 export * from "./healthStatus";
+export * from "./listScheduledMessages200";
+export * from "./scheduledMessage";
+export * from "./scheduledMessageInput";
+export * from "./scheduledMessageStatus";
+export * from "./scheduledMessageUpdate";

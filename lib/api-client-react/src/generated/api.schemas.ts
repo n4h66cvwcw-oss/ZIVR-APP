@@ -26,3 +26,52 @@ export interface AlertPreference {
 export interface AlertPreferenceUpdate {
   minimumSeverity: AlertThreshold;
 }
+
+export type ScheduledMessageStatus =
+  (typeof ScheduledMessageStatus)[keyof typeof ScheduledMessageStatus];
+
+export const ScheduledMessageStatus = {
+  pending: "pending",
+  sending: "sending",
+  sent: "sent",
+  cancelled: "cancelled",
+  failed: "failed",
+} as const;
+
+export interface ScheduledMessage {
+  id: string;
+  chatId: string;
+  chatName: string;
+  text: string;
+  scheduledFor: number;
+  status: ScheduledMessageStatus;
+  createdAt: number;
+  updatedAt: number;
+  /** @nullable */
+  sentMessageId?: string | null;
+  /** @nullable */
+  failureReason?: string | null;
+}
+
+export interface ScheduledMessageInput {
+  chatId: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  text: string;
+  scheduledFor: number;
+}
+
+export interface ScheduledMessageUpdate {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  text?: string;
+  scheduledFor?: number;
+}
+
+export type ListScheduledMessages200 = {
+  scheduledMessages: ScheduledMessage[];
+};

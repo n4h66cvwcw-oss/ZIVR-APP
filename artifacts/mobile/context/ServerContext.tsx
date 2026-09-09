@@ -113,6 +113,19 @@ export type ChatBackupMeta = {
   backedUpAt: number;
 };
 
+export type ScheduledMessage = {
+  id: string;
+  chatId: string;
+  chatName: string;
+  text: string;
+  scheduledFor: number;
+  status: "pending" | "sending" | "sent" | "cancelled" | "failed";
+  createdAt: number;
+  updatedAt: number;
+  sentMessageId?: string | null;
+  failureReason?: string | null;
+};
+
 interface ServerContextValue {
   serverUserId: string | null;
   /**
@@ -153,6 +166,10 @@ interface ServerContextValue {
   createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<GroupChatResult>;
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
   sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
+  listScheduledMessages: () => Promise<ScheduledMessage[]>;
+  createScheduledMessage: (input: { chatId: string; text: string; scheduledFor: number }) => Promise<ScheduledMessage>;
+  updateScheduledMessage: (id: string, input: { text?: string; scheduledFor?: number }) => Promise<ScheduledMessage>;
+  cancelScheduledMessage: (id: string) => Promise<void>;
   fetchUserChats: (userId: string) => Promise<ServerChat[]>;
   onNewMessage: (handler: MessageHandler) => () => void;
   emitTyping: (chatId: string, userId: string, name: string, isTyping: boolean, emoji?: string) => void;
@@ -696,6 +713,47 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const scheduledRequest = useCallback(async <T,>(
+    path: string,
+    init?: RequestInit,
+  ): Promise<T> => {
+    const res = await fetch(`${getApiBase()}/scheduled-messages${path}`, {
+      ...init,
+      headers: {
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(await getAuthHeaders()),
+        ...init?.headers,
+      },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(data.error ?? "Scheduled message request failed");
+    }
+    return (res.status === 204 ? undefined : await res.json()) as T;
+  }, []);
+
+  const listScheduledMessages = useCallback(async () => {
+    const data = await scheduledRequest<{ scheduledMessages: ScheduledMessage[] }>("");
+    return data.scheduledMessages;
+  }, [scheduledRequest]);
+
+  const createScheduledMessage = useCallback(
+    (input: { chatId: string; text: string; scheduledFor: number }) =>
+      scheduledRequest<ScheduledMessage>("", { method: "POST", body: JSON.stringify(input) }),
+    [scheduledRequest],
+  );
+
+  const updateScheduledMessage = useCallback(
+    (id: string, input: { text?: string; scheduledFor?: number }) =>
+      scheduledRequest<ScheduledMessage>(`/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+    [scheduledRequest],
+  );
+
+  const cancelScheduledMessage = useCallback(
+    (id: string) => scheduledRequest<void>(`/${id}`, { method: "DELETE" }),
+    [scheduledRequest],
+  );
+
   const fetchUserChats = useCallback(async (userId: string): Promise<ServerChat[]> => {
     try {
       const res = await fetch(`${getApiBase()}/chats/user/${userId}`, {
@@ -948,6 +1006,10 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         createServerGroupChat,
         fetchMessages,
         sendServerMessage,
+        listScheduledMessages,
+        createScheduledMessage,
+        updateScheduledMessage,
+        cancelScheduledMessage,
         fetchUserChats,
         onNewMessage,
         emitTyping,

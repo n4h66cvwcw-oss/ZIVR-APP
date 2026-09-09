@@ -568,6 +568,8 @@ function RootLayoutNav() {
             presentation: "modal",
           }}
         />
+        <Stack.Screen name="scheduled" options={{ headerShown: false, presentation: "card", animation: "slide_from_right" }} />
+        <Stack.Screen name="schedule-message" options={{ headerShown: false, presentation: "formSheet" }} />
         <Stack.Screen
           name="new-checkin"
           options={{
