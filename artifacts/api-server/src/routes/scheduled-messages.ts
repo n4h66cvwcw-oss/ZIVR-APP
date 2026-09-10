@@ -221,8 +221,9 @@ router.delete("/:scheduledMessageId", async (req, res) => {
   return res.status(204).send();
 });
 
-async function dispatchDueMessages() {
+export async function dispatchDueMessages(options: { senderId?: string } = {}) {
   const now = Date.now();
+  const senderId = options.senderId ?? null;
   const reminders = await query<ScheduledRow & { push_token: string | null }>(
     `UPDATE vm_scheduled_messages sm
         SET reminder_sent_at = $1, updated_at = $1
@@ -234,8 +235,9 @@ async function dispatchDueMessages() {
         AND sm.reminder_sent_at IS NULL
         AND sm.scheduled_for > $1
         AND sm.scheduled_for - (sm.approval_reminder_minutes * 60000::bigint) <= $1
+         AND ($2::uuid IS NULL OR sm.sender_id = $2)
       RETURNING sm.*, sender.push_token, COALESCE(c.name, 'Chat') AS chat_name`,
-    [now],
+    [now, senderId],
   );
   for (const reminder of reminders) {
     if (!reminder.push_token?.startsWith("ExponentPushToken")) continue;
@@ -258,8 +260,9 @@ async function dispatchDueMessages() {
   }
   await query(
     `UPDATE vm_scheduled_messages SET status = 'pending', updated_at = $1
-      WHERE status = 'sending' AND updated_at < $2`,
-    [now, now - 120_000],
+      WHERE status = 'sending' AND updated_at < $2
+        AND ($3::uuid IS NULL OR sender_id = $3)`,
+    [now, now - 120_000, senderId],
   );
   const due = await query<ScheduledRow>(
     `UPDATE vm_scheduled_messages
@@ -267,11 +270,12 @@ async function dispatchDueMessages() {
       WHERE id IN (
         SELECT id FROM vm_scheduled_messages
          WHERE status = 'pending' AND scheduled_for <= $1
+            AND ($2::uuid IS NULL OR sender_id = $2)
          ORDER BY scheduled_for ASC LIMIT 25
          FOR UPDATE SKIP LOCKED
       )
       RETURNING *, NULL::text AS chat_name`,
-    [now],
+    [now, senderId],
   );
 
   for (const item of due) {

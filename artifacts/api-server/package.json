@@ -9,6 +9,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "test:language": "node --experimental-strip-types --test src/routes/user-language.test.ts src/lib/recovery-code.test.ts",
     "test:alert-preferences": "node --experimental-strip-types --test src/lib/content-alert-preferences.test.ts",
+    "test:scheduled-messages": "node ./test-build.mjs src/routes/scheduled-messages.integration.test.ts && node --test --test-concurrency=1 dist/scheduled-messages.integration.test.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

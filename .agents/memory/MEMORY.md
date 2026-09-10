@@ -7,3 +7,4 @@
 - [Cross-platform account recovery](account-recovery.md) — Android uninstalls erase device storage; restore accounts with a verified recovery credential, not a cached token.
 - [Time-limited access windows](time-limited-access-windows.md) — use server-calculated remaining time and reconnect rechecks to prevent temporary-unlock bypasses.
 - [Scheduled delivery authorization](scheduled-delivery-authorization.md) — queued messages must recheck chat membership and family approvals at send time, not only when scheduled.
+- [API integration test execution](api-integration-test-execution.md) — extensionless ESM imports require bundled CommonJS tests; bundle workspace code but externalize runtime packages.
