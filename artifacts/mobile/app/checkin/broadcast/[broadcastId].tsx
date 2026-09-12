@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -299,6 +299,7 @@ export default function BroadcastDetailScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const [replyToAll, setReplyToAll] = useState(false);
+  const readFocusIdRef = useRef<string | null>(null);
 
   const {
     broadcasts,
@@ -306,12 +307,26 @@ export default function BroadcastDetailScreen() {
     contacts,
     sendBroadcast,
     sendPrivateSideChat,
+    markBroadcastRepliesRead,
+    myId,
   } = useMessaging();
 
   const broadcast = broadcasts.find((b) => b.id === broadcastId);
   const group = broadcast
     ? checkInGroups.find((g) => g.id === broadcast.groupId)
     : null;
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!broadcast?.isServerBroadcast || broadcast.senderId !== myId) return undefined;
+      if (readFocusIdRef.current === broadcast.id) return undefined;
+      readFocusIdRef.current = broadcast.id;
+      void markBroadcastRepliesRead(broadcast.id).catch(() => {});
+      return () => {
+        if (readFocusIdRef.current === broadcast.id) readFocusIdRef.current = null;
+      };
+    }, [broadcast?.id, broadcast?.isServerBroadcast, broadcast?.senderId, myId, markBroadcastRepliesRead]),
+  );
 
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
 

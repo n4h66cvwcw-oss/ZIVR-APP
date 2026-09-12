@@ -207,4 +207,60 @@ export async function migrate(): Promise<void> {
       created_at   BIGINT DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
     )
   `);
+
+  // Private check-in groups and broadcasts. A broadcast is visible to every
+  // group member, while each reply is visible only to its author and creator.
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_checkin_groups (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      description TEXT,
+      anonymous BOOLEAN NOT NULL DEFAULT false,
+      creator_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+    )
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_checkin_group_members (
+      group_id UUID NOT NULL REFERENCES vm_checkin_groups(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      joined_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000,
+      PRIMARY KEY (group_id, user_id)
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_checkin_group_members_user ON vm_checkin_group_members (user_id, group_id)`);
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_broadcasts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      group_id UUID NOT NULL REFERENCES vm_checkin_groups(id) ON DELETE CASCADE,
+      creator_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      text TEXT NOT NULL DEFAULT '',
+      audio_attachment JSONB,
+      deadline BIGINT,
+      client_id TEXT,
+      created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+    )
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_broadcasts_creator_client
+      ON vm_broadcasts (creator_id, client_id) WHERE client_id IS NOT NULL
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_broadcasts_group_created ON vm_broadcasts (group_id, created_at DESC)`);
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_checkin_replies (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      broadcast_id UUID NOT NULL REFERENCES vm_broadcasts(id) ON DELETE CASCADE,
+      member_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      text TEXT NOT NULL DEFAULT '',
+      audio_attachment JSONB,
+      client_id TEXT,
+      read_at BIGINT,
+      created_at BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
+    )
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_checkin_replies_member_client
+      ON vm_checkin_replies (broadcast_id, member_id, client_id) WHERE client_id IS NOT NULL
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_checkin_replies_broadcast_created ON vm_checkin_replies (broadcast_id, created_at ASC)`);
 }

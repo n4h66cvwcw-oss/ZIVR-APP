@@ -22,8 +22,21 @@ import {
   generateEncryptionKey,
 } from "@/utils/crypto";
 import { Alert } from "react-native";
-import { useServer, type MessageDelivery, type ServerMessage, type ServerUser } from "@/context/ServerContext";
+import {
+  useServer,
+  type MessageDelivery,
+  type ServerMessage,
+  type ServerUser,
+  type ServerCheckInBroadcast,
+  type ServerCheckInGroup,
+  type ServerCheckInReply,
+} from "@/context/ServerContext";
 import { useProfile } from "@/context/ProfileContext";
+import {
+  mergeCheckinBroadcasts,
+  migrateLegacyCheckins,
+  shouldMarkCheckinRepliesRead,
+} from "@/utils/checkin-state";
 
 export type AudioAttachment = {
   uri: string;
@@ -143,6 +156,8 @@ export type CheckInGroup = {
   anonymous: boolean;
   description?: string;
   creatorId?: string;
+  memberCount?: number;
+  isServerGroup?: boolean;
 };
 
 export type BroadcastDeadline = {
@@ -161,10 +176,13 @@ export type CheckInBroadcast = {
   privateSideChats: Record<string, Message[]>;
   deadline?: number;
   myReply?: string;
+  isServerBroadcast?: boolean;
+  progress?: { total: number; replied: number };
 };
 
 export type CheckInReply = {
   id: string;
+  clientId?: string;
   memberId: string;
   text: string;
   audioAttachment?: AudioAttachment;
@@ -224,7 +242,9 @@ const STORAGE_KEYS = {
   CONTACTS: "@zivr_contacts",
   ME: "@zivr_me",
   SORT_MODE: "@zivr_sort_mode",
+  PENDING_CHECKINS: "@zivr_pending_checkins",
 };
+const scopedStorageKey = (key: string, userId: string | null) => userId ? `${key}:${userId}` : key;
 
 const SIMULATE_REPLIES = [
   "All good on my end! 👍",
@@ -422,8 +442,62 @@ function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
+function fromServerCheckinGroup(group: ServerCheckInGroup): CheckInGroup {
+  return {
+    id: group.id,
+    name: group.name,
+    description: group.description ?? undefined,
+    memberIds: group.memberIds,
+    memberCount: group.memberCount,
+    createdAt: group.createdAt,
+    anonymous: group.anonymous,
+    creatorId: group.creatorId,
+    isServerGroup: true,
+  };
+}
+
+function fromServerCheckinBroadcast(
+  broadcast: ServerCheckInBroadcast,
+  currentUserId: string,
+): CheckInBroadcast {
+  const ownReplies = broadcast.replies[currentUserId] ?? [];
+  return {
+    id: broadcast.id,
+    groupId: broadcast.groupId,
+    senderId: broadcast.senderId,
+    text: broadcast.text,
+    audioAttachment: broadcast.audioAttachment as AudioAttachment | undefined,
+    timestamp: broadcast.timestamp,
+    deadline: broadcast.deadline,
+    replies: broadcast.replies as Record<string, CheckInReply[]>,
+    privateSideChats: {},
+    myReply: ownReplies[ownReplies.length - 1]?.text,
+    isServerBroadcast: true,
+    progress: broadcast.progress,
+  };
+}
+
 export function MessagingProvider({ children }: { children: React.ReactNode }) {
-  const { serverUserId, onNewMessage, sendServerMessage, getOrCreateDirectChat, onReadReceipt, fetchUserChats, translateMessage, onMessageBlocked, onContactRequest } = useServer();
+  const {
+    serverUserId,
+    onNewMessage,
+    sendServerMessage,
+    getOrCreateDirectChat,
+    onReadReceipt,
+    fetchUserChats,
+    translateMessage,
+    onMessageBlocked,
+    onContactRequest,
+    fetchCheckInGroups,
+    fetchCheckInBroadcasts,
+    markCheckInBroadcastsRead,
+    createCheckInGroup: createServerCheckInGroup,
+    sendCheckinBroadcast,
+    replyToCheckin,
+    onCheckinBroadcast,
+    onCheckinReply,
+    onCheckinProgress,
+  } = useServer();
   const { profile } = useProfile();
   const myId = serverUserId ?? "me";
   const [contacts, setContactsState] = useState<Contact[]>(SAMPLE_CONTACTS);
@@ -447,14 +521,21 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const preHydrationBuffer = useRef<Array<{ msg: ServerMessage; delivery: MessageDelivery }>>([]);
   const chatsRef = useRef(chats);
   const messagesRef = useRef(messages);
+  const broadcastsRef = useRef(broadcasts);
+  const readInFlightRef = useRef<Set<string>>(new Set());
   const missedNotificationMessages = useRef<NotificationMessage[]>([]);
   const missedNotificationFlushScheduled = useRef(false);
   useEffect(() => { chatsRef.current = chats; }, [chats]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { broadcastsRef.current = broadcasts; }, [broadcasts]);
 
   // Always-current server user id without stale closure captures.
   const serverUserIdRef = useRef(serverUserId);
   useEffect(() => { serverUserIdRef.current = serverUserId; }, [serverUserId]);
+  const checkinIdentityRef = useRef<string | null>(serverUserId);
+  const checkinCacheHydratedRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingCheckinsRef = useRef<Record<string, string>>({});
+  const reconciledClientIdsRef = useRef<Set<string>>(new Set());
 
   // The root layout seeds this from the verified route before socket startup,
   // while the chat screen keeps it current during in-app navigation.
@@ -465,6 +546,116 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Never let a previous account's check-in snapshot survive an identity
+  // switch. The server-scoped cache is only hydrated for the active account.
+  useEffect(() => {
+    checkinIdentityRef.current = serverUserId;
+    pendingCheckinsRef.current = {};
+    reconciledClientIdsRef.current.clear();
+    setCheckInGroups([]);
+    setBroadcasts([]);
+    if (!serverUserId) return;
+    let cancelled = false;
+    const scopedGroupsKey = scopedStorageKey(STORAGE_KEYS.CHECKIN_GROUPS, serverUserId);
+    const scopedBroadcastsKey = scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserId);
+    const migrationMarkerKey = `${STORAGE_KEYS.CHECKIN_GROUPS}:migrated:${serverUserId}`;
+    const hydrateCache = (async () => {
+      const marker = await AsyncStorage.getItem(migrationMarkerKey);
+      if (!marker) {
+        // Safe ownership rule: only records already marked server-backed and
+        // explicitly owned by this identity may move; all legacy/local data
+        // stays in the old unscoped cache and is never uploaded.
+        const [legacyGroupsRaw, legacyBroadcastsRaw, scopedGroupsRaw, scopedBroadcastsRaw] =
+          await Promise.all([
+            AsyncStorage.getItem(STORAGE_KEYS.CHECKIN_GROUPS),
+            AsyncStorage.getItem(STORAGE_KEYS.BROADCASTS),
+            AsyncStorage.getItem(scopedGroupsKey),
+            AsyncStorage.getItem(scopedBroadcastsKey),
+          ]);
+        try {
+          const legacyGroups = legacyGroupsRaw ? JSON.parse(legacyGroupsRaw) as CheckInGroup[] : [];
+          const legacyBroadcasts = legacyBroadcastsRaw ? JSON.parse(legacyBroadcastsRaw) as CheckInBroadcast[] : [];
+          const migration = migrateLegacyCheckins(legacyGroups, legacyBroadcasts, serverUserId);
+          const scopedGroups = scopedGroupsRaw ? JSON.parse(scopedGroupsRaw) as CheckInGroup[] : [];
+          const scopedBroadcasts = scopedBroadcastsRaw ? JSON.parse(scopedBroadcastsRaw) as CheckInBroadcast[] : [];
+          await Promise.all([
+            AsyncStorage.setItem(scopedGroupsKey, JSON.stringify([...scopedGroups, ...migration.groups])),
+            AsyncStorage.setItem(scopedBroadcastsKey, JSON.stringify(mergeCheckinBroadcasts(scopedBroadcasts, migration.broadcasts))),
+          ]);
+        } catch {
+          // Corrupt legacy data remains untouched and cannot be attributed.
+        }
+        await AsyncStorage.setItem(migrationMarkerKey, "1");
+      }
+      return Promise.all([
+        AsyncStorage.getItem(scopedGroupsKey),
+        AsyncStorage.getItem(scopedBroadcastsKey),
+        AsyncStorage.getItem(scopedStorageKey(STORAGE_KEYS.PENDING_CHECKINS, serverUserId)),
+      ]);
+    })();
+    checkinCacheHydratedRef.current = hydrateCache.then(() => {});
+    hydrateCache.then(([groupsRaw, broadcastsRaw, pendingRaw]) => {
+      if (cancelled) return;
+      try {
+        if (groupsRaw) setCheckInGroups(JSON.parse(groupsRaw) as CheckInGroup[]);
+        if (broadcastsRaw) setBroadcasts(JSON.parse(broadcastsRaw) as CheckInBroadcast[]);
+        if (pendingRaw) {
+          const pending = JSON.parse(pendingRaw) as Record<string, string>;
+          pendingCheckinsRef.current = Object.fromEntries(
+            Object.entries(pending).filter(([, clientId]) => !reconciledClientIdsRef.current.has(clientId)),
+          );
+        }
+      } catch {
+        // A corrupt cache is ignored; the server snapshot remains authoritative.
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverUserId]);
+
+  const pendingOperationClientId = useCallback((operation: string): string => {
+    const existing = pendingCheckinsRef.current[operation];
+    if (existing) return existing;
+    const clientId = genId();
+    pendingCheckinsRef.current[operation] = clientId;
+    const userId = serverUserIdRef.current;
+    if (userId) {
+      AsyncStorage.setItem(
+        scopedStorageKey(STORAGE_KEYS.PENDING_CHECKINS, userId),
+        JSON.stringify(pendingCheckinsRef.current),
+      ).catch(() => {});
+    }
+    return clientId;
+  }, []);
+
+  const clearPendingOperation = useCallback((operation: string) => {
+    delete pendingCheckinsRef.current[operation];
+    const userId = serverUserIdRef.current;
+    if (userId) {
+      AsyncStorage.setItem(
+        scopedStorageKey(STORAGE_KEYS.PENDING_CHECKINS, userId),
+        JSON.stringify(pendingCheckinsRef.current),
+      ).catch(() => {});
+    }
+  }, []);
+
+  const reconcilePendingClientIds = useCallback((clientIds: Array<string | undefined>) => {
+    const ids = new Set(clientIds.filter((id): id is string => Boolean(id)));
+    if (!ids.size) return;
+    ids.forEach((id) => reconciledClientIdsRef.current.add(id));
+    let changed = false;
+    for (const [operation, clientId] of Object.entries(pendingCheckinsRef.current)) {
+      if (!ids.has(clientId)) continue;
+      delete pendingCheckinsRef.current[operation];
+      changed = true;
+    }
+    if (changed && serverUserIdRef.current) {
+      AsyncStorage.setItem(
+        scopedStorageKey(STORAGE_KEYS.PENDING_CHECKINS, serverUserIdRef.current),
+        JSON.stringify(pendingCheckinsRef.current),
+      ).catch(() => {});
+    }
   }, []);
 
   useEffect(() => {
@@ -662,6 +853,113 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => {});
   }, [serverUserId, fetchUserChats]);
 
+  // Server-backed check-ins replace the old local/simulated path for
+  // authenticated accounts. AsyncStorage remains a cache for offline launch,
+  // while REST and Socket.IO are the source of truth whenever available.
+  useEffect(() => {
+    if (!serverUserId) return;
+    let cancelled = false;
+    checkinCacheHydratedRef.current.then(() => Promise.all([fetchCheckInGroups(), fetchCheckInBroadcasts()])).then(([groupsResult, broadcastsResult]) => {
+      if (cancelled) return;
+      if (groupsResult.ok) {
+        setCheckInGroups((previous) => {
+          const localOnly = previous.filter((item) => !item.isServerGroup);
+          const nextGroups = [...groupsResult.data.map(fromServerCheckinGroup), ...localOnly];
+          AsyncStorage.setItem(
+            scopedStorageKey(STORAGE_KEYS.CHECKIN_GROUPS, serverUserId),
+            JSON.stringify(nextGroups),
+          ).catch(() => {});
+          return nextGroups;
+        });
+      }
+      if (broadcastsResult.ok) {
+        setBroadcasts((previous) => {
+          broadcastsResult.data.forEach((broadcast) => {
+            reconcilePendingClientIds([
+              broadcast.clientId,
+              ...Object.values(broadcast.replies).flat().map((reply) => reply.clientId),
+            ]);
+          });
+          const localOnly = previous.filter((item) => !item.isServerBroadcast);
+          const nextBroadcasts = mergeCheckinBroadcasts(
+            localOnly,
+            broadcastsResult.data.map((broadcast) => fromServerCheckinBroadcast(broadcast, serverUserId)),
+          );
+          AsyncStorage.setItem(
+            scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserId),
+            JSON.stringify(nextBroadcasts),
+          ).catch(() => {});
+          return nextBroadcasts;
+        });
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverUserId, fetchCheckInGroups, fetchCheckInBroadcasts, reconcilePendingClientIds]);
+
+  useEffect(() => {
+    if (!serverUserId) return;
+    const unsubBroadcast = onCheckinBroadcast((serverBroadcast) => {
+      reconcilePendingClientIds([
+        serverBroadcast.clientId,
+        ...Object.values(serverBroadcast.replies).flat().map((reply) => reply.clientId),
+      ]);
+      const incoming = fromServerCheckinBroadcast(serverBroadcast, serverUserId);
+      setBroadcasts((previous) => {
+        const updated = mergeCheckinBroadcasts(previous, [incoming]);
+        AsyncStorage.setItem(scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserId), JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    });
+    const unsubReply = onCheckinReply((reply: ServerCheckInReply) => {
+      reconcilePendingClientIds([reply.clientId]);
+      if (!reply.broadcastId) return;
+      setBroadcasts((previous) => {
+        const updated = previous.map((broadcast) => {
+          if (broadcast.id !== reply.broadcastId) return broadcast;
+          const existing = broadcast.replies[reply.memberId] ?? [];
+          if (existing.some((item) => item.id === reply.id)) return broadcast;
+          const nextReply: CheckInReply = {
+            id: reply.id,
+            clientId: reply.clientId,
+            memberId: reply.memberId,
+            text: reply.text,
+            audioAttachment: reply.audioAttachment as AudioAttachment | undefined,
+            timestamp: reply.timestamp,
+            read: reply.read,
+          };
+          return {
+            ...broadcast,
+            replies: {
+              ...broadcast.replies,
+              [reply.memberId]: [...existing, nextReply].sort((a, b) => a.timestamp - b.timestamp),
+            },
+            myReply: reply.memberId === serverUserId ? reply.text : broadcast.myReply,
+          };
+        });
+        AsyncStorage.setItem(scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserId), JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+    });
+    const unsubProgress = onCheckinProgress((progress) => {
+      setBroadcasts((previous) => previous.map((broadcast) =>
+        broadcast.id === progress.broadcastId
+          ? {
+              ...broadcast,
+              progress: {
+                total: Math.max(broadcast.progress?.total ?? 0, progress.total),
+                replied: Math.max(broadcast.progress?.replied ?? 0, progress.replied),
+              },
+            }
+          : broadcast
+      ));
+    });
+    return () => {
+      unsubBroadcast();
+      unsubReply();
+      unsubProgress();
+    };
+  }, [serverUserId, onCheckinBroadcast, onCheckinReply, onCheckinProgress, reconcilePendingClientIds]);
+
   useEffect(() => {
     const unsub = onReadReceipt((data) => {
       setMessages((prev) => {
@@ -732,26 +1030,26 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(finalMsgs));
       }
 
-      if (groupsStr) {
+      if (!serverUserIdRef.current && groupsStr) {
         const loadedGroups: CheckInGroup[] = JSON.parse(groupsStr);
         const hasSeed = loadedGroups.some((g) => g.id === SEED_GROUP_ID);
         setCheckInGroups(hasSeed ? loadedGroups : [SEED_RECEIVED_GROUP, ...loadedGroups]);
         if (!hasSeed) {
           await AsyncStorage.setItem(STORAGE_KEYS.CHECKIN_GROUPS, JSON.stringify([SEED_RECEIVED_GROUP, ...loadedGroups]));
         }
-      } else {
+      } else if (!serverUserIdRef.current) {
         setCheckInGroups([SEED_RECEIVED_GROUP]);
         await AsyncStorage.setItem(STORAGE_KEYS.CHECKIN_GROUPS, JSON.stringify([SEED_RECEIVED_GROUP]));
       }
 
-      if (broadcastsStr) {
+      if (!serverUserIdRef.current && broadcastsStr) {
         const loadedBroadcasts: CheckInBroadcast[] = JSON.parse(broadcastsStr);
         const hasSeedBroadcast = loadedBroadcasts.some((b) => b.id === SEED_BROADCAST_ID);
         setBroadcasts(hasSeedBroadcast ? loadedBroadcasts : [SEED_RECEIVED_BROADCAST, ...loadedBroadcasts]);
         if (!hasSeedBroadcast) {
           await AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify([SEED_RECEIVED_BROADCAST, ...loadedBroadcasts]));
         }
-      } else {
+      } else if (!serverUserIdRef.current) {
         setBroadcasts([SEED_RECEIVED_BROADCAST]);
         await AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify([SEED_RECEIVED_BROADCAST]));
       }
@@ -930,12 +1228,18 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   async function saveCheckInGroups(updated: CheckInGroup[]) {
     setCheckInGroups(updated);
-    await AsyncStorage.setItem(STORAGE_KEYS.CHECKIN_GROUPS, JSON.stringify(updated));
+    await AsyncStorage.setItem(
+      scopedStorageKey(STORAGE_KEYS.CHECKIN_GROUPS, serverUserIdRef.current),
+      JSON.stringify(updated),
+    );
   }
 
   async function saveBroadcasts(updated: CheckInBroadcast[]) {
     setBroadcasts(updated);
-    await AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify(updated));
+    await AsyncStorage.setItem(
+      scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserIdRef.current),
+      JSON.stringify(updated),
+    );
   }
 
   const setSortMode = useCallback(async (mode: ChatSortMode) => {
@@ -1310,6 +1614,13 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   const createCheckInGroup = useCallback(
     async (name: string, memberIds: string[], anonymous = false): Promise<string> => {
+      if (serverUserId) {
+        const serverGroup = await createServerCheckInGroup({ name, memberIds, anonymous });
+        if (!serverGroup) return "";
+        const group = fromServerCheckinGroup(serverGroup);
+        await saveCheckInGroups([group, ...checkInGroups.filter((item) => item.id !== group.id)]);
+        return group.id;
+      }
       const id = genId();
       const group: CheckInGroup = {
         id,
@@ -1321,7 +1632,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       await saveCheckInGroups([group, ...checkInGroups]);
       return id;
     },
-    [checkInGroups]
+    [checkInGroups, serverUserId, createServerCheckInGroup]
   );
 
   const markImageViewed = useCallback(
@@ -1448,6 +1759,31 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   const sendBroadcast = useCallback(
     async (groupId: string, text: string, audio?: AudioAttachment): Promise<string> => {
+      const group = checkInGroups.find((item) => item.id === groupId);
+      if (serverUserId) {
+        // The server persists first and broadcasts the canonical UUID. The
+        // client id makes reconnect/retry idempotent without trusting a user id.
+        const operation = `broadcast:${JSON.stringify({ groupId, text, audio: audio ?? null })}`;
+        const clientId = pendingOperationClientId(operation);
+        const persisted = await sendCheckinBroadcast({
+          groupId,
+          text,
+          audioAttachment: audio,
+          clientId,
+        });
+        clearPendingOperation(operation);
+        const canonical = fromServerCheckinBroadcast(persisted, serverUserId);
+        setBroadcasts((previous) => {
+          const withoutDuplicate = previous.filter((item) => item.id !== canonical.id && item.id !== clientId);
+          const updated = [canonical, ...withoutDuplicate];
+          AsyncStorage.setItem(
+            scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserIdRef.current),
+            JSON.stringify(updated),
+          ).catch(() => {});
+          return updated;
+        });
+        return canonical.id;
+      }
       const id = genId();
       const broadcast: CheckInBroadcast = {
         id,
@@ -1460,17 +1796,51 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         privateSideChats: {},
       };
       await saveBroadcasts([broadcast, ...broadcasts]);
-      const group = checkInGroups.find((g) => g.id === groupId);
       if (group) {
         simulateMemberReplies(id, group.memberIds.filter((m) => m !== myId));
       }
       return id;
     },
-    [broadcasts, myId, checkInGroups, simulateMemberReplies]
+    [broadcasts, myId, checkInGroups, simulateMemberReplies, serverUserId, sendCheckinBroadcast, pendingOperationClientId, clearPendingOperation]
   );
 
   const replyToReceivedBroadcast = useCallback(
     async (broadcastId: string, text: string) => {
+      if (serverUserId) {
+        const operation = `reply:${JSON.stringify({ broadcastId, text })}`;
+        const clientId = pendingOperationClientId(operation);
+        const persisted = await replyToCheckin({ broadcastId, text, clientId });
+        clearPendingOperation(operation);
+        setBroadcasts((prev) => {
+          const updated = prev.map((broadcast) => {
+          if (broadcast.id !== broadcastId) return broadcast;
+          const existing = broadcast.replies[persisted.memberId] ?? [];
+          if (existing.some((item) => item.id === persisted.id)) {
+            return { ...broadcast, myReply: persisted.text };
+          }
+          const reply: CheckInReply = {
+            id: persisted.id,
+            clientId: persisted.clientId,
+            memberId: persisted.memberId,
+            text: persisted.text,
+            audioAttachment: persisted.audioAttachment as AudioAttachment | undefined,
+            timestamp: persisted.timestamp,
+            read: persisted.read,
+          };
+          return {
+            ...broadcast,
+            myReply: persisted.text,
+            replies: { ...broadcast.replies, [persisted.memberId]: [...existing, reply] },
+          };
+          });
+          AsyncStorage.setItem(
+            scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserIdRef.current),
+            JSON.stringify(updated),
+          ).catch(() => {});
+          return updated;
+        });
+        return;
+      }
       setBroadcasts((prev) => {
         const updated = prev.map((b) =>
           b.id === broadcastId ? { ...b, myReply: text } : b
@@ -1479,26 +1849,40 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         return updated;
       });
     },
-    []
+    [serverUserId, replyToCheckin, pendingOperationClientId, clearPendingOperation]
   );
 
-  const markBroadcastRepliesRead = useCallback(
-    async (broadcastId: string) => {
-      setBroadcasts((prev) => {
-        const updated = prev.map((b) => {
-          if (b.id !== broadcastId) return b;
-          const newReplies: Record<string, CheckInReply[]> = {};
-          for (const [k, v] of Object.entries(b.replies)) {
-            newReplies[k] = v.map((r) => ({ ...r, read: true }));
+  const markBroadcastRepliesRead = useCallback(async (broadcastId: string) => {
+    const userId = serverUserIdRef.current;
+    const target = broadcastsRef.current.find((broadcast) => broadcast.id === broadcastId);
+    if (
+      readInFlightRef.current.has(broadcastId) ||
+      !shouldMarkCheckinRepliesRead(target, userId)
+    ) return;
+    readInFlightRef.current.add(broadcastId);
+    try {
+      await markCheckInBroadcastsRead(broadcastId);
+      setBroadcasts((previous) => {
+        const current = previous.find((broadcast) => broadcast.id === broadcastId);
+        if (!shouldMarkCheckinRepliesRead(current, userId)) return previous;
+        const updated = previous.map((broadcast) => {
+          if (broadcast.id !== broadcastId) return broadcast;
+          const replies: Record<string, CheckInReply[]> = {};
+          for (const [memberId, memberReplies] of Object.entries(broadcast.replies)) {
+            replies[memberId] = memberReplies.map((reply) => ({ ...reply, read: true }));
           }
-          return { ...b, replies: newReplies };
+          return { ...broadcast, replies };
         });
-        AsyncStorage.setItem(STORAGE_KEYS.BROADCASTS, JSON.stringify(updated));
+        AsyncStorage.setItem(
+          scopedStorageKey(STORAGE_KEYS.BROADCASTS, userId),
+          JSON.stringify(updated),
+        ).catch(() => {});
         return updated;
       });
-    },
-    []
-  );
+    } finally {
+      readInFlightRef.current.delete(broadcastId);
+    }
+  }, [markCheckInBroadcastsRead]);
 
   const getReceivedBroadcasts = useCallback(() => {
     return broadcasts
@@ -1528,6 +1912,38 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   const replyToBroadcast = useCallback(
     async (broadcastId: string, text: string, audio?: AudioAttachment) => {
+      if (serverUserId) {
+        const operation = `reply:${JSON.stringify({ broadcastId, text, audio: audio ?? null })}`;
+        const clientId = pendingOperationClientId(operation);
+        const persisted = await replyToCheckin({ broadcastId, text, audioAttachment: audio, clientId });
+        clearPendingOperation(operation);
+        setBroadcasts((prev) => {
+          const updated = prev.map((broadcast) => {
+          if (broadcast.id !== broadcastId) return broadcast;
+          const existing = broadcast.replies[persisted.memberId] ?? [];
+          if (existing.some((item) => item.id === persisted.id)) return broadcast;
+          const reply: CheckInReply = {
+            id: persisted.id,
+            clientId: persisted.clientId,
+            memberId: persisted.memberId,
+            text: persisted.text,
+            audioAttachment: persisted.audioAttachment as AudioAttachment | undefined,
+            timestamp: persisted.timestamp,
+            read: persisted.read,
+          };
+          return {
+            ...broadcast,
+            replies: { ...broadcast.replies, [persisted.memberId]: [...existing, reply] },
+          };
+          });
+          AsyncStorage.setItem(
+            scopedStorageKey(STORAGE_KEYS.BROADCASTS, serverUserIdRef.current),
+            JSON.stringify(updated),
+          ).catch(() => {});
+          return updated;
+        });
+        return;
+      }
       const id = genId();
       const reply: CheckInReply = {
         id,
@@ -1544,7 +1960,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       );
       await saveBroadcasts(updatedBroadcasts);
     },
-    [broadcasts, myId]
+    [broadcasts, myId, serverUserId, replyToCheckin, pendingOperationClientId, clearPendingOperation]
   );
 
   const sendPrivateSideChat = useCallback(

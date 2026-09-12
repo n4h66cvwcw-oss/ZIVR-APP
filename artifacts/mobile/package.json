@@ -11,6 +11,7 @@
     "test:notifications": "node --experimental-strip-types --test utils/notification-policy.test.ts && node scripts/run-messaging-provider-notification-test.js",
     "test:contacts": "node --experimental-strip-types --test utils/contact-sync.test.ts utils/invite-picker.test.ts",
     "test:time-lock": "node --experimental-strip-types --test utils/time-lock-gate.test.ts",
+    "test:checkins": "node --experimental-strip-types --test utils/checkin-state.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/patch-expo-cli.js"
   },

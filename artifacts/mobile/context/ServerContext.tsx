@@ -60,6 +60,42 @@ export type ServerChat = {
   members: Array<{ id: string; displayName: string; avatar: string | null; isOnline: boolean }>;
 };
 
+export type ServerCheckInReply = {
+  id: string;
+  broadcastId?: string;
+  clientId?: string;
+  memberId: string;
+  text: string;
+  audioAttachment?: unknown;
+  timestamp: number;
+  read?: boolean;
+};
+export type ServerCheckInBroadcast = {
+  id: string;
+  groupId: string;
+  senderId: string;
+  text: string;
+  audioAttachment?: unknown;
+  timestamp: number;
+  deadline?: number;
+  replies: Record<string, ServerCheckInReply[]>;
+  progress?: { total: number; replied: number };
+  clientId?: string;
+};
+export type ServerCheckInGroup = {
+  id: string;
+  name: string;
+  description?: string | null;
+  memberIds: string[];
+  memberCount?: number;
+  createdAt: number;
+  anonymous: boolean;
+  creatorId: string;
+};
+export type CheckInFetchResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string };
+
 export type DirectChatResult = {
   chatId: string | null;
   /** Set when a parent hasn't approved (or has blocked) this contact for a child account. */
@@ -104,6 +140,9 @@ export type ContactApprovedHandler = (data: {
 }) => void;
 type TimeOverrideHandler = (data: { childId: string; overrideUntil: number | null }) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
+type CheckinBroadcastHandler = (broadcast: ServerCheckInBroadcast) => void;
+type CheckinReplyHandler = (reply: ServerCheckInReply) => void;
+type CheckinProgressHandler = (data: { broadcastId: string; total: number; replied: number }) => void;
 
 export type ChatBackupMeta = {
   id: string;
@@ -173,6 +212,15 @@ interface ServerContextValue {
   updateScheduledMessage: (id: string, input: { text?: string; scheduledFor?: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
   cancelScheduledMessage: (id: string) => Promise<void>;
   fetchUserChats: (userId: string) => Promise<ServerChat[]>;
+  fetchCheckInGroups: () => Promise<CheckInFetchResult<ServerCheckInGroup[]>>;
+  fetchCheckInBroadcasts: () => Promise<CheckInFetchResult<ServerCheckInBroadcast[]>>;
+  markCheckInBroadcastsRead: (broadcastId: string) => Promise<void>;
+  createCheckInGroup: (input: { name: string; memberIds: string[]; anonymous?: boolean; description?: string }) => Promise<ServerCheckInGroup | null>;
+  sendCheckinBroadcast: (input: { groupId: string; text: string; audioAttachment?: unknown; deadline?: number; clientId?: string }) => Promise<ServerCheckInBroadcast>;
+  replyToCheckin: (input: { broadcastId: string; text: string; audioAttachment?: unknown; clientId?: string }) => Promise<ServerCheckInReply>;
+  onCheckinBroadcast: (handler: CheckinBroadcastHandler) => () => void;
+  onCheckinReply: (handler: CheckinReplyHandler) => () => void;
+  onCheckinProgress: (handler: CheckinProgressHandler) => () => void;
   onNewMessage: (handler: MessageHandler) => () => void;
   emitTyping: (chatId: string, userId: string, name: string, isTyping: boolean, emoji?: string) => void;
   onTyping: (handler: (data: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void) => () => void;
@@ -248,6 +296,9 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const contactRequestHandlers = useRef<Set<ContactRequestHandler>>(new Set());
   const contactApprovedHandlers = useRef<Set<ContactApprovedHandler>>(new Set());
   const timeOverrideHandlers = useRef<Set<TimeOverrideHandler>>(new Set());
+  const checkinBroadcastHandlers = useRef<Set<CheckinBroadcastHandler>>(new Set());
+  const checkinReplyHandlers = useRef<Set<CheckinReplyHandler>>(new Set());
+  const checkinProgressHandlers = useRef<Set<CheckinProgressHandler>>(new Set());
   const authTokenRef = useRef<string | null>(null);
   // Tracks when the socket last disconnected so we can request missed messages on rejoin
   const disconnectTimeRef = useRef<number | null>(null);
@@ -417,6 +468,21 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
     socket.on("time:override", (data: { childId: string; overrideUntil: number | null }) => {
       timeOverrideHandlers.current.forEach((h) => h(data));
+    });
+
+    socket.on("checkin:hydrate", (data: { broadcasts?: ServerCheckInBroadcast[] }) => {
+      (data.broadcasts ?? []).forEach((broadcast) => {
+        checkinBroadcastHandlers.current.forEach((handler) => handler(broadcast));
+      });
+    });
+    socket.on("checkin:new", (broadcast: ServerCheckInBroadcast) => {
+      checkinBroadcastHandlers.current.forEach((handler) => handler(broadcast));
+    });
+    socket.on("checkin:reply", (reply: ServerCheckInReply) => {
+      checkinReplyHandlers.current.forEach((handler) => handler(reply));
+    });
+    socket.on("checkin:progress", (data: { broadcastId: string; total: number; replied: number }) => {
+      checkinProgressHandlers.current.forEach((handler) => handler(data));
     });
 
     socket.on("connect_error", (err) => {
@@ -770,6 +836,152 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const checkinRequest = useCallback(async <T,>(
+    path: string,
+    init?: RequestInit,
+  ): Promise<T> => {
+    const res = await fetch(`${getApiBase()}/checkins${path}`, {
+      ...init,
+      headers: {
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+        ...(await getAuthHeaders()),
+        ...init?.headers,
+      },
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(data.error ?? "Check-in request failed");
+    }
+    return (res.status === 204 ? undefined : await res.json()) as T;
+  }, []);
+
+  const fetchCheckInGroups = useCallback(async (): Promise<CheckInFetchResult<ServerCheckInGroup[]>> => {
+    try {
+      const data = await checkinRequest<{ groups: ServerCheckInGroup[] }>("/groups");
+      return { ok: true, data: data.groups ?? [] };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Unable to fetch check-in groups" };
+    }
+  }, [checkinRequest]);
+
+  const fetchCheckInBroadcasts = useCallback(async (): Promise<CheckInFetchResult<ServerCheckInBroadcast[]>> => {
+    try {
+      const data = await checkinRequest<{ broadcasts: ServerCheckInBroadcast[] }>("/broadcasts");
+      return { ok: true, data: data.broadcasts ?? [] };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Unable to fetch check-in broadcasts" };
+    }
+  }, [checkinRequest]);
+
+  const markCheckInBroadcastsRead = useCallback(async (broadcastId: string): Promise<void> => {
+    await checkinRequest(`/broadcasts/${broadcastId}/read`, { method: "POST" });
+  }, [checkinRequest]);
+
+  const createCheckInGroup = useCallback(async (input: {
+    name: string;
+    memberIds: string[];
+    anonymous?: boolean;
+    description?: string;
+  }): Promise<ServerCheckInGroup | null> => {
+    try {
+      const data = await checkinRequest<{ group: ServerCheckInGroup }>("/groups", {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+      return data.group ?? null;
+    } catch {
+      return null;
+    }
+  }, [checkinRequest]);
+
+  const sendCheckinBroadcast = useCallback((input: {
+    groupId: string;
+    text: string;
+    audioAttachment?: unknown;
+    deadline?: number;
+    clientId?: string;
+  }): Promise<ServerCheckInBroadcast> => {
+    const socket = socketRef.current;
+    if (!socket?.connected) return Promise.reject(new Error("Check-in socket is disconnected"));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        socket.off("disconnect", onDisconnect);
+        callback();
+      };
+      const onDisconnect = () => finish(() => reject(new Error("Check-in socket disconnected")));
+      const timeout = setTimeout(
+        () => finish(() => reject(new Error("Check-in broadcast acknowledgement timed out"))),
+        10000,
+      );
+      socket.once("disconnect", onDisconnect);
+      socket.emit("checkin:send", input, (result: {
+        ok: boolean;
+        broadcast?: ServerCheckInBroadcast;
+        error?: string;
+      }) => {
+        if (result?.ok && result.broadcast) {
+          finish(() => resolve(result.broadcast!));
+        } else {
+          finish(() => reject(new Error(result?.error ?? "Check-in broadcast failed")));
+        }
+      });
+    });
+  }, []);
+
+  const replyToCheckin = useCallback((input: {
+    broadcastId: string;
+    text: string;
+    audioAttachment?: unknown;
+    clientId?: string;
+  }): Promise<ServerCheckInReply> => {
+    const socket = socketRef.current;
+    if (!socket?.connected) return Promise.reject(new Error("Check-in socket is disconnected"));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        socket.off("disconnect", onDisconnect);
+        callback();
+      };
+      const onDisconnect = () => finish(() => reject(new Error("Check-in socket disconnected")));
+      const timeout = setTimeout(
+        () => finish(() => reject(new Error("Check-in reply acknowledgement timed out"))),
+        10000,
+      );
+      socket.once("disconnect", onDisconnect);
+      socket.emit("checkin:reply", input, (result: {
+        ok: boolean;
+        reply?: ServerCheckInReply;
+        error?: string;
+      }) => {
+        if (result?.ok && result.reply) {
+          finish(() => resolve(result.reply!));
+        } else {
+          finish(() => reject(new Error(result?.error ?? "Check-in reply failed")));
+        }
+      });
+    });
+  }, []);
+
+  const onCheckinBroadcast = useCallback((handler: CheckinBroadcastHandler) => {
+    checkinBroadcastHandlers.current.add(handler);
+    return () => { checkinBroadcastHandlers.current.delete(handler); };
+  }, []);
+  const onCheckinReply = useCallback((handler: CheckinReplyHandler) => {
+    checkinReplyHandlers.current.add(handler);
+    return () => { checkinReplyHandlers.current.delete(handler); };
+  }, []);
+  const onCheckinProgress = useCallback((handler: CheckinProgressHandler) => {
+    checkinProgressHandlers.current.add(handler);
+    return () => { checkinProgressHandlers.current.delete(handler); };
+  }, []);
+
   const onNewMessage = useCallback((handler: MessageHandler) => {
     messageHandlers.current.add(handler);
     return () => { messageHandlers.current.delete(handler); };
@@ -1014,6 +1226,15 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         updateScheduledMessage,
         cancelScheduledMessage,
         fetchUserChats,
+        fetchCheckInGroups,
+        fetchCheckInBroadcasts,
+         markCheckInBroadcastsRead,
+        createCheckInGroup,
+        sendCheckinBroadcast,
+        replyToCheckin,
+        onCheckinBroadcast,
+        onCheckinReply,
+        onCheckinProgress,
         onNewMessage,
         emitTyping,
         onTyping,

@@ -9,6 +9,7 @@ import chatExportSummaryRouter from "./chatExportSummary";
 import parentalRouter from "./parental";
 import scheduledMessagesRouter from "./scheduled-messages";
 import backupRouter from "./backup";
+import checkinsRouter from "./checkins";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(chatExportSummaryRouter);
 router.use("/parental", parentalRouter);
 router.use("/scheduled-messages", scheduledMessagesRouter);
 router.use(backupRouter);
+router.use("/checkins", checkinsRouter);
 
 export default router;

@@ -185,6 +185,131 @@ export type ServerMessage = {
 
 const onlineUsers = new Map<string, string>();
 
+type CheckinReplyRow = {
+  id: string;
+  client_id?: string | null;
+  member_id: string;
+  text: string;
+  audio_attachment: unknown;
+  created_at: number;
+  read_at: number | null;
+};
+
+async function hydrateCheckinBroadcast(broadcastId: string, userId: string) {
+  const broadcast = await queryOne<{
+    id: string; group_id: string; creator_id: string; client_id: string | null; text: string;
+    audio_attachment: unknown; deadline: number | null; created_at: number;
+  }>(
+    `SELECT b.id, b.group_id, b.creator_id, b.client_id, b.text, b.audio_attachment, b.deadline, b.created_at
+       FROM vm_broadcasts b
+       JOIN vm_checkin_group_members gm ON gm.group_id = b.group_id AND gm.user_id = $2
+      WHERE b.id = $1`,
+    [broadcastId, userId],
+  );
+  if (!broadcast) return null;
+  const replies = await query<CheckinReplyRow>(
+    `SELECT id, member_id, client_id, text, audio_attachment, created_at, read_at
+       FROM vm_checkin_replies
+      WHERE broadcast_id = $1
+        AND ($2 = (SELECT creator_id FROM vm_broadcasts WHERE id = $1) OR member_id = $2)
+      ORDER BY created_at ASC`,
+    [broadcastId, userId],
+  );
+  const replyMap: Record<string, unknown[]> = {};
+  for (const reply of replies) {
+    (replyMap[reply.member_id] ??= []).push({
+      id: reply.id,
+      clientId: reply.client_id ?? undefined,
+      memberId: reply.member_id,
+      text: reply.text,
+      audioAttachment: reply.audio_attachment ?? undefined,
+      timestamp: Number(reply.created_at),
+      read: reply.read_at != null,
+    });
+  }
+  const progress = broadcast.creator_id === userId ? await checkinProgress(broadcastId) : null;
+  return {
+    id: broadcast.id,
+    groupId: broadcast.group_id,
+    senderId: broadcast.creator_id,
+    text: broadcast.text,
+    audioAttachment: broadcast.audio_attachment ?? undefined,
+    deadline: broadcast.deadline == null ? undefined : Number(broadcast.deadline),
+    timestamp: Number(broadcast.created_at),
+    replies: replyMap,
+    ...(progress ? { progress: {
+      total: Number(progress?.total ?? 0),
+      replied: Number(progress?.replied ?? 0),
+    } } : {}),
+    clientId: broadcast.client_id ?? undefined,
+  };
+}
+
+export async function emitCheckinBroadcastCreated(broadcastId: string): Promise<void> {
+  const row = await queryOne<{ group_id: string; creator_id: string }>(
+    `SELECT group_id, creator_id FROM vm_broadcasts WHERE id = $1`, [broadcastId],
+  );
+  if (!row || !ioInstance) return;
+  const members = await query<{ user_id: string }>(
+    `SELECT user_id FROM vm_checkin_group_members WHERE group_id = $1`, [row.group_id],
+  );
+  for (const member of members) {
+    const broadcast = await hydrateCheckinBroadcast(broadcastId, member.user_id);
+    if (broadcast) ioInstance.to(`user:${member.user_id}`).emit("checkin:new", broadcast);
+  }
+  const progress = await checkinProgress(broadcastId);
+  ioInstance.to(`user:${row.creator_id}`).emit("checkin:progress", {
+    broadcastId, total: Number(progress?.total ?? 0), replied: Number(progress?.replied ?? 0),
+  });
+}
+
+export async function emitCheckinReplyCreated(replyId: string): Promise<void> {
+  if (!ioInstance) return;
+  const row = await queryOne<{
+    id: string; broadcast_id: string; member_id: string; client_id: string | null; text: string;
+    audio_attachment: unknown; created_at: number; read_at: number | null; creator_id: string;
+  }>(
+    `SELECT r.id, r.broadcast_id, r.member_id, r.client_id, r.text, r.audio_attachment,
+            r.created_at, r.read_at, b.creator_id
+       FROM vm_checkin_replies r JOIN vm_broadcasts b ON b.id = r.broadcast_id
+      WHERE r.id = $1`, [replyId],
+  );
+  if (!row) return;
+  const reply = {
+    id: row.id, broadcastId: row.broadcast_id, clientId: row.client_id ?? undefined,
+    memberId: row.member_id, text: row.text,
+    audioAttachment: row.audio_attachment ?? undefined, timestamp: Number(row.created_at),
+    read: row.read_at != null,
+  };
+  ioInstance.to(`user:${row.creator_id}`).emit("checkin:reply", reply);
+  ioInstance.to(`user:${row.member_id}`).emit("checkin:reply", reply);
+  const progress = await checkinProgress(row.broadcast_id);
+  ioInstance.to(`user:${row.creator_id}`).emit("checkin:progress", {
+    broadcastId: row.broadcast_id, total: Number(progress?.total ?? 0), replied: Number(progress?.replied ?? 0),
+  });
+}
+
+async function checkinProgress(broadcastId: string) {
+  return queryOne<{ total: number; replied: number }>(
+    `SELECT COUNT(DISTINCT gm.user_id)::int AS total,
+            COUNT(DISTINCT r.member_id)::int AS replied
+       FROM vm_broadcasts b
+       JOIN vm_checkin_group_members gm
+         ON gm.group_id = b.group_id AND gm.user_id != b.creator_id
+       LEFT JOIN vm_checkin_replies r
+         ON r.broadcast_id = b.id AND r.member_id = gm.user_id
+      WHERE b.id = $1`,
+    [broadcastId],
+  );
+}
+
+type CheckinBroadcastAck =
+  | { ok: true; broadcast: Awaited<ReturnType<typeof hydrateCheckinBroadcast>> }
+  | { ok: false; error: string };
+type CheckinReplyAck =
+  | { ok: true; reply: { id: string; broadcastId: string; clientId?: string; memberId: string; text: string; audioAttachment?: unknown; timestamp: number; read: boolean } }
+  | { ok: false; error: string };
+
 export function attachSocket(httpServer: HttpServer): SocketServer {
   const io = new SocketServer(httpServer, {
     path: "/api/socket.io",
@@ -206,6 +331,9 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       // a client cannot join as an arbitrary user id.
       const tokenUserId = verifyToken(socket.handshake.auth?.["token"] as string | undefined);
       if (!tokenUserId || tokenUserId !== userId) {
+        // A connection that was previously joined must not retain its old
+        // identity after a forged re-join attempt.
+        currentUserId = null;
         socket.emit("error", { message: "Authentication failed — invalid or missing token" });
         return;
       }
@@ -227,6 +355,27 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
       io.to(`user:${userId}`).emit("user:online", { userId, online: true });
       socket.emit("user:joined", { userId, chatRooms: chats.map((c) => c.id) });
+
+      // Check-in rooms are only used for membership bookkeeping. Payloads are
+      // still sent to per-user rooms so a recipient never learns other members'
+      // replies (or an unrelated group's broadcasts).
+      const checkinGroups = await query<{ id: string }>(
+        `SELECT group_id AS id FROM vm_checkin_group_members WHERE user_id = $1`,
+        [userId],
+      );
+      checkinGroups.forEach(({ id }) => { void socket.join(`checkin:${id}`); });
+      const checkinBroadcasts = await query<{ id: string }>(
+        `SELECT b.id FROM vm_broadcasts b
+          JOIN vm_checkin_group_members gm ON gm.group_id = b.group_id AND gm.user_id = $1
+         ORDER BY b.created_at DESC LIMIT 200`,
+        [userId],
+      );
+      const hydratedCheckins = [];
+      for (const row of checkinBroadcasts) {
+        const item = await hydrateCheckinBroadcast(row.id, userId);
+        if (item) hydratedCheckins.push(item);
+      }
+      if (hydratedCheckins.length > 0) socket.emit("checkin:hydrate", { broadcasts: hydratedCheckins });
 
       // If the client provided a `since` timestamp, send any messages they may
       // have missed while the socket was disconnected (e.g. app was backgrounded).
@@ -271,6 +420,214 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         } catch (err) {
           console.error("[socket] missed_messages query error:", err);
         }
+      }
+    });
+
+    socket.on("checkin:send", async (payload: {
+      groupId: string;
+      text?: string;
+      audioAttachment?: unknown;
+      deadline?: number;
+      clientId?: string;
+    }, acknowledge?: (result: CheckinBroadcastAck) => void) => {
+      try {
+        if (!currentUserId) {
+          acknowledge?.({ ok: false, error: "Not authenticated" });
+          socket.emit("error", { message: "Not authenticated" });
+          return;
+        }
+        const group = await queryOne<{ id: string; creator_id: string }>(
+          `SELECT g.id, g.creator_id FROM vm_checkin_groups g
+            JOIN vm_checkin_group_members gm ON gm.group_id = g.id AND gm.user_id = $2
+           WHERE g.id = $1`,
+          [payload.groupId, currentUserId],
+        );
+        if (!group) {
+          acknowledge?.({ ok: false, error: "Not a member of this check-in group" });
+          socket.emit("error", { message: "Not a member of this check-in group" });
+          return;
+        }
+        if (group.creator_id !== currentUserId) {
+          acknowledge?.({ ok: false, error: "Only the group creator can broadcast" });
+          socket.emit("error", { message: "Only the group creator can broadcast" });
+          return;
+        }
+        const groupMembers = await query<{ user_id: string }>(
+          `SELECT user_id FROM vm_checkin_group_members WHERE group_id = $1`, [group.id],
+        );
+        const contactCheck = await checkGroupContactsAllowed(groupMembers.map((member) => member.user_id));
+        if (!contactCheck.allowed) {
+          await requestApprovalAndNotifyParents(contactCheck.unapprovedPairs);
+          acknowledge?.({
+            ok: false,
+            error: contactCheck.status === "blocked"
+              ? "This group includes a contact who has been blocked by a parent."
+              : "Waiting for parent approval before broadcasting.",
+          });
+          return;
+        }
+        const text = payload.text ?? "";
+        if (typeof text !== "string" || text.length > 2000 || (!text.trim() && !payload.audioAttachment)) {
+          acknowledge?.({ ok: false, error: "Broadcast text or audio is required" });
+          socket.emit("error", { message: "Broadcast text or audio is required" });
+          return;
+        }
+        const existing = payload.clientId
+          ? await queryOne<{ id: string }>(
+            `SELECT id FROM vm_broadcasts WHERE creator_id = $1 AND client_id = $2`,
+            [currentUserId, payload.clientId],
+          )
+          : null;
+        let duplicate = Boolean(existing);
+        let row = existing ?? await queryOne<{ id: string }>(
+          `INSERT INTO vm_broadcasts (group_id, creator_id, text, audio_attachment, deadline, client_id)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6)
+           ON CONFLICT (creator_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [payload.groupId, currentUserId, text,
+            payload.audioAttachment == null ? null : JSON.stringify(payload.audioAttachment),
+            payload.deadline ?? null, payload.clientId ?? null],
+        );
+        if (!row && payload.clientId) {
+          row = await queryOne<{ id: string }>(
+            `SELECT id FROM vm_broadcasts WHERE creator_id = $1 AND client_id = $2`,
+            [currentUserId, payload.clientId],
+          );
+          duplicate = Boolean(row);
+        }
+        const broadcast = await hydrateCheckinBroadcast(row!.id, currentUserId);
+        if (!broadcast) {
+          acknowledge?.({ ok: false, error: "Broadcast could not be hydrated" });
+          return;
+        }
+        acknowledge?.({ ok: true, broadcast });
+        if (duplicate) return;
+        const members = await query<{ user_id: string }>(
+          `SELECT user_id FROM vm_checkin_group_members WHERE group_id = $1`,
+          [payload.groupId],
+        );
+        for (const member of members) {
+          const visible = member.user_id === currentUserId
+            ? broadcast
+            : (() => {
+              const { progress: _progress, ...withoutProgress } = broadcast;
+              return { ...withoutProgress, replies: {} };
+            })();
+          io.to(`user:${member.user_id}`).emit("checkin:new", visible);
+        }
+        io.to(`user:${currentUserId}`).emit("checkin:progress", {
+          broadcastId: broadcast.id,
+          ...(await checkinProgress(broadcast.id)),
+        });
+      } catch {
+        acknowledge?.({ ok: false, error: "Failed to send check-in broadcast" });
+        socket.emit("error", { message: "Failed to send check-in broadcast" });
+      }
+    });
+
+    socket.on("checkin:reply", async (payload: {
+      broadcastId: string;
+      text?: string;
+      audioAttachment?: unknown;
+      clientId?: string;
+    }, acknowledge?: (result: CheckinReplyAck) => void) => {
+      try {
+        if (!currentUserId) {
+          acknowledge?.({ ok: false, error: "Not authenticated" });
+          socket.emit("error", { message: "Not authenticated" });
+          return;
+        }
+        const broadcast = await queryOne<{ id: string; group_id: string; creator_id: string }>(
+          `SELECT id, group_id, creator_id FROM vm_broadcasts WHERE id = $1`,
+          [payload.broadcastId],
+        );
+        if (!broadcast) {
+          acknowledge?.({ ok: false, error: "Broadcast not found" });
+          socket.emit("error", { message: "Broadcast not found" });
+          return;
+        }
+        const member = await queryOne<{ user_id: string }>(
+          `SELECT user_id FROM vm_checkin_group_members
+            WHERE group_id = $1 AND user_id = $2`,
+          [broadcast.group_id, currentUserId],
+        );
+        if (!member || broadcast.creator_id === currentUserId) {
+          acknowledge?.({ ok: false, error: "Only a group member may reply" });
+          socket.emit("error", { message: "Only a group member may reply" });
+          return;
+        }
+        const groupMembers = await query<{ user_id: string }>(
+          `SELECT user_id FROM vm_checkin_group_members WHERE group_id = $1`, [broadcast.group_id],
+        );
+        const contactCheck = await checkGroupContactsAllowed(groupMembers.map((row) => row.user_id));
+        if (!contactCheck.allowed) {
+          await requestApprovalAndNotifyParents(contactCheck.unapprovedPairs);
+          acknowledge?.({
+            ok: false,
+            error: contactCheck.status === "blocked"
+              ? "This group includes a contact who has been blocked by a parent."
+              : "Waiting for parent approval before replying.",
+          });
+          return;
+        }
+        const text = payload.text ?? "";
+        if (typeof text !== "string" || text.length > 2000 || (!text.trim() && !payload.audioAttachment)) {
+          acknowledge?.({ ok: false, error: "Reply text or audio is required" });
+          socket.emit("error", { message: "Reply text or audio is required" });
+          return;
+        }
+        const existing = payload.clientId
+          ? await queryOne<{ id: string }>(
+            `SELECT id FROM vm_checkin_replies
+              WHERE broadcast_id = $1 AND member_id = $2 AND client_id = $3`,
+            [broadcast.id, currentUserId, payload.clientId],
+          )
+          : null;
+        let duplicate = Boolean(existing);
+        let row = existing ?? await queryOne<{ id: string }>(
+          `INSERT INTO vm_checkin_replies (broadcast_id, member_id, text, audio_attachment, client_id)
+           VALUES ($1, $2, $3, $4::jsonb, $5)
+           ON CONFLICT (broadcast_id, member_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [broadcast.id, currentUserId, text,
+            payload.audioAttachment == null ? null : JSON.stringify(payload.audioAttachment),
+            payload.clientId ?? null],
+        );
+        if (!row && payload.clientId) {
+          row = await queryOne<{ id: string }>(
+            `SELECT id FROM vm_checkin_replies
+              WHERE broadcast_id = $1 AND member_id = $2 AND client_id = $3`,
+            [broadcast.id, currentUserId, payload.clientId],
+          );
+          duplicate = Boolean(row);
+        }
+        const reply = await queryOne<CheckinReplyRow>(
+          `SELECT id, member_id, client_id, text, audio_attachment, created_at, read_at
+             FROM vm_checkin_replies WHERE id = $1`, [row!.id],
+        );
+        const replyPayload = {
+          id: reply!.id,
+          broadcastId: broadcast.id,
+          clientId: reply!.client_id ?? undefined,
+          memberId: reply!.member_id,
+          text: reply!.text,
+          audioAttachment: reply!.audio_attachment ?? undefined,
+          timestamp: Number(reply!.created_at),
+          read: reply!.read_at != null,
+        };
+        acknowledge?.({ ok: true, reply: replyPayload });
+        if (duplicate) return;
+        // Only the creator receives another member's reply. Echo it to the
+        // author as an acknowledgement for optimistic/offline reconciliation.
+        io.to(`user:${broadcast.creator_id}`).emit("checkin:reply", replyPayload);
+        io.to(`user:${currentUserId}`).emit("checkin:reply", replyPayload);
+        io.to(`user:${broadcast.creator_id}`).emit("checkin:progress", {
+          broadcastId: broadcast.id,
+          ...(await checkinProgress(broadcast.id)),
+        });
+      } catch {
+        acknowledge?.({ ok: false, error: "Failed to send check-in reply" });
+        socket.emit("error", { message: "Failed to send check-in reply" });
       }
     });
 

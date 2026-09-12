@@ -8,3 +8,4 @@
 - [Time-limited access windows](time-limited-access-windows.md) — use server-calculated remaining time and reconnect rechecks to prevent temporary-unlock bypasses.
 - [Scheduled delivery authorization](scheduled-delivery-authorization.md) — queued messages must recheck chat membership and family approvals at send time, not only when scheduled.
 - [Integration test execution](api-integration-test-execution.md) — tests crossing app module boundaries may need bundled CommonJS with explicit mocks; externalize runtime packages.
+- [Realtime check-in safety](realtime-checkin-safety.md) — broadcasts require send-time family approval, creator-only reply visibility/progress, durable retry IDs, and identity-scoped offline caches.
