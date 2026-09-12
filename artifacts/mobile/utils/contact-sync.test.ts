@@ -95,3 +95,97 @@ test("retains the first useful phone number for an unmatched device contact", ()
   assert.deepEqual(merged, [{ ...deviceContact, hasApp: false }]);
   assert.equal(merged[0].phone, "+1 650 555 0100");
 });
+
+test("keeps only the first device contact when normalized phone numbers overlap", () => {
+  const firstDeviceContact: TestContact = {
+    id: "synced_6",
+    name: "First Address Book Entry",
+    phone: "+1 (650) 555-0100",
+    phoneNumbers: ["+1 (650) 555-0100", "+1 650 555 0101"],
+  };
+  const duplicateDeviceContact: TestContact = {
+    id: "synced_7",
+    name: "Duplicate Address Book Entry",
+    phone: "16505550101",
+  };
+
+  const merged = mergeSyncedContacts([], [
+    firstDeviceContact,
+    duplicateDeviceContact,
+  ]);
+
+  assert.deepEqual(merged, [{ ...firstDeviceContact, hasApp: false }]);
+});
+
+test("keeps separate device contacts that have no phone numbers", () => {
+  const firstNumberlessContact: TestContact = {
+    id: "synced_8",
+    name: "First Numberless Contact",
+  };
+  const secondNumberlessContact: TestContact = {
+    id: "synced_9",
+    name: "Second Numberless Contact",
+    phoneNumbers: [],
+  };
+
+  const merged = mergeSyncedContacts([], [
+    firstNumberlessContact,
+    secondNumberlessContact,
+  ]);
+
+  assert.deepEqual(merged, [
+    { ...firstNumberlessContact, hasApp: false },
+    { ...secondNumberlessContact, hasApp: false },
+  ]);
+});
+
+test("deduplicates device contacts connected through another duplicate", () => {
+  const firstDeviceContact: TestContact = {
+    id: "synced_10",
+    name: "First Entry",
+    phoneNumbers: ["111-111-1111", "222-222-2222"],
+  };
+  const bridgingDuplicate: TestContact = {
+    id: "synced_11",
+    name: "Bridging Duplicate",
+    phoneNumbers: ["2222222222", "333-333-3333"],
+  };
+  const laterDuplicate: TestContact = {
+    id: "synced_12",
+    name: "Later Duplicate",
+    phone: "3333333333",
+  };
+
+  const merged = mergeSyncedContacts([], [
+    firstDeviceContact,
+    bridgingDuplicate,
+    laterDuplicate,
+  ]);
+
+  assert.deepEqual(merged, [{ ...firstDeviceContact, hasApp: false }]);
+});
+
+test("registered contacts take priority across all numbers on a device duplicate", () => {
+  const registered: TestContact = {
+    id: "registered-5",
+    name: "Registered Friend",
+    phone: "1111111111",
+  };
+  const matchingDeviceContact: TestContact = {
+    id: "synced_13",
+    name: "Registered Friend in Address Book",
+    phoneNumbers: ["111-111-1111", "222-222-2222"],
+  };
+  const aliasDeviceContact: TestContact = {
+    id: "synced_14",
+    name: "Registered Friend Alias",
+    phone: "2222222222",
+  };
+
+  const merged = mergeSyncedContacts(
+    [registered],
+    [matchingDeviceContact, aliasDeviceContact],
+  );
+
+  assert.deepEqual(merged, [{ ...registered, hasApp: true }]);
+});

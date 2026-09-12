@@ -22,13 +22,19 @@ export function mergeSyncedContacts<T extends SyncableContact>(
     systemContacts.map((contact) => normalizePhone(contact.phone)).filter(Boolean),
   );
 
+  const claimedPhones = new Set(systemPhones);
   const unmatchedDeviceContacts = deviceContacts
     .map((contact) => ({ ...contact, hasApp: false }))
     .filter((contact) => {
       const normalizedPhones = (contact.phoneNumbers ?? [contact.phone])
         .map(normalizePhone)
         .filter((phone): phone is string => Boolean(phone));
-      return !normalizedPhones.some((phone) => systemPhones.has(phone));
+      const isDuplicate = normalizedPhones.some((phone) =>
+        claimedPhones.has(phone),
+      );
+
+      normalizedPhones.forEach((phone) => claimedPhones.add(phone));
+      return !isDuplicate;
     });
 
   return [...systemContacts, ...unmatchedDeviceContacts] as T[];
