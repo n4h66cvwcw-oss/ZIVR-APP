@@ -92,12 +92,17 @@ export function scheduleOverrideExpiryCheck(
 ): () => void {
   const setTimer = opts.setTimer ?? setTimeout;
   const clearTimer = opts.clearTimer ?? clearTimeout;
+  let active = true;
   const timer = setTimer(() => {
+    if (!active) return;
     if (!opts.isCurrentUser(opts.userId)) return;
     opts.onExpire(opts.userId);
   }, opts.remainingMs);
 
-  return () => clearTimer(timer);
+  return () => {
+    active = false;
+    clearTimer(timer);
+  };
 }
 
 export type ChildCheckOptions = {

@@ -193,6 +193,52 @@ test("override expiry scheduler ignores a pending recheck after identity changes
   );
 });
 
+test("override expiry scheduler replaces an earlier boundary when access is extended", () => {
+  const scheduled = new Map<number, { callback: () => void; delayMs: number }>();
+  const clearedTimers: number[] = [];
+  const recheckedUsers: string[] = [];
+  let nextTimerId = 1;
+
+  const schedule = (remainingMs: number) => scheduleOverrideExpiryCheck({
+    userId: "child-1",
+    remainingMs,
+    isCurrentUser: (userId) => userId === "child-1",
+    onExpire: (userId) => {
+      recheckedUsers.push(userId);
+    },
+    setTimer: (callback, delayMs) => {
+      const timerId = nextTimerId++;
+      scheduled.set(timerId, { callback, delayMs });
+      return timerId as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: (timer) => {
+      clearedTimers.push(timer as unknown as number);
+    },
+  });
+
+  const cancelEarlierBoundary = schedule(5_000);
+  cancelEarlierBoundary();
+  schedule(20_000);
+
+  assert.deepEqual(clearedTimers, [1], "the earlier expiry timer must be cancelled");
+  assert.equal(scheduled.get(1)?.delayMs, 5_000);
+  assert.equal(scheduled.get(2)?.delayMs, 20_000);
+
+  scheduled.get(1)?.callback();
+  assert.deepEqual(
+    recheckedUsers,
+    [],
+    "a stale callback racing with cancellation must not trigger an early recheck",
+  );
+
+  scheduled.get(2)?.callback();
+  assert.deepEqual(
+    recheckedUsers,
+    ["child-1"],
+    "only the newest server-provided expiry boundary should trigger the recheck",
+  );
+});
+
 // ─── createForegroundCheckHandler ────────────────────────────────────────────
 
 test("foreground handler: calls runCheck on each active transition separated by more than 60 s", async () => {
