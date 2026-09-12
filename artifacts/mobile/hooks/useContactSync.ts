@@ -3,6 +3,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useState, useCallback } from "react";
 import type { Contact } from "@/context/MessagingContext";
 import { mergeSyncedContacts } from "@/utils/contact-sync";
+import {
+  isSupportedCountry,
+  type CountryCode,
+} from "libphonenumber-js";
 
 const CONTACTS_KEY = "@zivr_contacts";
 
@@ -15,7 +19,10 @@ function generateId(index: number): string {
 function mapDeviceContact(
   dc: Contacts.Contact,
   index: number,
-): (Contact & { phoneNumbers?: string[] }) | null {
+): (Contact & {
+  phoneNumbers?: string[];
+  phoneNumberRegions?: Array<CountryCode | undefined>;
+}) | null {
   const name =
     dc.name ||
     [dc.firstName, dc.middleName, dc.lastName].filter(Boolean).join(" ").trim();
@@ -25,12 +32,23 @@ function mapDeviceContact(
     dc.phoneNumbers
       ?.map(({ number }) => number?.trim())
       .filter((number): number is string => Boolean(number)) ?? [];
+  const phoneNumberRegions =
+    dc.phoneNumbers
+      ?.filter(({ number }) => Boolean(number?.trim()))
+      .map(({ countryCode }) => {
+        const region = countryCode?.trim().toUpperCase();
+        return region && isSupportedCountry(region)
+          ? (region as CountryCode)
+          : undefined;
+      }) ?? [];
 
   return {
     id: generateId(index),
     name,
     phone: phoneNumbers[0],
     phoneNumbers: phoneNumbers.length > 0 ? phoneNumbers : undefined,
+    phoneNumberRegions:
+      phoneNumberRegions.length > 0 ? phoneNumberRegions : undefined,
     avatar: dc.imageAvailable && dc.image?.uri ? dc.image.uri : undefined,
     isOnline: false,
     lastSeen: undefined,
@@ -67,7 +85,12 @@ export function useContactSync() {
         sort: Contacts.SortTypes.FirstName,
       });
 
-      const appContacts: Array<Contact & { phoneNumbers?: string[] }> = [];
+      const appContacts: Array<
+        Contact & {
+          phoneNumbers?: string[];
+          phoneNumberRegions?: Array<CountryCode | undefined>;
+        }
+      > = [];
       data.forEach((dc, i) => {
         const mapped = mapDeviceContact(dc, i);
         if (mapped) appContacts.push(mapped);

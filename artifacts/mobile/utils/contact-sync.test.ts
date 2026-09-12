@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mergeSyncedContacts } from "./contact-sync.ts";
+import type { CountryCode } from "libphonenumber-js";
 
 type TestContact = {
   id: string;
   name: string;
   phone?: string;
   phoneNumbers?: string[];
+  phoneRegion?: CountryCode;
+  phoneNumberRegions?: Array<CountryCode | undefined>;
   hasApp?: boolean;
 };
 
@@ -188,4 +191,82 @@ test("registered contacts take priority across all numbers on a device duplicate
   );
 
   assert.deepEqual(merged, [{ ...registered, hasApp: true }]);
+});
+
+test("matches a US local device number to the same international number", () => {
+  const registered: TestContact = {
+    id: "registered-6",
+    name: "International Entry",
+    phone: "+1 415 555 0123",
+  };
+  const localDeviceContact: TestContact = {
+    id: "synced_15",
+    name: "Local Entry",
+    phone: "(415) 555-0123",
+    phoneRegion: "US",
+  };
+
+  const merged = mergeSyncedContacts([registered], [localDeviceContact]);
+
+  assert.deepEqual(merged, [{ ...registered, hasApp: true }]);
+});
+
+test("matches a UK local device number when its per-number region is known", () => {
+  const registered: TestContact = {
+    id: "registered-7",
+    name: "International Relative",
+    phone: "+44 20 7946 0123",
+  };
+  const localDeviceContact: TestContact = {
+    id: "synced_16",
+    name: "Local Relative",
+    phoneNumbers: ["020 7946 0123"],
+    phoneNumberRegions: ["GB"],
+  };
+
+  const merged = mergeSyncedContacts([registered], [localDeviceContact]);
+
+  assert.deepEqual(merged, [{ ...registered, hasApp: true }]);
+});
+
+test("does not merge the same local digits from different regions", () => {
+  const usContact: TestContact = {
+    id: "synced_17",
+    name: "US Contact",
+    phone: "020 7946 0123",
+    phoneRegion: "US",
+  };
+  const ukContact: TestContact = {
+    id: "synced_18",
+    name: "UK Contact",
+    phone: "020 7946 0123",
+    phoneRegion: "GB",
+  };
+
+  const merged = mergeSyncedContacts([], [usContact, ukContact]);
+
+  assert.deepEqual(merged, [
+    { ...usContact, hasApp: false },
+    { ...ukContact, hasApp: false },
+  ]);
+});
+
+test("does not infer a country code when no region is available", () => {
+  const registered: TestContact = {
+    id: "registered-8",
+    name: "International Entry",
+    phone: "+1 415 555 0123",
+  };
+  const ambiguousLocalContact: TestContact = {
+    id: "synced_19",
+    name: "Ambiguous Local Entry",
+    phone: "415 555 0123",
+  };
+
+  const merged = mergeSyncedContacts([registered], [ambiguousLocalContact]);
+
+  assert.deepEqual(merged, [
+    { ...registered, hasApp: true },
+    { ...ambiguousLocalContact, hasApp: false },
+  ]);
 });

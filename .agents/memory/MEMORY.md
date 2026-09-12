@@ -9,3 +9,4 @@
 - [Scheduled delivery authorization](scheduled-delivery-authorization.md) — queued messages must recheck chat membership and family approvals at send time, not only when scheduled.
 - [Integration test execution](api-integration-test-execution.md) — tests crossing app module boundaries may need bundled CommonJS with explicit mocks; externalize runtime packages.
 - [Realtime check-in safety](realtime-checkin-safety.md) — broadcasts require send-time family approval, creator-only reply visibility/progress, durable retry IDs, and identity-scoped offline caches.
+- [Conservative phone matching](phone-matching.md) — infer E.164 only from explicit international format or trusted region metadata; never merge ambiguous local numbers by suffix.
