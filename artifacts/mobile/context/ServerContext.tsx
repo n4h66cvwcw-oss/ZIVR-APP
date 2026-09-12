@@ -223,9 +223,10 @@ function getApiBase(): string {
 
 function getSocketUrl(): string {
   const domain = process.env["EXPO_PUBLIC_DOMAIN"];
-  if (domain) return `https://${domain}/api`;
-  return PRODUCTION_API;
+  if (domain) return `https://${domain}`;
+  return "https://echo-stream.replit.app";
 }
+
 
 export function ServerProvider({ children }: { children: React.ReactNode }) {
   const { updateProfile } = useProfile();
