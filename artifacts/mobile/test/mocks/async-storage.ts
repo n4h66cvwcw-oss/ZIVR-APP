@@ -1,16 +1,23 @@
 let resolveChats: ((value: string) => void) | undefined;
-let chatsPromise = new Promise<string>((resolve) => {
+let rejectChats: ((reason: Error) => void) | undefined;
+let chatsPromise = new Promise<string>((resolve, reject) => {
   resolveChats = resolve;
+  rejectChats = reject;
 });
 
 export function resetStorageMock() {
-  chatsPromise = new Promise<string>((resolve) => {
+  chatsPromise = new Promise<string>((resolve, reject) => {
     resolveChats = resolve;
+    rejectChats = reject;
   });
 }
 
 export function resolveChatHydration(chats: unknown[]) {
   resolveChats?.(JSON.stringify(chats));
+}
+
+export function rejectChatHydration(error = new Error("AsyncStorage read failed")) {
+  rejectChats?.(error);
 }
 
 const AsyncStorage = {
