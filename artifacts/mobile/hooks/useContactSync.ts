@@ -2,6 +2,7 @@ import * as Contacts from "expo-contacts";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useState, useCallback } from "react";
 import type { Contact } from "@/context/MessagingContext";
+import { mergeSyncedContacts } from "@/utils/contact-sync";
 
 const CONTACTS_KEY = "@zivr_contacts";
 
@@ -71,29 +72,7 @@ export function useContactSync() {
       const stored = await AsyncStorage.getItem(CONTACTS_KEY);
       let existing: Contact[] = stored ? JSON.parse(stored) : [];
 
-      // Server-registered contacts (non-synced IDs) are ZIVR users.
-      const systemContacts = existing
-        .filter((c) => !c.id.startsWith("synced_"))
-        .map((c) => ({ ...c, hasApp: true }));
-
-      // Build a set of phone numbers belonging to ZIVR users so we can skip
-      // device-only duplicates and correctly tag unmatched device contacts.
-      const systemPhones = new Set(
-        systemContacts.map((c) => c.phone?.replace(/\D/g, "")).filter(Boolean)
-      );
-
-      // Device contacts that remain after matching are not yet on the app.
-      const taggedDeviceContacts = appContacts.map((c) => ({
-        ...c,
-        hasApp: false,
-      }));
-
-      const unmatchedDeviceContacts = taggedDeviceContacts.filter((c) => {
-        const normalizedPhone = c.phone?.replace(/\D/g, "");
-        return !normalizedPhone || !systemPhones.has(normalizedPhone);
-      });
-
-      const merged = [...systemContacts, ...unmatchedDeviceContacts];
+      const merged = mergeSyncedContacts(existing, appContacts);
       await AsyncStorage.setItem(CONTACTS_KEY, JSON.stringify(merged));
 
       setSyncedCount(appContacts.length);
