@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
-import { act, create } from "react-test-renderer";
+import { act, render } from "@testing-library/react-native/pure";
 import { MessagingProvider, useMessaging, type Message } from "./MessagingContext";
 import {
   emitNewMessage,
@@ -23,6 +23,22 @@ import {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+function renderProvider(children?: React.ReactNode) {
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    if (args[0] === "react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer") {
+      return;
+    }
+    originalConsoleError(...args);
+  };
+
+  try {
+    return render(<MessagingProvider>{children}</MessagingProvider>);
+  } finally {
+    console.error = originalConsoleError;
+  }
+}
+
 function MessageObserver({
   onMessages,
 }: {
@@ -38,9 +54,8 @@ test("startup replay waits for persisted chat notification settings", async () =
   resetStorageMock();
   resetNotificationMock();
 
-  let renderer: ReturnType<typeof create>;
+  const screen = renderProvider(<></>);
   await act(async () => {
-    renderer = create(<MessagingProvider><></></MessagingProvider>);
     await flush();
   });
 
@@ -70,7 +85,7 @@ test("startup replay waits for persisted chat notification settings", async () =
   }]);
 
   await act(async () => {
-    renderer!.unmount();
+    screen.unmount();
   });
 });
 
@@ -80,17 +95,14 @@ test("startup replay survives failed storage hydration without notifying", async
   resetNotificationMock();
 
   let observedMessages: Record<string, Message[]> = {};
-  let renderer: ReturnType<typeof create>;
   const originalConsoleError = console.error;
   console.error = () => {};
 
   try {
+    const screen = renderProvider(
+      <MessageObserver onMessages={(messages) => { observedMessages = messages; }} />
+    );
     await act(async () => {
-      renderer = create(
-        <MessagingProvider>
-          <MessageObserver onMessages={(messages) => { observedMessages = messages; }} />
-        </MessagingProvider>
-      );
       await flush();
     });
 
@@ -125,7 +137,7 @@ test("startup replay survives failed storage hydration without notifying", async
     );
 
     await act(async () => {
-      renderer!.unmount();
+      screen.unmount();
     });
   } finally {
     console.error = originalConsoleError;

@@ -25,19 +25,30 @@ export function emitNewMessage(message: MockServerMessage, delivery: MessageDeli
 const subscribe = () => () => {};
 const asyncEmpty = async () => [];
 
+const serverMock = {
+  serverUserId: "me",
+  onNewMessage: (handler: typeof newMessageHandler) => {
+    newMessageHandler = handler;
+    return () => { newMessageHandler = undefined; };
+  },
+  sendServerMessage: async () => undefined,
+  getOrCreateDirectChat: async () => ({ chatId: "chat" }),
+  onReadReceipt: subscribe,
+  fetchUserChats: asyncEmpty,
+  translateMessage: async (text: string) => text,
+  onMessageBlocked: subscribe,
+  onContactRequest: subscribe,
+  fetchCheckInGroups: async () => ({ ok: true as const, data: [] }),
+  fetchCheckInBroadcasts: async () => ({ ok: true as const, data: [] }),
+  markCheckInBroadcastsRead: async () => undefined,
+  createCheckInGroup: async () => undefined,
+  sendCheckinBroadcast: async () => undefined,
+  replyToCheckin: async () => undefined,
+  onCheckinBroadcast: subscribe,
+  onCheckinReply: subscribe,
+  onCheckinProgress: subscribe,
+};
+
 export function useServer() {
-  return {
-    serverUserId: "me",
-    onNewMessage: (handler: typeof newMessageHandler) => {
-      newMessageHandler = handler;
-      return () => { newMessageHandler = undefined; };
-    },
-    sendServerMessage: async () => undefined,
-    getOrCreateDirectChat: async () => ({ chatId: "chat" }),
-    onReadReceipt: subscribe,
-    fetchUserChats: asyncEmpty,
-    translateMessage: async (text: string) => text,
-    onMessageBlocked: subscribe,
-    onContactRequest: subscribe,
-  };
+  return serverMock;
 }
