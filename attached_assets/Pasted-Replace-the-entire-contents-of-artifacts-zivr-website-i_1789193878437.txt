@@ -1,3 +1,7 @@
+Replace the entire contents of artifacts/zivr-website/index.html with the exact HTML below. Do not modify src/, package.json, vite.config.ts, or anything else in the project — this file fully replaces the site's markup, styles, and script inline, and does not need the React app at all. After saving, restart the dev server for zivr-website and confirm the page loads with no console errors.
+
+Here is the complete replacement content for artifacts/zivr-website/index.html:
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
