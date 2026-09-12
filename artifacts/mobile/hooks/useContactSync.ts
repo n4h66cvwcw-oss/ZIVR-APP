@@ -12,21 +12,25 @@ function generateId(index: number): string {
   return `synced_${Date.now()}_${index}`;
 }
 
-function mapDeviceContact(dc: Contacts.Contact, index: number): Contact | null {
+function mapDeviceContact(
+  dc: Contacts.Contact,
+  index: number,
+): (Contact & { phoneNumbers?: string[] }) | null {
   const name =
     dc.name ||
     [dc.firstName, dc.middleName, dc.lastName].filter(Boolean).join(" ").trim();
   if (!name) return null;
 
-  const phone =
-    dc.phoneNumbers && dc.phoneNumbers.length > 0
-      ? dc.phoneNumbers[0].number ?? undefined
-      : undefined;
+  const phoneNumbers =
+    dc.phoneNumbers
+      ?.map(({ number }) => number?.trim())
+      .filter((number): number is string => Boolean(number)) ?? [];
 
   return {
     id: generateId(index),
     name,
-    phone,
+    phone: phoneNumbers[0],
+    phoneNumbers: phoneNumbers.length > 0 ? phoneNumbers : undefined,
     avatar: dc.imageAvailable && dc.image?.uri ? dc.image.uri : undefined,
     isOnline: false,
     lastSeen: undefined,
@@ -63,7 +67,7 @@ export function useContactSync() {
         sort: Contacts.SortTypes.FirstName,
       });
 
-      const appContacts: Contact[] = [];
+      const appContacts: Array<Contact & { phoneNumbers?: string[] }> = [];
       data.forEach((dc, i) => {
         const mapped = mapDeviceContact(dc, i);
         if (mapped) appContacts.push(mapped);

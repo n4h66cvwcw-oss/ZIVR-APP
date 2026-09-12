@@ -1,6 +1,7 @@
 export type SyncableContact = {
   id: string;
   phone?: string;
+  phoneNumbers?: string[];
   hasApp?: boolean;
 };
 
@@ -24,8 +25,10 @@ export function mergeSyncedContacts<T extends SyncableContact>(
   const unmatchedDeviceContacts = deviceContacts
     .map((contact) => ({ ...contact, hasApp: false }))
     .filter((contact) => {
-      const normalizedPhone = normalizePhone(contact.phone);
-      return !normalizedPhone || !systemPhones.has(normalizedPhone);
+      const normalizedPhones = (contact.phoneNumbers ?? [contact.phone])
+        .map(normalizePhone)
+        .filter((phone): phone is string => Boolean(phone));
+      return !normalizedPhones.some((phone) => systemPhones.has(phone));
     });
 
   return [...systemContacts, ...unmatchedDeviceContacts] as T[];
