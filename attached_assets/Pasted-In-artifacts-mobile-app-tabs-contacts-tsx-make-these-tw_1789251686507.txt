@@ -1,0 +1,43 @@
+In artifacts/mobile/app/(tabs)/contacts.tsx, make these two changes:
+
+1. Find this line:
+
+const { contacts, createDirectChat, updateContacts } = useMessaging();
+
+Replace it with:
+
+const { contacts, createDirectChat, createServerDirectChat, updateContacts } = useMessaging();
+
+2. Find this function:
+
+const handleMessage = async (contactId: string) => {
+  const chatId = await createDirectChat(contactId);
+  router.push(`/chat/${chatId}`);
+};
+
+Replace it with:
+
+const handleMessage = async (contactId: string) => {
+  const contact = contacts.find((c) => c.id === contactId);
+  if (contact?.hasApp) {
+    const result = await createServerDirectChat({
+      id: contact.id,
+      displayName: contact.name,
+      phone: contact.phone,
+      avatar: contact.avatar,
+      statusMessage: contact.status,
+      isOnline: contact.isOnline,
+      lastSeen: contact.lastSeen,
+    });
+    if (result.chatId) {
+      router.push(`/chat/${result.chatId}`);
+    }
+    return;
+  }
+  const chatId = await createDirectChat(contactId);
+  router.push(`/chat/${chatId}`);
+};
+
+Context: contacts.tsx was calling the local-only createDirectChat function for every contact, even ones that are registered ZIVR users (marked by contact.hasApp === true). That meant messaging someone from the Contacts tab created a chat that never syncs to the server, so messages sent there never actually reach the other person. This fix routes registered contacts through createServerDirectChat instead, which is the real server-backed chat creation function already used correctly elsewhere in the app (in new-chat.tsx).
+
+After making these changes, also check line 838 in the same file, which passes getChatId={createDirectChat} as a prop to a component (likely a group-creation modal). If that prop is used to start or add to a real conversation with a registered contact, it has the same bug and should be updated to use the same hasApp-based branching logic, or to call createServerDirectChat directly if all contacts passed to it are expected to be registered users. Let me know what that component does with getChatId so I can advise on that one specifically.

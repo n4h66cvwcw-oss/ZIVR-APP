@@ -609,7 +609,7 @@ export default function ContactsScreen() {
   const isDark = colorScheme === "dark";
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
-  const { contacts, createDirectChat, updateContacts } = useMessaging();
+  const { contacts, createDirectChat, createServerDirectChat, updateContacts } = useMessaging();
   const { startCall } = useCall();
   const { favorites, addFavorite, removeFavorite, isFavorited } = useFavorites();
   const [search, setSearch] = useState("");
@@ -638,9 +638,28 @@ export default function ContactsScreen() {
     c.name.toLowerCase().includes(search.toLowerCase())
   );
 
+  const getChatId = async (contactId: string) => {
+    const contact = contacts.find((c) => c.id === contactId);
+    if (contact?.hasApp) {
+      const result = await createServerDirectChat({
+        id: contact.id,
+        displayName: contact.name,
+        phone: contact.phone,
+        avatar: contact.avatar,
+        statusMessage: contact.status,
+        isOnline: contact.isOnline,
+        lastSeen: contact.lastSeen,
+      });
+      return result.chatId;
+    }
+    return createDirectChat(contactId);
+  };
+
   const handleMessage = async (contactId: string) => {
-    const chatId = await createDirectChat(contactId);
-    router.push(`/chat/${chatId}`);
+    const chatId = await getChatId(contactId);
+    if (chatId) {
+      router.push(`/chat/${chatId}`);
+    }
   };
 
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
@@ -835,7 +854,7 @@ export default function ContactsScreen() {
         onClose={() => setGroupModalContact(null)}
         colors={colors}
         insets={{ top: insets.top, bottom: insets.bottom }}
-        getChatId={createDirectChat}
+        getChatId={getChatId}
       />
     </View>
   );
