@@ -26,6 +26,7 @@ import { useFavorites } from "@/context/FavoritesContext";
 import { Avatar } from "@/components/Avatar";
 import { useContactSync } from "@/hooks/useContactSync";
 import { useContactGroups } from "@/hooks/useContactGroups";
+import { getInviteContacts, getInviteEmptyMessage } from "@/utils/invite-picker";
 
 const INVITE_LINK = "https://zivr.app/join";
 const INVITE_MESSAGE = `Hey! I'm using ZIVR to send musical messages and more. Join me here: ${INVITE_LINK}`;
@@ -489,12 +490,7 @@ function InviteModal({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [inviteSearch, setInviteSearch] = useState("");
 
-  const phoneContacts = contacts.filter(
-    (c) => c.id !== "me" && c.phone && !c.hasApp
-  );
-  const filtered = phoneContacts.filter((c) =>
-    c.name.toLowerCase().includes(inviteSearch.toLowerCase())
-  );
+  const { phoneContacts, filteredContacts } = getInviteContacts(contacts, inviteSearch);
 
   const toggle = (id: string) => {
     Haptics.selectionAsync();
@@ -570,7 +566,7 @@ function InviteModal({
         </Text>
 
         <FlatList
-          data={filtered}
+          data={filteredContacts}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <InviteRow
@@ -587,9 +583,7 @@ function InviteModal({
             <View style={styles.inviteEmpty}>
               <Ionicons name="people-outline" size={40} color={colors.textTertiary} />
               <Text style={[styles.inviteEmptyText, { color: colors.textSecondary }]}>
-                {phoneContacts.length === 0
-                  ? "All your contacts with a phone number are already on ZIVR!"
-                  : "No matching contacts"}
+                {getInviteEmptyMessage(phoneContacts.length)}
               </Text>
             </View>
           }
