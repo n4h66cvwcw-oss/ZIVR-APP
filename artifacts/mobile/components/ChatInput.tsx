@@ -366,7 +366,7 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
         </View>
       )}
 
-      <View style={[styles.inputRow, { backgroundColor: colors.background }]}>
+      <View style={[styles.actionRow, { backgroundColor: colors.background }]}>
         <Pressable
           onPress={pickAudio}
           style={[
@@ -449,7 +449,9 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
             <View style={[styles.formatDot, { backgroundColor: "#FF3B30" }]} />
           )}
         </Pressable>
+      </View>
 
+      <View style={[styles.inputRow, { backgroundColor: colors.background }]}>
         <View
           style={[
             styles.inputContainer,
@@ -704,7 +706,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-end",
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingTop: 4,
+    paddingBottom: 10,
+    gap: 8,
+  },
+  actionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
     gap: 8,
   },
   iconBtn: {
@@ -726,18 +737,20 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 130,
     maxHeight: 200,
     paddingHorizontal: 14,
     paddingVertical: 10,
     overflow: "hidden",
-    justifyContent: "center",
   },
   input: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     lineHeight: 22,
-    minHeight: 48,
-    flexGrow: 1,
+    minHeight: 110,
+    maxHeight: 180,
+    width: "100%",
+    textAlignVertical: "top",
   },
   sendBtn: {
     width: 38,

@@ -576,49 +576,47 @@ export default function ChatScreen() {
         )}
 
         {!selectionMode && <View style={[styles.bottomBar, { paddingBottom: insets.bottom, backgroundColor: colors.background }]}>
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={12}
-            style={[styles.floatingBackBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
-          >
-            <Ionicons name="chevron-back" size={22} color={colors.primary} />
-          </Pressable>
-          {/* AI Smart Reply button */}
-          {chat.isServerChat && !isBetaChat && (
+          <View style={styles.composerActionRow}>
             <Pressable
-              onPress={() => router.push({ pathname: "/schedule-message", params: { chatId: id } })}
-              hitSlop={10}
-              style={[styles.floatingBackBtn, { backgroundColor: colors.surface, borderColor: colors.border, marginLeft: 6 }]}
+              onPress={() => router.back()}
+              hitSlop={12}
+              style={[styles.floatingBackBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
             >
-              <Ionicons name="time-outline" size={20} color={colors.primary} />
+              <Ionicons name="chevron-back" size={22} color={colors.primary} />
             </Pressable>
-          )}
-          <Pressable
-            onPress={handleAiSuggest}
-            hitSlop={10}
-            style={[
-              styles.floatingBackBtn,
-              {
-                backgroundColor: aiLoading ? colors.primary + "18" : colors.surface,
-                borderColor: aiLoading ? colors.primary : colors.border,
-                marginLeft: 6,
-              },
-            ]}
-          >
-            {aiLoading ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Text style={{ fontSize: 18 }}>✨</Text>
+            {chat.isServerChat && !isBetaChat && (
+              <Pressable
+                onPress={() => router.push({ pathname: "/schedule-message", params: { chatId: id } })}
+                hitSlop={10}
+                style={[styles.floatingBackBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              >
+                <Ionicons name="time-outline" size={20} color={colors.primary} />
+              </Pressable>
             )}
-          </Pressable>
-          <View style={{ flex: 1 }}>
-            <ChatInput
-              onSend={handleSend}
-              onTextChange={handleTypingChange}
-              suggestedText={aiTextToInject}
-              onSuggestedTextConsumed={() => setAiTextToInject(undefined)}
-            />
+            <Pressable
+              onPress={handleAiSuggest}
+              hitSlop={10}
+              style={[
+                styles.floatingBackBtn,
+                {
+                  backgroundColor: aiLoading ? colors.primary + "18" : colors.surface,
+                  borderColor: aiLoading ? colors.primary : colors.border,
+                },
+              ]}
+            >
+              {aiLoading ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Text style={{ fontSize: 18 }}>✨</Text>
+              )}
+            </Pressable>
           </View>
+          <ChatInput
+            onSend={handleSend}
+            onTextChange={handleTypingChange}
+            suggestedText={aiTextToInject}
+            onSuggestedTextConsumed={() => setAiTextToInject(undefined)}
+          />
         </View>}
       </KeyboardAvoidingView>
 
@@ -680,8 +678,14 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_600SemiBold",
   },
   bottomBar: {
+    width: "100%",
+  },
+  composerActionRow: {
     flexDirection: "row",
-    alignItems: "flex-end",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    gap: 8,
   },
   floatingBackBtn: {
     width: 40,
@@ -689,8 +693,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: 10,
-    marginBottom: 10,
     borderWidth: StyleSheet.hairlineWidth,
   },
   headerCenter: {
