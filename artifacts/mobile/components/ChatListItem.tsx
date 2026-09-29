@@ -229,6 +229,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     gap: 12,
+    minHeight: 76,
   },
   avatarWrapper: {
     position: "relative",
@@ -251,6 +252,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    minHeight: 22,
   },
   nameRow: {
     flexDirection: "row",
@@ -263,6 +265,7 @@ const styles = StyleSheet.create({
   },
   name: {
     fontSize: 16,
+    lineHeight: 22,
     flex: 1,
   },
   metaRight: {
@@ -271,13 +274,17 @@ const styles = StyleSheet.create({
   },
   time: {
     fontSize: 12,
+    lineHeight: 16,
+    flexShrink: 0,
   },
   previewRow: {
     flexDirection: "row",
     alignItems: "center",
+    minHeight: 20,
   },
   preview: {
     fontSize: 14,
+    lineHeight: 20,
   },
   unreadBadge: {
     minWidth: 20,
@@ -290,6 +297,7 @@ const styles = StyleSheet.create({
   },
   unreadCount: {
     fontSize: 12,
+    lineHeight: 16,
     fontFamily: "Inter_700Bold",
     color: "#FFFFFF",
   },

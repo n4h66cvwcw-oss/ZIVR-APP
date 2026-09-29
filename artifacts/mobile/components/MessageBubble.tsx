@@ -1031,6 +1031,7 @@ export function MessageBubble({
 
   const FONT_SIZE_VALUES: Record<string, number> = { sm: 11, md: 16, lg: 20, xl: 26 };
   const resolvedFontSize = fmt?.fontSize ? FONT_SIZE_VALUES[fmt.fontSize] : 16;
+  const resolvedLineHeight = Math.round(resolvedFontSize * 1.35);
   const resolvedFontFamily = fmt?.bold ? "Inter_700Bold" : "Inter_400Regular";
 
   const totalReactions = Object.entries(message.reactions || {}).filter(
@@ -1097,12 +1098,13 @@ export function MessageBubble({
         delayLongPress={300}
       >
         {hasMusicBg ? (
-          <View style={[styles.bubble, isMine ? styles.myBubble : styles.theirBubble, { overflow: "hidden" }]}>
+          <View style={[styles.bubble, isMine ? styles.myBubble : styles.theirBubble]}>
             <LinearGradient
               colors={musicBubbleColors as [string, string]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
-              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+              style={[styles.bubbleFill, isMine ? styles.myBubble : styles.theirBubble]}
             />
             {message.imageAttachment && (
               <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
@@ -1111,7 +1113,7 @@ export function MessageBubble({
               <AudioPlayer audio={message.audioAttachment} isMine={isMine} colors={colors} />
             )}
             {message.text ? (
-              <Text style={[styles.messageText, { color: "#fff", fontSize: resolvedFontSize, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
+              <Text style={[styles.messageText, { color: "#fff", fontSize: resolvedFontSize, lineHeight: resolvedLineHeight, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
                 {message.text}
               </Text>
             ) : null}
@@ -1129,9 +1131,9 @@ export function MessageBubble({
             )}
             <View style={[styles.reelSeparator, { backgroundColor: "rgba(255,255,255,0.2)" }]} />
             <MusicReelBar music={message.musicAttachment!} isMine={isMine} />
-            <View style={styles.metaRow}>
+            <View style={[styles.metaRow, isMine ? styles.metaRowMine : styles.metaRowTheirs]}>
               <View style={isMine ? styles.metaRight : styles.metaLeft}>
-                <Text style={[styles.timestamp, { color: "rgba(255,255,255,0.7)" }]}>{time}</Text>
+                <Text style={[styles.timestamp, { color: "rgba(255,255,255,0.7)" }]} numberOfLines={1}>{time}</Text>
                 {isMine && (
                   <Ionicons name="checkmark-done" size={14} color={message.read ? "#64D2FF" : "rgba(255,255,255,0.5)"} style={{ marginLeft: 4 }} />
                 )}
@@ -1139,12 +1141,13 @@ export function MessageBubble({
             </View>
           </View>
         ) : isMine && sentBubbleColors && !hasGifBg ? (
-          <View style={[styles.bubble, styles.myBubble, { overflow: "hidden" }]}>
+          <View style={[styles.bubble, styles.myBubble]}>
             <LinearGradient
               colors={sentBubbleColors as [string, string]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+              style={[styles.bubbleFill, styles.myBubble]}
             />
             {message.imageAttachment && (
               <SecurePhotoMessage image={message.imageAttachment} isMine={isMine} messageId={message.id} myId={myId} onViewed={onImageViewed} colors={colors} />
@@ -1153,7 +1156,7 @@ export function MessageBubble({
               <AudioPlayer audio={message.audioAttachment} isMine={isMine} colors={colors} />
             )}
             {message.text ? (
-              <Text style={[styles.messageText, { color: activeSkin?.textOnSent ?? colors.messageTextSent, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
+              <Text style={[styles.messageText, { color: activeSkin?.textOnSent ?? colors.messageTextSent, fontSize: resolvedFontSize, lineHeight: resolvedLineHeight, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
                 {message.text}
               </Text>
             ) : null}
@@ -1169,9 +1172,9 @@ export function MessageBubble({
                 <Text style={styles.originalTextContent}>{message.originalText}</Text>
               </View>
             )}
-            <View style={styles.metaRow}>
+            <View style={[styles.metaRow, styles.metaRowMine]}>
               <View style={styles.metaRight}>
-                <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
+                <Text style={[styles.timestamp, { color: mutedText }]} numberOfLines={1}>{time}</Text>
                 <Ionicons name="checkmark-done" size={14} color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"} style={{ marginLeft: 4 }} />
               </View>
             </View>
@@ -1186,9 +1189,11 @@ export function MessageBubble({
           ]}
         >
           {hasGifBg && fmt?.backgroundGifUrl && (
-            <ExpoImage source={{ uri: fmt.backgroundGifUrl }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" />
+            <View pointerEvents="none" style={[styles.bubbleFill, isMine ? styles.myBubble : styles.theirBubble]}>
+              <ExpoImage source={{ uri: fmt.backgroundGifUrl }} style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="memory-disk" />
+              <View style={styles.gifOverlay} />
+            </View>
           )}
-          {hasGifBg && <View style={styles.gifOverlay} />}
           {hasGifBg && (
             <View style={styles.gifExpandHint} pointerEvents="none">
               <Ionicons name="expand-outline" size={14} color="rgba(255,255,255,0.7)" />
@@ -1201,7 +1206,7 @@ export function MessageBubble({
             <AudioPlayer audio={message.audioAttachment} isMine={isMine} colors={colors} />
           )}
           {message.text ? (
-            <Text style={[styles.messageText, { color: textColor, fontSize: resolvedFontSize, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
+            <Text style={[styles.messageText, { color: textColor, fontSize: resolvedFontSize, lineHeight: resolvedLineHeight, fontFamily: resolvedFontFamily }, fmt?.italic && { fontStyle: "italic" }, fmt?.underline && { textDecorationLine: "underline" }]}>
               {message.text}
             </Text>
           ) : null}
@@ -1217,9 +1222,9 @@ export function MessageBubble({
               <Text style={styles.originalTextContent}>{message.originalText}</Text>
             </View>
           )}
-          <View style={styles.metaRow}>
+          <View style={[styles.metaRow, isMine ? styles.metaRowMine : styles.metaRowTheirs]}>
             <View style={isMine ? styles.metaRight : styles.metaLeft}>
-              <Text style={[styles.timestamp, { color: mutedText }]}>{time}</Text>
+              <Text style={[styles.timestamp, { color: mutedText }]} numberOfLines={1}>{time}</Text>
               {isMine && (
                 <Ionicons name="checkmark-done" size={14} color={message.read ? "#64D2FF" : "rgba(255,255,255,0.6)"} style={{ marginLeft: 4 }} />
               )}
@@ -1458,7 +1463,14 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    minWidth: 60,
+    minWidth: 108,
+    flexShrink: 0,
+    overflow: "visible",
+  },
+  bubbleFill: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 20,
+    overflow: "hidden",
   },
   myBubble: {
     borderBottomRightRadius: 6,
@@ -1467,7 +1479,6 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 6,
   },
   gifBubble: {
-    overflow: "hidden",
     minWidth: 180,
     minHeight: 80,
   },
@@ -1485,6 +1496,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     lineHeight: 22,
+    flexShrink: 0,
   },
   translatedBadge: {
     flexDirection: "row",
@@ -1526,28 +1538,41 @@ const styles = StyleSheet.create({
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     marginTop: 4,
     gap: 8,
+    flexShrink: 0,
+    flexWrap: "nowrap",
+  },
+  metaRowMine: {
+    justifyContent: "flex-end",
+  },
+  metaRowTheirs: {
+    justifyContent: "space-between",
   },
   metaRight: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    flex: 1,
+    flexGrow: 0,
+    flexShrink: 0,
+    flexWrap: "nowrap",
   },
   metaLeft: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-start",
-    flex: 1,
+    flexGrow: 0,
+    flexShrink: 0,
+    flexWrap: "nowrap",
   },
   callIndicator: {
     opacity: 0.7,
   },
   timestamp: {
     fontSize: 11,
+    lineHeight: 14,
     fontFamily: "Inter_400Regular",
+    flexShrink: 0,
   },
   callBar: {
     flexDirection: "row",

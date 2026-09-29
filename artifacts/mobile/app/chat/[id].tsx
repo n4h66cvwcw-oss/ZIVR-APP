@@ -471,6 +471,7 @@ export default function ChatScreen() {
             styles.messageList,
             { paddingBottom: 16 },
           ]}
+          removeClippedSubviews={false}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           onContentSizeChange={() =>
