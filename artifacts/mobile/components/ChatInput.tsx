@@ -49,6 +49,9 @@ type FontSize = "sm" | "md" | "lg" | "xl";
 const FONT_SIZES: FontSize[] = ["sm", "md", "lg", "xl"];
 const FONT_SIZE_LABELS: Record<FontSize, string> = { sm: "A", md: "A", lg: "A", xl: "A" };
 const FONT_SIZE_VALUES: Record<FontSize, number> = { sm: 10, md: 13, lg: 17, xl: 22 };
+const INPUT_LINE_HEIGHT = 22;
+const INPUT_MIN_HEIGHT = INPUT_LINE_HEIGHT;
+const INPUT_MAX_HEIGHT = INPUT_LINE_HEIGHT * 5;
 
 const TEXT_COLORS = [
   "#FFFFFF",
@@ -69,10 +72,13 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
   const colors = isDark ? Colors.dark : Colors.light;
 
   const [text, setText] = useState("");
+  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
+  const textLenRef = useRef(0);
 
   // Populate input when a suggestion is injected from the parent
   React.useEffect(() => {
     if (suggestedText) {
+      textLenRef.current = suggestedText.length;
       setText(suggestedText);
       onTextChange?.(suggestedText);
       onSuggestedTextConsumed?.();
@@ -121,7 +127,9 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
       Animated.spring(sendScale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }),
     ]).start();
     onSend(text.trim(), attachedAudio || undefined, undefined, buildFormatting(), attachedMusic || undefined, selfDestructConfig || undefined);
+    textLenRef.current = 0;
     setText("");
+    setInputHeight(INPUT_MIN_HEIGHT);
     setAttachedAudio(null);
     setAttachedMusic(null);
     setSelfDestructConfig(null);
@@ -461,17 +469,36 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
           <TextInput
             style={[
               styles.input,
-              { color: textColor || (isDark ? colors.text : colors.text) },
+              { color: textColor || colors.text, height: inputHeight },
               bold && { fontFamily: "Inter_700Bold" },
               italic && { fontStyle: "italic" },
               underline && { textDecorationLine: "underline" },
-              fontSize !== "md" && { fontSize: FONT_SIZE_VALUES[fontSize] },
+              fontSize !== "md" && {
+                fontSize: FONT_SIZE_VALUES[fontSize],
+                lineHeight: Math.ceil(FONT_SIZE_VALUES[fontSize] * 1.4),
+              },
             ]}
             value={text}
-            onChangeText={(t) => { setText(t); onTextChange?.(t); }}
+            onChangeText={(t) => {
+              textLenRef.current = t.length;
+              setText(t);
+              onTextChange?.(t);
+              if (t.length === 0) setInputHeight(INPUT_MIN_HEIGHT);
+            }}
+            onContentSizeChange={(event) => {
+              if (textLenRef.current === 0) {
+                setInputHeight(INPUT_MIN_HEIGHT);
+                return;
+              }
+              const measured = Math.ceil(event.nativeEvent.contentSize.height);
+              if (!Number.isFinite(measured) || measured <= 0) return;
+              const next = Math.min(Math.max(measured, INPUT_MIN_HEIGHT), INPUT_MAX_HEIGHT);
+              setInputHeight((prev) => (Math.abs(prev - next) < 2 ? prev : next));
+            }}
             placeholder={placeholder}
             placeholderTextColor={colors.textTertiary}
             multiline
+            scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
             maxLength={2000}
             onSubmitEditing={Platform.OS === "web" ? handleSend : undefined}
             blurOnSubmit={false}
@@ -737,19 +764,19 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
-    minHeight: 130,
-    maxHeight: 200,
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    overflow: "hidden",
+    paddingVertical: 8,
+    justifyContent: "center",
   },
   input: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
-    lineHeight: 22,
-    minHeight: 110,
-    maxHeight: 180,
+    lineHeight: INPUT_LINE_HEIGHT,
+    maxHeight: INPUT_MAX_HEIGHT,
     width: "100%",
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    margin: 0,
     textAlignVertical: "top",
   },
   sendBtn: {

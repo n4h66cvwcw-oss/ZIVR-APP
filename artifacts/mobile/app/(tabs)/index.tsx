@@ -169,28 +169,38 @@ export default function ChatsScreen() {
         ]}
       >
         <View style={styles.headerTop}>
-          <Pressable onPress={() => router.push("/profile")} hitSlop={8} style={styles.profileBtn}>
-            {profile.avatar ? (
-              <Image source={{ uri: profile.avatar }} style={styles.profileAvatarImg} />
-            ) : (
-              <View style={[styles.profileAvatar, { backgroundColor: colors.primary }]}>
-                {profile.displayName ? (
-                  <Text style={styles.profileAvatarInitial}>
-                    {profile.displayName.charAt(0).toUpperCase()}
-                  </Text>
-                ) : (
-                  <Ionicons name="person" size={18} color="#FFF" />
-                )}
-              </View>
-            )}
-          </Pressable>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Messages</Text>
-            {unreadTotal > 0 && (
-              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
-                {unreadTotal} unread
+          <View style={styles.headerTitleRow}>
+            <Pressable onPress={() => router.push("/profile")} hitSlop={8}>
+              {profile.avatar ? (
+                <Image source={{ uri: profile.avatar }} style={styles.profileAvatarImg} />
+              ) : (
+                <View style={[styles.profileAvatar, { backgroundColor: colors.primary }]}>
+                  {profile.displayName ? (
+                    <Text style={styles.profileAvatarInitial}>
+                      {profile.displayName.charAt(0).toUpperCase()}
+                    </Text>
+                  ) : (
+                    <Ionicons name="person" size={18} color="#FFF" />
+                  )}
+                </View>
+              )}
+            </Pressable>
+            <View style={styles.headerTitleBlock}>
+              <Text
+                style={[styles.headerTitle, { color: colors.text }]}
+                numberOfLines={1}
+              >
+                Messages
               </Text>
-            )}
+              {unreadTotal > 0 && (
+                <Text
+                  style={[styles.headerSubtitle, { color: colors.textSecondary }]}
+                  numberOfLines={1}
+                >
+                  {unreadTotal} unread
+                </Text>
+              )}
+            </View>
           </View>
           <View style={styles.headerActions}>
             <Pressable
@@ -361,6 +371,7 @@ export default function ChatsScreen() {
       <FavoritesStrip tab="chats" />
 
       <FlatList
+        style={styles.list}
         data={visibleChats}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
@@ -440,7 +451,9 @@ export default function ChatsScreen() {
         ItemSeparatorComponent={() => (
           <View style={[styles.separator, { backgroundColor: colors.border, marginLeft: 80 }]} />
         )}
-        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{ paddingBottom: insets.bottom + 88 }}
+        contentInsetAdjustmentBehavior="never"
+        removeClippedSubviews={false}
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
       />
@@ -523,20 +536,22 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  list: { flex: 1 },
   header: {
     paddingHorizontal: 16,
     paddingBottom: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 10,
   },
-  headerTop: { flexDirection: "row", alignItems: "center", gap: 10 },
-  profileBtn: { marginTop: 2 },
+  headerTop: { gap: 12 },
+  headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerTitleBlock: { flex: 1, minWidth: 0 },
   profileAvatar: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   profileAvatarImg: { width: 36, height: 36, borderRadius: 18 },
-  profileAvatarInitial: { fontSize: 15, fontFamily: "Inter_700Bold", color: "#FFF" },
-  headerTitle: { fontSize: 28, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
-  headerSubtitle: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  headerActions: { flexDirection: "row", gap: 8, marginTop: 4 },
+  profileAvatarInitial: { fontSize: 15, lineHeight: 18, fontFamily: "Inter_700Bold", color: "#FFF" },
+  headerTitle: { fontSize: 28, lineHeight: 34, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
+  headerSubtitle: { fontSize: 12, lineHeight: 16, fontFamily: "Inter_400Regular", marginTop: 2 },
+  headerActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: 8 },
   headerBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   searchContainer: {
     flexDirection: "row",
