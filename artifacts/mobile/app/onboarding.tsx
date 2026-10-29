@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -44,7 +44,9 @@ export default function OnboardingScreen() {
   const [username, setUsername] = useState("");
   const [avatarUri, setAvatarUri] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
-  const [showRecovery, setShowRecovery] = useState(false);
+  const params = useLocalSearchParams<{ recover?: string | string[] }>();
+  const recoveryOnly = params.recover === "1" || (Array.isArray(params.recover) && params.recover.includes("1"));
+  const [showRecovery, setShowRecovery] = useState(recoveryOnly);
   const [recoveryCode, setRecoveryCode] = useState("");
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
 
@@ -220,8 +222,20 @@ export default function OnboardingScreen() {
                   </LinearGradient>
                 </Pressable>
 
-                <Pressable onPress={() => { setShowRecovery(false); setRecoveryError(null); }} style={styles.skipBtn}>
-                  <Text style={[styles.skipText, { color: colors.textSecondary }]}>← Set up a new account</Text>
+                <Pressable
+                  onPress={() => {
+                    if (recoveryOnly) {
+                      router.back();
+                      return;
+                    }
+                    setShowRecovery(false);
+                    setRecoveryError(null);
+                  }}
+                  style={styles.skipBtn}
+                >
+                  <Text style={[styles.skipText, { color: colors.textSecondary }]}>
+                    {recoveryOnly ? "Not now" : "← Set up a new account"}
+                  </Text>
                 </Pressable>
               </>
             ) : step === 1 ? (

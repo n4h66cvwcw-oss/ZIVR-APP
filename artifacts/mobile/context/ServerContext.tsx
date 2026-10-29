@@ -8,7 +8,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { AppState, AppStateStatus } from "react-native";
+import { Alert, AppState, AppStateStatus } from "react-native";
+import { router } from "expo-router";
 import { io, Socket } from "socket.io-client";
 import {
   buildRecoveredAccountUpdate,
@@ -17,8 +18,13 @@ import {
 import { useProfile } from "@/context/ProfileContext";
 import { clearCachedLanguageForIdentitySwitch } from "@/utils/language-sync";
 import {
+  accountRecoveryPrompt,
+  messageSendFollowUp,
+  parseServerIdentity,
+  resolveRequestAuthToken,
   resolveServerIdentity,
   serializeServerIdentity,
+  type MessageSendAck,
 } from "@/utils/server-identity";
 
 export type ServerUser = {
@@ -300,11 +306,15 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const checkinReplyHandlers = useRef<Set<CheckinReplyHandler>>(new Set());
   const checkinProgressHandlers = useRef<Set<CheckinProgressHandler>>(new Set());
   const authTokenRef = useRef<string | null>(null);
+  authTokenRefBridge = authTokenRef;
   // Tracks when the socket last disconnected so we can request missed messages on rejoin
   const disconnectTimeRef = useRef<number | null>(null);
   const serverUserIdRef = useRef<string | null>(null);
 
   async function persistServerIdentity(userId: string, authToken: string): Promise<void> {
+    // Every identity write keeps the socket ref and the REST header cache on
+    // the same token. Callers that also assign the refs stay aligned.
+    syncAuthToken(authToken);
     await AsyncStorage.multiSet([
       [SERVER_USER_KEY, userId],
       [SERVER_TOKEN_KEY, authToken],
@@ -774,10 +784,56 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  async function retryMessageSendViaRest(payload: {
+    chatId: string;
+    senderId: string;
+    text: string;
+    type: "text";
+    localId?: string;
+  }): Promise<void> {
+    await getAuthHeaders();
+    const userId = serverUserIdRef.current;
+    const socket = socketRef.current;
+    if (userId && authTokenRef.current && socket) {
+      socket.off("disconnect");
+      socket.disconnect();
+      socketRef.current = null;
+      disconnectTimeRef.current = null;
+      connectSocket(userId);
+    }
+
+    let restStatus: number | null = null;
+    let restError: string | null = null;
+    try {
+      const res = await fetch(`${getApiBase()}/chats/${encodeURIComponent(payload.chatId)}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+        body: JSON.stringify(payload),
+      });
+      restStatus = res.status;
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        restError = body.error ?? null;
+      }
+    } catch (error) {
+      console.warn("[ServerContext] message REST retry failed", error);
+      return;
+    }
+
+    if (messageSendFollowUp({ restAttempted: true, restStatus, restError }) === "account-recovery") {
+      promptAccountRecovery();
+    }
+  }
+
   const sendServerMessage = useCallback(
     (chatId: string, senderId: string, text: string, localId?: string) => {
-      if (!socketRef.current?.connected) return;
-      socketRef.current.emit("message:send", { chatId, senderId, text, type: "text", localId });
+      const socket = socketRef.current;
+      if (!socket?.connected) return;
+      const payload = { chatId, senderId, text, type: "text" as const, localId };
+      socket.emit("message:send", payload, (ack: MessageSendAck) => {
+        if (messageSendFollowUp({ ack, restAttempted: false }) !== "retry-rest") return;
+        void retryMessageSendViaRest(payload);
+      });
     },
     []
   );
@@ -1263,11 +1319,62 @@ export function useServer() {
 }
 
 let cachedAuthToken: string | null = null;
+let authTokenRefBridge: { current: string | null } | null = null;
+let authRecoveryPromptAt = 0;
+
+function syncAuthToken(token: string | null) {
+  cachedAuthToken = token;
+  if (authTokenRefBridge) authTokenRefBridge.current = token;
+}
+
+/**
+ * Auth failure keeps the current account. Recovery uses the saved code.
+ * Signing out or registering here would mint a new user and orphan chats.
+ */
+function promptAccountRecovery() {
+  const now = Date.now();
+  if (now - authRecoveryPromptAt < 4000) return;
+  authRecoveryPromptAt = now;
+  const prompt = accountRecoveryPrompt();
+  Alert.alert(prompt.title, prompt.message, [
+    { text: "Not now", style: "cancel" },
+    {
+      text: prompt.confirmLabel,
+      onPress: () => {
+        router.push("/onboarding?recover=1");
+      },
+    },
+  ]);
+}
 
 /** Auth headers for server requests that require a proven identity. */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
-  if (!cachedAuthToken) {
-    cachedAuthToken = await AsyncStorage.getItem(SERVER_TOKEN_KEY);
+  if (cachedAuthToken) return { "X-Auth-Token": cachedAuthToken };
+
+  const localToken = await AsyncStorage.getItem(SERVER_TOKEN_KEY);
+  // A persist that landed while this read was in flight wins.
+  if (cachedAuthToken) return { "X-Auth-Token": cachedAuthToken };
+
+  let token = localToken;
+  if (!token) {
+    let secureIdentity: string | null = null;
+    try {
+      secureIdentity = await SecureStore.getItemAsync(SECURE_SERVER_IDENTITY_KEY);
+    } catch {
+      secureIdentity = null;
+    }
+    if (cachedAuthToken) return { "X-Auth-Token": cachedAuthToken };
+    const identity = parseServerIdentity(secureIdentity);
+    token = resolveRequestAuthToken(null, null, secureIdentity);
+    if (identity && token) {
+      const existingUserId = await AsyncStorage.getItem(SERVER_USER_KEY);
+      const pairs: [string, string][] = [[SERVER_TOKEN_KEY, token]];
+      if (!existingUserId) pairs.push([SERVER_USER_KEY, identity.userId]);
+      await AsyncStorage.multiSet(pairs).catch(() => {});
+      if (cachedAuthToken) return { "X-Auth-Token": cachedAuthToken };
+    }
   }
+
+  if (!cachedAuthToken && token) syncAuthToken(token);
   return cachedAuthToken ? { "X-Auth-Token": cachedAuthToken } : {};
 }
