@@ -26,6 +26,10 @@ import { useServer } from "@/context/ServerContext";
 import { useContactSync } from "@/hooks/useContactSync";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
 import { buildRegistrationOptions } from "@/utils/registration";
+import {
+  RECOVERY_EMAIL_SENT_MESSAGE,
+  recoveryEmailRequestBody,
+} from "@/utils/recovery-email";
 
 export default function OnboardingScreen() {
   const colorScheme = useColorScheme();
@@ -35,7 +39,7 @@ export default function OnboardingScreen() {
 
   const { profile, updateProfile } = useProfile();
   const { updateContacts } = useMessaging();
-  const { registerOnServer, recoverServerAccount, showRecoveryCode } = useServer();
+  const { registerOnServer, recoverServerAccount, requestRecoveryEmail, showRecoveryCode } = useServer();
   const { status, syncedCount, syncContacts } = useContactSync();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -47,6 +51,10 @@ export default function OnboardingScreen() {
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryCode, setRecoveryCode] = useState("");
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [emailCodeSent, setEmailCodeSent] = useState(false);
+  const [emailRequestError, setEmailRequestError] = useState<string | null>(null);
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -131,6 +139,26 @@ export default function OnboardingScreen() {
     router.replace("/(tabs)");
   }
 
+  async function handleRequestEmailCode() {
+    const body = recoveryEmailRequestBody({ email: recoveryEmail });
+    if (!body?.email) {
+      setEmailCodeSent(false);
+      setEmailRequestError("Enter a valid email address.");
+      return;
+    }
+    setSendingEmail(true);
+    setEmailRequestError(null);
+    const sent = await requestRecoveryEmail(body);
+    setSendingEmail(false);
+    if (!sent) {
+      setEmailCodeSent(false);
+      setEmailRequestError("Couldn't send a code right now. Please try again in a moment.");
+      return;
+    }
+    setRecoveryEmail(body.email);
+    setEmailCodeSent(true);
+  }
+
   async function handleRecoverAccount() {
     if (!recoveryCode.trim()) return;
     setSaving(true);
@@ -149,6 +177,7 @@ export default function OnboardingScreen() {
       statusMessage: user.statusMessage ?? "Hey there! I'm on ZIVR",
       primaryLanguage: user.preferredLanguage,
       primaryLanguageUserId: user.id,
+      ...(user.email ? { recoveryEmail: user.email } : {}),
       onboardingComplete: true,
     });
     router.replace("/(tabs)");
@@ -189,6 +218,43 @@ export default function OnboardingScreen() {
                 <Text style={[styles.subline, { color: colors.textSecondary }]}>
                   Enter the recovery code you saved when you joined ZIVR.
                 </Text>
+
+                <View style={[styles.inputCard, { backgroundColor: colors.surface }]}>
+                  <Ionicons name="mail-outline" size={20} color={colors.textSecondary} style={{ marginRight: 10 }} />
+                  <TextInput
+                    value={recoveryEmail}
+                    onChangeText={(value) => {
+                      setRecoveryEmail(value);
+                      setEmailCodeSent(false);
+                      setEmailRequestError(null);
+                    }}
+                    placeholder="Email address"
+                    placeholderTextColor={colors.textSecondary}
+                    style={[styles.inputField, { color: colors.text }]}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="email"
+                    keyboardType="email-address"
+                    textContentType="emailAddress"
+                  />
+                </View>
+
+                <Pressable
+                  onPress={handleRequestEmailCode}
+                  disabled={sendingEmail || saving || !recoveryEmail.trim()}
+                  style={[styles.emailCodeBtn, { borderColor: colors.primary, opacity: sendingEmail || saving || !recoveryEmail.trim() ? 0.45 : 1 }]}
+                >
+                  {sendingEmail ? (
+                    <ActivityIndicator color={colors.primary} />
+                  ) : (
+                    <Text style={[styles.emailCodeBtnText, { color: colors.primary }]}>Send code to my email</Text>
+                  )}
+                </Pressable>
+
+                {emailCodeSent && (
+                  <Text style={[styles.recoveryHint, { color: colors.text }]}>{RECOVERY_EMAIL_SENT_MESSAGE}</Text>
+                )}
+                {emailRequestError && <Text style={[styles.recoveryError, { color: "#FF453A" }]}>{emailRequestError}</Text>}
 
                 <View style={[styles.inputCard, { backgroundColor: colors.surface }]}>
                   <Ionicons name="key-outline" size={20} color={colors.textSecondary} style={{ marginRight: 10 }} />
@@ -421,6 +487,16 @@ const styles = StyleSheet.create({
   syncTitle: { fontSize: 15, fontFamily: "Inter_500Medium" },
   syncSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   recoveryError: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
+  recoveryHint: { fontSize: 14, fontFamily: "Inter_500Medium", textAlign: "center", lineHeight: 20 },
+  emailCodeBtn: {
+    borderWidth: 1.5,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 52,
+  },
+  emailCodeBtnText: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
   autoSyncBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   autoSyncText: { fontSize: 11, color: "#fff", fontFamily: "Inter_700Bold" },
   continueBtn: { marginTop: 4 },

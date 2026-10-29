@@ -16,6 +16,7 @@ import {
 } from "@/utils/registration";
 import { useProfile } from "@/context/ProfileContext";
 import { clearCachedLanguageForIdentitySwitch } from "@/utils/language-sync";
+import { recoveryEmailRequestBody } from "@/utils/recovery-email";
 import {
   resolveServerIdentity,
   serializeServerIdentity,
@@ -26,6 +27,8 @@ export type ServerUser = {
   displayName: string;
   username?: string;
   phone?: string;
+  /** Account recovery address. Present once the server stores `vm_users.email`. */
+  email?: string;
   avatar?: string;
   statusMessage?: string;
   preferredLanguage?: string;
@@ -182,6 +185,12 @@ interface ServerContextValue {
   replaceRecoveryCode: () => Promise<boolean>;
   registerOnServer: (opts: RegistrationOptions) => Promise<RegistrationResult | null>;
   recoverServerAccount: (recoveryCode: string) => Promise<ServerUser | null>;
+  /**
+   * Public, unauthenticated request for an emailed recovery code.
+   * Resolves true on the server's generic success. The response is not read;
+   * it never contains the code.
+   */
+  requestRecoveryEmail: (input: { email?: string; phone?: string }) => Promise<boolean>;
   updateServerProfile: (userId: string, updates: {
     displayName?: string;
     username?: string;
@@ -189,7 +198,9 @@ interface ServerContextValue {
     avatar?: string;
     pushToken?: string;
     preferredLanguage?: string;
-  }) => Promise<void>;
+    /** Recovery email. Sent on the same authenticated user PATCH as other profile fields. */
+    email?: string;
+  }) => Promise<boolean>;
   fetchServerUser: (userId: string) => Promise<ServerUser | null>;
   findUsers: (query: string) => Promise<ServerUser[]>;
   getOrCreateDirectChat: (myUserId: string, theirUserId: string) => Promise<DirectChatResult>;
@@ -540,6 +551,25 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         console.warn("[ServerContext] register error:", e);
         return null;
+      }
+    },
+    []
+  );
+
+  const requestRecoveryEmail = useCallback(
+    async (input: { email?: string; phone?: string }): Promise<boolean> => {
+      const body = recoveryEmailRequestBody(input);
+      if (!body) return false;
+      try {
+        const res = await fetch(`${getApiBase()}/users/recover/request-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return res.ok;
+      } catch (error) {
+        console.warn("[ServerContext] recovery email request failed", error);
+        return false;
       }
     },
     []
@@ -1179,15 +1209,17 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateServerProfile = useCallback(
-    async (userId: string, updates: { displayName?: string; username?: string; statusMessage?: string; avatar?: string; pushToken?: string; preferredLanguage?: string }) => {
+    async (userId: string, updates: { displayName?: string; username?: string; statusMessage?: string; avatar?: string; pushToken?: string; preferredLanguage?: string; email?: string }): Promise<boolean> => {
       try {
-        await fetch(`${getApiBase()}/users/${userId}`, {
+        const res = await fetch(`${getApiBase()}/users/${userId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
           body: JSON.stringify(updates),
         });
+        return res.ok;
       } catch (e) {
         console.warn("[ServerContext] updateServerProfile error:", e);
+        return false;
       }
     },
     []
@@ -1206,6 +1238,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         replaceRecoveryCode,
         registerOnServer,
         recoverServerAccount,
+        requestRecoveryEmail,
         updateServerProfile,
         fetchServerUser,
         findUsers,
