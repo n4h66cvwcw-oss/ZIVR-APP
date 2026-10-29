@@ -4,7 +4,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -33,6 +33,7 @@ import { ContactCardWidget } from "@/components/ContactCardWidget";
 import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
 import { LANGUAGES, getLanguageByCode } from "@/utils/languages";
+import { recoveryEmailProfileUpdate } from "@/utils/recovery-email";
 
 const GUARD_TYPES: { type: CaptureGuardType; icon: string; label: string }[] = [
   { type: "ai_gradient", icon: "color-palette",    label: "AI Background" },
@@ -47,10 +48,11 @@ export default function ProfileScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { profile, updateProfile } = useProfile();
-  const { serverUserId, updateServerProfile, previousUserId, switchBackToPreviousUser } = useServer();
+  const { serverUserId, fetchServerUser, updateServerProfile, previousUserId, switchBackToPreviousUser } = useServer();
   const { isParentMode, children, setParentMode, loadChildren } = useParental();
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [status, setStatus] = useState(profile.statusMessage);
+  const [recoveryEmail, setRecoveryEmail] = useState(profile.recoveryEmail ?? "");
   const [customText, setCustomText] = useState(profile.captureGuardText);
   const [showDefaultSoundPicker, setShowDefaultSoundPicker] = useState(false);
   const [showTypingEmojiPicker, setShowTypingEmojiPicker] = useState(false);
@@ -60,17 +62,65 @@ export default function ProfileScreen() {
     : LANGUAGES[0];
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
 
+  useEffect(() => {
+    if (!serverUserId) return;
+    let active = true;
+    void fetchServerUser(serverUserId).then((user) => {
+      if (!active || !user?.email) return;
+      setRecoveryEmail((current) => (current.trim() ? current : user.email!));
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchServerUser, serverUserId]);
+
   const selectedGradient =
     AI_GRADIENTS.find((g) => g.id === profile.captureGuardGradientId) ?? AI_GRADIENTS[0];
 
-  const handleSaveProfile = () => {
-    updateProfile({ displayName, statusMessage: status });
-    if (serverUserId) {
-      updateServerProfile(serverUserId, {
+  const handleSaveProfile = async () => {
+    const trimmedEmail = recoveryEmail.trim();
+    const emailUpdate = trimmedEmail ? recoveryEmailProfileUpdate(trimmedEmail) : null;
+    if (trimmedEmail && !emailUpdate) {
+      Alert.alert("Recovery email", "Enter a valid email address.");
+      return;
+    }
+
+    if (emailUpdate && serverUserId) {
+      const saved = await updateServerProfile(serverUserId, {
         displayName,
         statusMessage: status,
         avatar: profile.avatar,
+        email: emailUpdate.email,
       });
+      if (!saved) {
+        await updateProfile({ displayName, statusMessage: status });
+        Alert.alert(
+          "Recovery email",
+          "Couldn't save your recovery email. Check your connection and try again.",
+        );
+        return;
+      }
+      await updateProfile({
+        displayName,
+        statusMessage: status,
+        recoveryEmail: emailUpdate.email,
+      });
+      setRecoveryEmail(emailUpdate.email);
+    } else {
+      if (!trimmedEmail) setRecoveryEmail(profile.recoveryEmail ?? "");
+      await updateProfile({
+        displayName,
+        statusMessage: status,
+        ...(emailUpdate ? { recoveryEmail: emailUpdate.email } : {}),
+      });
+      if (emailUpdate) setRecoveryEmail(emailUpdate.email);
+      if (serverUserId) {
+        void updateServerProfile(serverUserId, {
+          displayName,
+          statusMessage: status,
+          avatar: profile.avatar,
+        });
+      }
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
@@ -191,7 +241,7 @@ export default function ProfileScreen() {
               placeholderTextColor={colors.textTertiary}
             />
           </View>
-          <View style={[styles.field, { borderBottomColor: "transparent" }]}>
+          <View style={[styles.field, { borderBottomColor: colors.border }]}>
             <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Status</Text>
             <TextInput
               style={[styles.fieldInput, { color: colors.text }]}
@@ -201,6 +251,26 @@ export default function ProfileScreen() {
               placeholderTextColor={colors.textTertiary}
             />
           </View>
+          <View style={{ gap: 6 }}>
+            <Text style={[styles.fieldLabel, { color: colors.textSecondary, width: "auto" }]}>
+              Recovery email
+            </Text>
+            <TextInput
+              style={[styles.fieldInput, { color: colors.text }]}
+              value={recoveryEmail}
+              onChangeText={setRecoveryEmail}
+              placeholder="you@example.com"
+              placeholderTextColor={colors.textTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="email"
+              keyboardType="email-address"
+              textContentType="emailAddress"
+            />
+          </View>
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            Used to email you a recovery code if you reinstall ZIVR.
+          </Text>
         </View>
 
         <View style={[styles.section, { backgroundColor: colors.surface }]}>

@@ -67,6 +67,8 @@ export type ProfileSettings = {
   primaryLanguage?: string;
   /** Server account that owns the locally cached primary language. */
   primaryLanguageUserId?: string;
+  /** Email address used to resend an account recovery code. */
+  recoveryEmail?: string;
 };
 
 const DEFAULT_SETTINGS: ProfileSettings = {
