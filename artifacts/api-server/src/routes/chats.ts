@@ -7,6 +7,7 @@ import {
   requestApprovalAndNotifyParents,
 } from "../lib/approvals";
 import { getAuthUserId } from "../lib/auth";
+import { deliverChatMessage } from "../lib/socket";
 
 const router = Router();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -179,6 +180,55 @@ router.get("/user/:userId", async (req, res) => {
       [userId]
     );
     res.json({ chats });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
+router.post("/:chatId/messages", async (req, res) => {
+  try {
+    const authUserId = getAuthUserId(req);
+    if (!authUserId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
+    const { chatId } = req.params;
+    const body = req.body as { senderId?: string; text?: string; type?: string; localId?: string };
+    if (typeof body?.text !== "string") {
+      res.status(400).json({ error: "Message text is required" });
+      return;
+    }
+    if (body.senderId && body.senderId !== authUserId) {
+      res.status(401).json({ error: "Invalid or missing auth token" });
+      return;
+    }
+
+    const result = await deliverChatMessage({
+      chatId,
+      senderId: authUserId,
+      text: body.text,
+      type: body.type,
+      localId: body.localId,
+      authenticatedUserId: authUserId,
+    });
+    if (!result.ok) {
+      if (result.authFailure) {
+        res.status(401).json({ error: "Invalid or missing auth token" });
+        return;
+      }
+      if (result.blocked) {
+        res.status(403).json({
+          error: result.blocked.message,
+          ...(result.blocked.status === "group_limit" ? {} : { approval: result.blocked.status }),
+        });
+        return;
+      }
+      const status = result.error === "Not a member of this chat" ? 403 : 400;
+      res.status(status).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });
   }

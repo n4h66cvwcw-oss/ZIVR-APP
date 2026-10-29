@@ -185,6 +185,154 @@ export type ServerMessage = {
 
 const onlineUsers = new Map<string, string>();
 
+export type ChatMessageBlocked = {
+  chatId: string;
+  localId?: string;
+  status: "pending" | "blocked" | "group_limit";
+  message: string;
+};
+
+export type DeliverChatMessageResult =
+  | { ok: true }
+  | { ok: false; error: string; authFailure?: boolean; blocked?: ChatMessageBlocked };
+
+/**
+ * Persist a chat message for an already-authenticated sender and fan it out.
+ * Socket and the one-shot REST retry share this path so a recovered token
+ * cannot skip membership or parent-approval checks.
+ */
+export async function deliverChatMessage(input: {
+  chatId: string;
+  senderId: string;
+  text: string;
+  type?: string;
+  localId?: string;
+  authenticatedUserId: string | null;
+}): Promise<DeliverChatMessageResult> {
+  const { chatId, senderId, text, type = "text", localId, authenticatedUserId } = input;
+
+  if (!authenticatedUserId || senderId !== authenticatedUserId) {
+    return { ok: false, error: "Not authenticated as this sender", authFailure: true };
+  }
+
+  const isMember = await queryOne<{ user_id: string }>(
+    `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+    [chatId, senderId]
+  );
+  if (!isMember) return { ok: false, error: "Not a member of this chat" };
+
+  const chatInfo = await queryOne<{ type: string }>(
+    `SELECT type FROM vm_chats WHERE id = $1`,
+    [chatId]
+  );
+  if (chatInfo?.type === "direct") {
+    const otherMember = await queryOne<{ user_id: string }>(
+      `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id != $2 LIMIT 1`,
+      [chatId, senderId]
+    );
+    if (otherMember) {
+      const check = await checkDirectContactAllowed(senderId, otherMember.user_id);
+      if (!check.allowed) {
+        if (check.status === "pending") {
+          void requestApprovalAndNotifyParents(check.unapprovedPairs);
+        }
+        const blocked = check.status === "blocked";
+        const message = blocked
+          ? "This contact has been blocked by a parent."
+          : "Waiting for parent approval before you can chat with this contact.";
+        return {
+          ok: false,
+          error: message,
+          blocked: {
+            chatId,
+            localId,
+            status: blocked ? "blocked" : "pending",
+            message,
+          },
+        };
+      }
+    }
+  } else if (chatInfo?.type === "group") {
+    const groupMembers = await query<{ user_id: string }>(
+      `SELECT user_id FROM vm_chat_members WHERE chat_id = $1`,
+      [chatId]
+    );
+    if (groupMembers.length > MAX_GROUP_MEMBERS) {
+      const message = `This group has more than ${MAX_GROUP_MEMBERS} members and can't send messages.`;
+      return {
+        ok: false,
+        error: message,
+        blocked: { chatId, localId, status: "group_limit", message },
+      };
+    }
+    const check = await checkGroupContactsAllowed(groupMembers.map((member) => member.user_id));
+    if (!check.allowed) {
+      void requestApprovalAndNotifyParents(check.unapprovedPairs);
+      const blocked = check.status === "blocked";
+      const message = blocked
+        ? "This group includes a contact who has been blocked by a parent."
+        : "Waiting for parent approval before messages can be sent in this group.";
+      return {
+        ok: false,
+        error: message,
+        blocked: { chatId, localId, status: blocked ? "blocked" : "pending", message },
+      };
+    }
+  }
+
+  const sender = await queryOne<{ display_name: string; avatar: string }>(
+    `SELECT display_name, avatar FROM vm_users WHERE id = $1`,
+    [senderId]
+  );
+
+  const now = Date.now();
+  const msg = await queryOne<{ id: string }>(
+    `INSERT INTO vm_messages (chat_id, sender_id, text, type, created_at)
+     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+    [chatId, senderId, text, type, now]
+  );
+
+  await query(
+    `UPDATE vm_chats SET last_message_at = $1 WHERE id = $2`,
+    [now, chatId]
+  );
+
+  const outgoing: ServerMessage = {
+    id: msg!.id,
+    chatId,
+    senderId,
+    senderName: sender?.display_name ?? "Unknown",
+    text,
+    type,
+    createdAt: now,
+  };
+
+  getIO()?.to(`chat:${chatId}`).emit("message:new", { ...outgoing, localId });
+
+  if (type === "text") {
+    void checkContentForChild(msg!.id, chatId, senderId, text);
+  }
+
+  const offlineMembers = await query<{ id: string; push_token: string | null }>(
+    `SELECT u.id, u.push_token
+     FROM vm_chat_members cm
+     JOIN vm_users u ON u.id = cm.user_id
+     WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false`,
+    [chatId, senderId]
+  );
+
+  const tokens = offlineMembers
+    .map((m) => m.push_token)
+    .filter((t): t is string => !!t && t.startsWith("ExponentPushToken"));
+
+  if (tokens.length > 0) {
+    const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
+    await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
+  }
+
+  return { ok: true };
+}
+
 type CheckinReplyRow = {
   id: string;
   client_id?: string | null;
@@ -637,140 +785,27 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       text: string;
       type?: string;
       localId?: string;
-    }) => {
+    }, acknowledge?: (result: { ok: boolean; error?: string }) => void) => {
       try {
-        const { chatId, senderId, text, type = "text", localId } = payload;
-
-        // senderId must match the authenticated identity of this connection
-        if (!currentUserId || senderId !== currentUserId) {
-          socket.emit("error", { message: "Not authenticated as this sender" });
+        const result = await deliverChatMessage({
+          chatId: payload.chatId,
+          senderId: payload.senderId,
+          text: payload.text,
+          type: payload.type,
+          localId: payload.localId,
+          authenticatedUserId: currentUserId,
+        });
+        if (!result.ok) {
+          if (result.blocked) socket.emit("message:blocked", result.blocked);
+          else socket.emit("error", { message: result.error });
+          acknowledge?.({ ok: false, error: result.error });
           return;
         }
-
-        const isMember = await queryOne<{ user_id: string }>(
-          `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
-          [chatId, senderId]
-        );
-        if (!isMember) { socket.emit("error", { message: "Not a member of this chat" }); return; }
-
-        // Contact-approval enforcement for direct chats involving a child:
-        // block sends between a child and a contact that isn't parent-approved.
-        const chatInfo = await queryOne<{ type: string }>(
-          `SELECT type FROM vm_chats WHERE id = $1`,
-          [chatId]
-        );
-        if (chatInfo?.type === "direct") {
-          const otherMember = await queryOne<{ user_id: string }>(
-            `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id != $2 LIMIT 1`,
-            [chatId, senderId]
-          );
-          if (otherMember) {
-            const check = await checkDirectContactAllowed(senderId, otherMember.user_id);
-            if (!check.allowed) {
-              // Auto-create pending approval request(s) and notify parents,
-              // same as the chat-creation path (no-op for blocked pairs).
-              if (check.status === "pending") {
-                void requestApprovalAndNotifyParents(check.unapprovedPairs);
-              }
-              socket.emit("message:blocked", {
-                chatId,
-                localId,
-                status: check.status,
-                message:
-                  check.status === "blocked"
-                    ? "This contact has been blocked by a parent."
-                    : "Waiting for parent approval before you can chat with this contact.",
-              });
-              return;
-            }
-          }
-        } else if (chatInfo?.type === "group") {
-          const groupMembers = await query<{ user_id: string }>(
-            `SELECT user_id FROM vm_chat_members WHERE chat_id = $1`,
-            [chatId]
-          );
-          if (groupMembers.length > MAX_GROUP_MEMBERS) {
-            socket.emit("message:blocked", {
-              chatId,
-              localId,
-              status: "group_limit",
-              message: `This group has more than ${MAX_GROUP_MEMBERS} members and can't send messages.`,
-            });
-            return;
-          }
-          const check = await checkGroupContactsAllowed(groupMembers.map((member) => member.user_id));
-          if (!check.allowed) {
-            // Keep existing groups safe if an approval is revoked after the
-            // group was created, and protect groups created before enforcement.
-            // The notifier ignores blocked pairs, but can still request other
-            // pending approvals when a group also includes a blocked contact.
-            void requestApprovalAndNotifyParents(check.unapprovedPairs);
-            socket.emit("message:blocked", {
-              chatId,
-              localId,
-              status: check.status,
-              message:
-                check.status === "blocked"
-                  ? "This group includes a contact who has been blocked by a parent."
-                  : "Waiting for parent approval before messages can be sent in this group.",
-            });
-            return;
-          }
-        }
-
-        const sender = await queryOne<{ display_name: string; avatar: string }>(
-          `SELECT display_name, avatar FROM vm_users WHERE id = $1`,
-          [senderId]
-        );
-
-        const now = Date.now();
-        const msg = await queryOne<{ id: string }>(
-          `INSERT INTO vm_messages (chat_id, sender_id, text, type, created_at)
-           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-          [chatId, senderId, text, type, now]
-        );
-
-        await query(
-          `UPDATE vm_chats SET last_message_at = $1 WHERE id = $2`,
-          [now, chatId]
-        );
-
-        const outgoing: ServerMessage = {
-          id: msg!.id,
-          chatId,
-          senderId,
-          senderName: sender?.display_name ?? "Unknown",
-          text,
-          type,
-          createdAt: now,
-        };
-
-        io.to(`chat:${chatId}`).emit("message:new", { ...outgoing, localId });
-
-        // AI content check for child accounts — fire-and-forget, never blocks delivery
-        if (type === "text") {
-          void checkContentForChild(msg!.id, chatId, senderId, text);
-        }
-
-        const offlineMembers = await query<{ id: string; push_token: string | null }>(
-          `SELECT u.id, u.push_token
-           FROM vm_chat_members cm
-           JOIN vm_users u ON u.id = cm.user_id
-           WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false`,
-          [chatId, senderId]
-        );
-
-        const tokens = offlineMembers
-          .map((m) => m.push_token)
-          .filter((t): t is string => !!t && t.startsWith("ExponentPushToken"));
-
-        if (tokens.length > 0) {
-          const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
-          await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
-        }
+        acknowledge?.({ ok: true });
       } catch (err) {
         console.error("message:send error", err);
         socket.emit("error", { message: "Failed to send message" });
+        acknowledge?.({ ok: false, error: "Failed to send message" });
       }
     });
 
