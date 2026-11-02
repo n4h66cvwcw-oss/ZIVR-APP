@@ -3,6 +3,7 @@ import { query, queryOne } from "../lib/db";
 import { signToken, getAuthUserId } from "../lib/auth";
 import { normalizePreferredLanguage } from "./user-language";
 import { createRecoveryCode, hashRecoveryCode } from "../lib/recovery-code";
+import { planUserFind } from "../lib/user-find";
 
 const router = Router();
 
@@ -234,22 +235,34 @@ router.patch("/:id", async (req, res) => {
 router.get("/find", async (req, res) => {
   try {
     const { phone, username, q } = req.query as Record<string, string | undefined>;
+    const plan = planUserFind({ phone, username, q });
     let users: unknown[] = [];
 
-    if (phone) {
+    if (plan.kind === "phone") {
+      // Match E.164 and legacy national/digit forms of the same number.
+      // exact: raw query, digit-only, E.164. digits: punctuation-insensitive.
+      users = await query(
+        `SELECT ${USER_SELECT} FROM vm_users
+          WHERE phone IS NOT NULL
+            AND (phone = ANY($1::text[])
+                 OR regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[]))
+          LIMIT 20`,
+        [plan.lookup.exact, plan.lookup.digits]
+      );
+    } else if (plan.kind === "phone-exact") {
       users = await query(
         `SELECT ${USER_SELECT} FROM vm_users WHERE phone = $1 LIMIT 20`,
-        [phone]
+        [plan.phone]
       );
-    } else if (username) {
+    } else if (plan.kind === "username") {
       users = await query(
         `SELECT ${USER_SELECT} FROM vm_users WHERE username ILIKE $1 LIMIT 20`,
-        [username + "%"]
+        [plan.pattern]
       );
-    } else if (q) {
+    } else if (plan.kind === "q") {
       users = await query(
         `SELECT ${USER_SELECT} FROM vm_users WHERE display_name ILIKE $1 OR username ILIKE $1 LIMIT 20`,
-        ["%" + q + "%"]
+        [plan.pattern]
       );
     }
 

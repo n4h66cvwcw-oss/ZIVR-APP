@@ -13,7 +13,8 @@
     "test:checkins": "node ./test-build.mjs src/routes/checkins.integration.test.ts && node --test --test-concurrency=1 dist/checkins.integration.test.cjs",
     "test:checkins-socket": "node ./test-build.mjs src/lib/checkins.socket.integration.test.ts && node --test --test-concurrency=1 dist/checkins.socket.integration.test.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:recover-email": "node ./test-build.mjs src/lib/recover-email.test.ts && node ./test-build.mjs src/lib/recover-email-service.test.ts && node --test dist/recover-email.test.cjs dist/recover-email-service.test.cjs"
+    "test:recover-email": "node ./test-build.mjs src/lib/recover-email.test.ts && node ./test-build.mjs src/lib/recover-email-service.test.ts && node --test dist/recover-email.test.cjs dist/recover-email-service.test.cjs",
+    "test:user-find": "node ./test-build.mjs src/lib/user-find.test.ts && node --test dist/user-find.test.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
