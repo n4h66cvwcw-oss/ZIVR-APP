@@ -12,7 +12,8 @@
     "test:scheduled-messages": "node ./test-build.mjs src/routes/scheduled-messages.integration.test.ts && node --test --test-concurrency=1 dist/scheduled-messages.integration.test.cjs",
     "test:checkins": "node ./test-build.mjs src/routes/checkins.integration.test.ts && node --test --test-concurrency=1 dist/checkins.integration.test.cjs",
     "test:checkins-socket": "node ./test-build.mjs src/lib/checkins.socket.integration.test.ts && node --test --test-concurrency=1 dist/checkins.socket.integration.test.cjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:recover-email": "node ./test-build.mjs src/lib/recover-email.test.ts && node ./test-build.mjs src/lib/recover-email-service.test.ts && node --test dist/recover-email.test.cjs dist/recover-email-service.test.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
@@ -22,6 +23,8 @@
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
+    "libphonenumber-js": "^1.13.13",
+    "nodemailer": "^10.2.1",
     "pg": "^8.20.0",
     "pino": "^9",
     "pino-http": "^10",

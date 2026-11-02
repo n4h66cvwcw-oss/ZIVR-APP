@@ -190,6 +190,12 @@ importers:
       express:
         specifier: ^5
         version: 5.2.1
+      libphonenumber-js:
+        specifier: ^1.13.13
+        version: 1.13.13
+      nodemailer:
+        specifier: ^10.2.1
+        version: 10.3.1
       pg:
         specifier: ^8.20.0
         version: 8.20.0
@@ -4954,6 +4960,10 @@ packages:
 
   node-releases@2.0.36:
     resolution: {integrity: sha512-TdC8FSgHz8Mwtw9g5L4gR/Sh9XhSP/0DEkQxfEFXOpiul5IiHgHan2VhYYb6agDSfp4KuvltmGApc8HMgUrIkA==}
+
+  nodemailer@10.3.1:
+    resolution: {integrity: sha512-uF0AFsJC07Y1vdW7p580DKAnh7rAO+4UPSSB3mDCPNDufoiaOebV6JmrzpxB14OjEEEiBsNdYoM2Y+fN8M7BBA==}
+    engines: {node: '>=20.0.0'}
 
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
@@ -11393,6 +11403,8 @@ snapshots:
   node-int64@0.4.0: {}
 
   node-releases@2.0.36: {}
+
+  nodemailer@10.3.1: {}
 
   normalize-path@3.0.0: {}
 

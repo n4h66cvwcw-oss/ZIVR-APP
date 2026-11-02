@@ -1,4 +1,5 @@
 import { query } from "./db";
+import { migrateUserEmail } from "./user-email-migrate";
 
 export async function migrate(): Promise<void> {
   await query(`
@@ -67,6 +68,18 @@ export async function migrate(): Promise<void> {
       read_at      BIGINT,
       created_at   BIGINT NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()) * 1000
     )
+  `);
+
+  // Idempotency key for live message sends (socket localId / REST clientId).
+  // Partial unique index matches ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL.
+  await query(`
+    ALTER TABLE vm_messages
+    ADD COLUMN IF NOT EXISTS client_id TEXT
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS vm_messages_sender_client_id_unique
+      ON vm_messages (sender_id, client_id)
+      WHERE client_id IS NOT NULL
   `);
 
   await query(`
@@ -263,4 +276,6 @@ export async function migrate(): Promise<void> {
       ON vm_checkin_replies (broadcast_id, member_id, client_id) WHERE client_id IS NOT NULL
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_checkin_replies_broadcast_created ON vm_checkin_replies (broadcast_id, created_at ASC)`);
+  // vm_users.email + unique lower(email) (recover-email pack)
+  await migrateUserEmail();
 }

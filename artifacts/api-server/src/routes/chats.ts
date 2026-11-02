@@ -7,6 +7,10 @@ import {
   requestApprovalAndNotifyParents,
 } from "../lib/approvals";
 import { getAuthUserId } from "../lib/auth";
+import { checkContentForChild } from "../lib/socket";
+import { sendExpoPush } from "../lib/push";
+import { fanoutMessage, pushTokensForChat } from "../lib/realtime-bus";
+import type { ServerMessage } from "../lib/socket";
 
 const router = Router();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -18,7 +22,7 @@ router.post("/direct", async (req, res) => {
     // Actor identity must be proven by a signed token, not trusted from the body
     const authUserId = getAuthUserId(req);
     if (!authUserId || authUserId !== myUserId) {
-      res.status(401).json({ error: "Invalid or missing auth token" });
+      res.status(401).json({ error: "Invalid or missing auth token", code: "auth" });
       return;
     }
 
@@ -64,6 +68,150 @@ router.post("/direct", async (req, res) => {
     );
 
     res.json({ chatId, existed: false });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
+/**
+ * Durable message write used by mobile outbox retries and as the fallback when
+ * Socket.IO is unavailable. Authentication is deliberately derived from the
+ * token; senderId is not accepted from the request body.
+ */
+router.post("/:chatId/messages", async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const authUserId = getAuthUserId(req);
+    if (!authUserId) {
+      res.status(401).json({ error: "Invalid or missing auth token", code: "auth" });
+      return;
+    }
+    const { text, type = "text", clientId } = req.body as {
+      text?: string;
+      type?: string;
+      clientId?: string;
+    };
+    if (typeof text !== "string" || text.length > 2000 || !text.trim()) {
+      res.status(400).json({ error: "Message text is required", code: "invalid" });
+      return;
+    }
+    if (typeof clientId !== "string" || clientId.length < 1 || clientId.length > 200) {
+      res.status(400).json({ error: "A client operation id is required", code: "invalid" });
+      return;
+    }
+
+    const member = await queryOne<{ user_id: string }>(
+      `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+      [chatId, authUserId],
+    );
+    if (!member) {
+      res.status(403).json({ error: "Not a member of this chat", code: "not_member" });
+      return;
+    }
+
+    const chatInfo = await queryOne<{ type: string }>(
+      `SELECT type FROM vm_chats WHERE id = $1`, [chatId],
+    );
+    if (!chatInfo) {
+      res.status(404).json({ error: "Chat not found", code: "not_member" });
+      return;
+    }
+    if (chatInfo.type === "direct") {
+      const otherMember = await queryOne<{ user_id: string }>(
+        `SELECT user_id FROM vm_chat_members
+          WHERE chat_id = $1 AND user_id != $2 LIMIT 1`,
+        [chatId, authUserId],
+      );
+      if (otherMember) {
+        const check = await checkDirectContactAllowed(authUserId, otherMember.user_id);
+        if (!check.allowed) {
+           if (check.status === "pending") {
+             try { await requestApprovalAndNotifyParents(check.unapprovedPairs); } catch { /* refusal remains terminal */ }
+           }
+          res.status(403).json({
+            error: check.status === "blocked"
+              ? "This contact has been blocked by a parent."
+              : "Waiting for parent approval before you can chat with this contact.",
+            approval: check.status,
+            code: check.status,
+          });
+          return;
+        }
+      }
+    } else if (chatInfo.type === "group") {
+      const members = await query<{ user_id: string }>(
+        `SELECT user_id FROM vm_chat_members WHERE chat_id = $1`, [chatId],
+      );
+      if (members.length > MAX_GROUP_MEMBERS) {
+        res.status(403).json({ error: `This group has more than ${MAX_GROUP_MEMBERS} members and can't send messages.`, approval: "group_limit", code: "group_limit" });
+        return;
+      }
+      const check = await checkGroupContactsAllowed(members.map((row) => row.user_id));
+      if (!check.allowed) {
+         try { await requestApprovalAndNotifyParents(check.unapprovedPairs); } catch { /* refusal remains terminal */ }
+        res.status(403).json({
+          error: check.status === "blocked"
+            ? "This group includes a contact who has been blocked by a parent."
+            : "Waiting for parent approval before messages can be sent in this group.",
+          approval: check.status,
+          code: check.status,
+        });
+        return;
+      }
+    }
+
+    const sender = await queryOne<{ display_name: string }>(
+      `SELECT display_name FROM vm_users WHERE id = $1`, [authUserId],
+    );
+    const now = Date.now();
+    const inserted = await queryOne<{ id: string; chat_id: string; text: string; type: string; created_at: number }>(
+      `INSERT INTO vm_messages (chat_id, sender_id, client_id, text, type, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
+       RETURNING id, chat_id, text, type, created_at`,
+      [chatId, authUserId, clientId, text, type, now],
+    );
+    const msg = inserted ?? await queryOne<{ id: string; chat_id: string; text: string; type: string; created_at: number }>(
+      `SELECT id, chat_id, text, type, created_at
+         FROM vm_messages WHERE sender_id = $1 AND client_id = $2`,
+      [authUserId, clientId],
+    );
+    if (!msg) {
+      res.status(500).json({ error: "Message could not be persisted" });
+      return;
+    }
+    if (msg.chat_id !== chatId) {
+      res.status(409).json({ error: "Client operation id belongs to another chat", code: "invalid" });
+      return;
+    }
+    const duplicate = !inserted;
+    const outgoing: ServerMessage = {
+      id: msg.id,
+      chatId,
+      senderId: authUserId,
+      senderName: sender?.display_name ?? "Unknown",
+      text: msg.text,
+      type: msg.type,
+      createdAt: Number(msg.created_at),
+      localId: clientId,
+    };
+    res.json({ message: outgoing });
+    if (duplicate) return;
+    // The row and canonical response are authoritative. Fanout/moderation is
+    // best effort and must never turn an already committed write into a 500.
+    try {
+      await query(`UPDATE vm_chats SET last_message_at = $1 WHERE id = $2`, [now, chatId]);
+    } catch { /* history remains authoritative even if the preview update fails */ }
+    await fanoutMessage(outgoing); // cross-instance; never throws
+    if (outgoing.type === "text") {
+      void checkContentForChild(outgoing.id, chatId, authUserId, outgoing.text).catch(() => {});
+    }
+    try {
+      const tokens = await pushTokensForChat(chatId, authUserId);
+      if (tokens.length > 0) {
+        await sendExpoPush(tokens, sender?.display_name ?? "New message", outgoing.text.length > 80 ? `${outgoing.text.slice(0, 80)}…` : outgoing.text, "default");
+      }
+    } catch { /* push delivery is retryable by reconnect/history */ }
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });
   }
@@ -203,6 +351,7 @@ router.get("/:chatId/messages", async (req, res) => {
          m.id,
          m.chat_id      AS "chatId",
          m.sender_id    AS "senderId",
+          m.client_id    AS "localId",
          m.text,
          m.type,
          m.is_encrypted AS "isEncrypted",

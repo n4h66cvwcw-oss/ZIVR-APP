@@ -1,7 +1,8 @@
 import { Router } from "express";
 import pool, { query, queryOne } from "../lib/db";
 import { getAuthUserId } from "../lib/auth";
-import { getIO, checkContentForChild } from "../lib/socket";
+import { checkContentForChild } from "../lib/socket";
+import { fanoutMessage, pushTokensForChat } from "../lib/realtime-bus";
 import { sendExpoPush } from "../lib/push";
 import {
   checkDirectContactAllowed,
@@ -335,17 +336,10 @@ export async function dispatchDueMessages(options: { senderId?: string } = {}) {
         type: "text",
         createdAt,
       };
-      getIO()?.to(`chat:${item.chat_id}`).emit("message:new", outgoing);
+      await fanoutMessage(outgoing);
       void checkContentForChild(messageId, item.chat_id, item.sender_id, item.text);
 
-      const offline = await query<{ push_token: string | null }>(
-        `SELECT u.push_token FROM vm_chat_members cm
-          JOIN vm_users u ON u.id = cm.user_id
-         WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false`,
-        [item.chat_id, item.sender_id],
-      );
-      const tokens = offline.map((member) => member.push_token)
-        .filter((token): token is string => !!token && token.startsWith("ExponentPushToken"));
+      const tokens = await pushTokensForChat(item.chat_id, item.sender_id);
       if (tokens.length) {
         const preview = item.text.length > 80 ? `${item.text.slice(0, 80)}…` : item.text;
         await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
