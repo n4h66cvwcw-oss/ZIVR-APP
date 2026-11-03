@@ -2,6 +2,7 @@ import { Router } from "express";
 import { query, queryOne } from "../lib/db";
 import { getAuthUserId } from "../lib/auth";
 import { parseStoredMedia, coerceCreatedAt } from "../lib/message-content";
+import { historyReactions } from "../lib/reactions";
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.get("/chats/:chatId/export", async (req, res) => {
 
     const rows = await query<{
       id: string; senderId: string; senderName: string;
-      text: string; type: string; createdAt: string | number; media: unknown;
+      text: string; type: string; createdAt: string | number; media: unknown; reactions: unknown;
     }>(
       `SELECT m.id,
               m.sender_id    AS "senderId",
@@ -30,6 +31,7 @@ router.get("/chats/:chatId/export", async (req, res) => {
               m.text,
               m.type,
               m.media,
+              m.reactions,
               m.created_at   AS "createdAt"
          FROM vm_messages m
          LEFT JOIN vm_users u ON u.id = m.sender_id
@@ -39,6 +41,7 @@ router.get("/chats/:chatId/export", async (req, res) => {
     );
     const messages = rows.map((row) => {
       const media = parseStoredMedia(row.media);
+      const reactions = historyReactions(row.reactions);
       return {
         id: row.id,
         senderId: row.senderId,
@@ -47,6 +50,7 @@ router.get("/chats/:chatId/export", async (req, res) => {
         type: row.type,
         createdAt: coerceCreatedAt(row.createdAt),
         ...(media ? { media } : {}),
+        ...(reactions ? { reactions } : {}),
       };
     });
 

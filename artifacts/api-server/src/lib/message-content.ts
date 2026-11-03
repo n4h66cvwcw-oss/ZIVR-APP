@@ -1,3 +1,5 @@
+import { historyReactions, type MessageReactions } from "./reactions.ts";
+
 /**
  * Chat message text + image payload rules.
  *
@@ -107,6 +109,7 @@ export type SerializedMessage = {
   media?: MessageMedia;
   isEncrypted?: boolean;
   senderAvatar?: string | null;
+  reactions?: MessageReactions;
 };
 
 type PrepareInput = {
@@ -387,8 +390,10 @@ export function serializeHistoryMessage(row: {
   isEncrypted?: boolean;
   senderAvatar?: string | null;
   media?: unknown;
+  reactions?: unknown;
 }): SerializedMessage {
   const media = parseStoredMedia(row.media);
+  const reactions = historyReactions(row.reactions);
   return {
     id: row.id,
     chatId: row.chatId ?? "",
@@ -401,6 +406,7 @@ export function serializeHistoryMessage(row: {
     ...(media ? { media } : {}),
     ...(row.isEncrypted != null ? { isEncrypted: row.isEncrypted } : {}),
     ...(row.senderAvatar !== undefined ? { senderAvatar: row.senderAvatar } : {}),
+    ...(reactions ? { reactions } : {}),
   };
 }
 
@@ -412,6 +418,7 @@ export function serializedMessageFromRow(
     type: string;
     media: unknown;
     created_at: unknown;
+    reactions?: unknown;
   },
   fields: { senderId: string; senderName: string; localId?: string | null },
 ): SerializedMessage {
@@ -425,6 +432,7 @@ export function serializedMessageFromRow(
     createdAt: row.created_at,
     localId: fields.localId,
     media: row.media,
+    reactions: row.reactions,
   });
 }
 

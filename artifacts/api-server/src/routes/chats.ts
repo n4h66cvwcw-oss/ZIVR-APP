@@ -9,7 +9,9 @@ import {
 import { getAuthUserId } from "../lib/auth";
 import { checkContentForChild } from "../lib/socket";
 import { sendExpoPush } from "../lib/push";
-import { fanoutMessage, pushTokensForChat } from "../lib/realtime-bus";
+import { fanoutChatEvent, fanoutMessage, pushTokensForChat } from "../lib/realtime-bus";
+import { parseReactionEmoji } from "../lib/reactions";
+import { toggleMessageReaction } from "../lib/reactions-store";
 import type { ServerMessage } from "../lib/socket";
 import {
   mediaJsonParam,
@@ -242,6 +244,60 @@ router.post("/:chatId/messages", async (req, res) => {
   }
 });
 
+/**
+ * Toggle the caller's emoji on a message. messageId is the server UUID or the
+ * sender's client id (the id the sender's phone still shows). Peers receive
+ * message:reaction with the canonical server id and that clientId.
+ */
+router.post("/:chatId/messages/:messageId/reactions", async (req, res) => {
+  try {
+    const chatId = req.params["chatId"];
+    const messageId = req.params["messageId"];
+    const authUserId = getAuthUserId(req);
+    if (!authUserId) {
+      res.status(401).json({ error: "Invalid or missing auth token", code: "auth" });
+      return;
+    }
+    if (
+      typeof chatId !== "string" ||
+      !UUID_PATTERN.test(chatId) ||
+      typeof messageId !== "string" ||
+      messageId.length < 1 ||
+      messageId.length > 200
+    ) {
+      res.status(404).json({ error: "Message not found", code: "not_found" });
+      return;
+    }
+    const parsed = parseReactionEmoji((req.body as { emoji?: unknown } | undefined)?.emoji);
+    if (!parsed.ok) {
+      res.status(400).json({ error: parsed.error, code: "invalid" });
+      return;
+    }
+    const member = await queryOne<{ user_id: string }>(
+      `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
+      [chatId, authUserId],
+    );
+    if (!member) {
+      res.status(403).json({ error: "Not a member of this chat", code: "not_member" });
+      return;
+    }
+    const result = await toggleMessageReaction({
+      chatId,
+      messageKey: messageId,
+      userId: authUserId,
+      emoji: parsed.emoji,
+    });
+    if (!result.ok) {
+      res.status(result.status).json({ error: result.error, code: result.code });
+      return;
+    }
+    res.json(result.event);
+    await fanoutChatEvent(chatId, "message:reaction", result.event);
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
 router.post("/group", async (req, res) => {
   try {
     const { myUserId, name, description, memberIds } = req.body as {
@@ -391,6 +447,7 @@ router.get("/:chatId/messages", async (req, res) => {
       senderName: string | null;
       senderAvatar: string | null;
       media: unknown;
+      reactions: unknown;
     }>(
       `SELECT
          m.id,
@@ -400,6 +457,7 @@ router.get("/:chatId/messages", async (req, res) => {
          m.text,
          m.type,
          m.media,
+         m.reactions,
          m.is_encrypted AS "isEncrypted",
          m.created_at   AS "createdAt",
          u.display_name AS "senderName",
