@@ -1,8 +1,9 @@
 import { Server as HttpServer } from "http";
 import { Server as SocketServer, Socket } from "socket.io";
 import { query, queryOne } from "./db";
-import { sendExpoPush } from "./push";
+import { messagePushData, sendExpoPush } from "./push";
 import { verifyToken } from "./auth";
+import { USER_AWAY_EVENT, accountIsOnline, readSocketPresence } from "./presence-push";
 import { fanoutEvent, fanoutMessage, pushTokensForChat, startRealtimeBus } from "./realtime-bus";
 import {
   checkDirectContactAllowed,
@@ -354,7 +355,10 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       }
 
       currentUserId = userId;
-      (socket.data as { userId?: string }).userId = userId;
+      const joined = socket.data as { userId?: string; presence?: "active" | "away" };
+      joined.userId = userId;
+      // user:join is the foreground signal (connect, and AppState "active").
+      joined.presence = "active";
       onlineUsers.set(userId, socket.id);
 
       await query(
@@ -834,7 +838,13 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
           const tokens = await pushTokensForChat(chatId, senderId);
 
           if (tokens.length > 0) {
-            await sendExpoPush(tokens, sender?.display_name ?? "New message", messagePreview(outgoing.text, outgoing.type), "default");
+            await sendExpoPush(
+              tokens,
+              sender?.display_name ?? "New message",
+              messagePreview(outgoing.text, outgoing.type),
+              "default",
+              messagePushData(chatId, outgoing.id),
+            );
           }
         } catch { /* push failure cannot invalidate the committed message */ }
       } catch (err) {
@@ -914,22 +924,71 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       socket.to(`chat:${payload.chatId}`).emit("typing:update", { ...payload, typing: false });
     });
 
+    // Client contract: emit "user:away" (no payload) when AppState leaves
+    // "active". The socket stays in its rooms. Identity is this connection's
+    // authenticated user, not a user id in the payload. Coming back to the
+    // foreground is the existing "user:join", which sets presence active.
+    // Another foreground socket for the same user keeps vm_users.is_online.
+    socket.on(USER_AWAY_EVENT, async (payload: unknown, ack?: unknown) => {
+      const callback = typeof payload === "function"
+        ? payload as (result: unknown) => void
+        : typeof ack === "function"
+          ? ack as (result: unknown) => void
+          : null;
+      if (!currentUserId) {
+        callback?.({ ok: false, error: "Not joined" });
+        return;
+      }
+      const userId = currentUserId;
+      (socket.data as { presence?: "active" | "away" }).presence = "away";
+      const now = Date.now();
+      try {
+        const peers = await io.in(`user:${userId}`).fetchSockets();
+        const others = peers.filter((peer) => peer.id !== socket.id);
+        const stillForeground = accountIsOnline(others.map((peer) => readSocketPresence(peer.data)));
+        await query(
+          `UPDATE vm_users SET is_online = $1, last_seen = $2 WHERE id = $3`,
+          [stillForeground, now, userId],
+        );
+        if (stillForeground) {
+          const keep = others.find((peer) => readSocketPresence(peer.data) !== "away");
+          if (keep) onlineUsers.set(userId, keep.id);
+        } else {
+          onlineUsers.delete(userId);
+          io.emit("user:offline", { userId, lastSeen: now });
+        }
+        callback?.({ ok: true, isOnline: stillForeground });
+      } catch (err) {
+        console.error("[presence] user:away failed", err);
+        callback?.({ ok: false, error: "Failed to update presence" });
+      }
+    });
+
     socket.on("disconnect", async () => {
       if (currentUserId) {
-        // Another device/tab of the same user may still be connected here;
-        // only the last local socket marks the user offline.
-        const remaining = await io.in(`user:${currentUserId}`).fetchSockets().catch(() => []);
-        if (remaining.length > 0) {
-          onlineUsers.set(currentUserId, remaining[0]!.id);
+        const userId = currentUserId;
+        // Another device of the same user may still be connected on this
+        // instance. A lookup failure must not clear is_online: we could not
+        // prove this was the last socket. Away sockets do not count as
+        // foreground — once none remain, the account is offline.
+        const remaining = await io.in(`user:${userId}`).fetchSockets().catch((err: unknown) => {
+          console.error("[presence] disconnect lookup failed; leaving is_online unchanged", err);
+          return null;
+        });
+        if (!remaining) return;
+        const others = remaining.filter((peer) => peer.id !== socket.id);
+        if (accountIsOnline(others.map((peer) => readSocketPresence(peer.data)))) {
+          const keep = others.find((peer) => readSocketPresence(peer.data) !== "away");
+          if (keep) onlineUsers.set(userId, keep.id);
           return;
         }
-        onlineUsers.delete(currentUserId);
+        onlineUsers.delete(userId);
         const now = Date.now();
         await query(
           `UPDATE vm_users SET is_online = false, last_seen = $1 WHERE id = $2`,
-          [now, currentUserId]
+          [now, userId]
         );
-        io.emit("user:offline", { userId: currentUserId, lastSeen: now });
+        io.emit("user:offline", { userId, lastSeen: now });
       }
     });
   });

@@ -3,6 +3,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { attachSocket } from "./lib/socket";
 import { migrate } from "./lib/migrate";
+import { resetOnlinePresence } from "./lib/realtime-bus";
 import { startScheduledMessageDispatcher } from "./routes/scheduled-messages";
 
 const rawPort = process.env["PORT"];
@@ -17,8 +18,12 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 migrate()
-  .then(() => {
+  .then(async () => {
     logger.info("Database migration complete");
+    // Redeploy leaves the previous process's sockets looking online. Clear
+    // that before accepting traffic so presence is not stuck after boot.
+    await resetOnlinePresence();
+    logger.info("Cleared vm_users.is_online after boot");
     const httpServer = http.createServer(app);
     attachSocket(httpServer);
     startScheduledMessageDispatcher();

@@ -1,6 +1,6 @@
 import pool, { query, queryOne } from "./db";
 import { fanoutMessage, pushTokensForChat } from "./realtime-bus";
-import { sendExpoPush } from "./push";
+import { messagePushData, sendExpoPush } from "./push";
 import {
   calendarProposalCard,
   mediaJsonParam,
@@ -715,7 +715,13 @@ async function fanoutSaved(
   try {
     const tokens = await pushTokensForChat(row.chat_id, senderId);
     if (tokens.length > 0) {
-      await sendExpoPush(tokens, senderName, messagePreview(outgoing.text, outgoing.type), "default");
+      await sendExpoPush(
+        tokens,
+        senderName,
+        messagePreview(outgoing.text, outgoing.type),
+        "default",
+        messagePushData(row.chat_id, outgoing.id),
+      );
     }
   } catch { /* push is best-effort */ }
   void notifyChatAgents(row.chat_id, outgoing, senderId);
