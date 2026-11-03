@@ -39,3 +39,27 @@ export function resolveServerIdentity(
   }
   return parseServerIdentity(secureIdentity);
 }
+
+/**
+ * Choose the auth token to use when the in-memory token is missing or was just
+ * rejected (REST 401). Prefers the app-local token, falls back to the
+ * SecureStore recovery identity, and skips a token the server just rejected
+ * when a different stored copy exists.
+ */
+export function pickRehydratedAuthToken(
+  localAuthToken: string | null,
+  secureIdentity: string | null,
+  rejectedToken: string | null = null,
+): string | null {
+  const secureToken = parseServerIdentity(secureIdentity)?.authToken ?? null;
+  const candidates = [localAuthToken, secureToken].filter(
+    (token): token is string => typeof token === "string" && token.length > 0,
+  );
+  if (candidates.length === 0) return null;
+  return candidates.find((token) => token !== rejectedToken) ?? candidates[0];
+}
+
+export const SESSION_INVALID_MESSAGE =
+  "Your session couldn't be verified, so this message wasn't sent. "
+  + "Use Recover account with your saved recovery code to restore it. "
+  + "Don't sign out or create a new account — your chats stay with this account.";

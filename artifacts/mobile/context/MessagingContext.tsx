@@ -22,6 +22,7 @@ import {
   generateEncryptionKey,
 } from "@/utils/crypto";
 import { Alert } from "react-native";
+import { router } from "expo-router";
 import {
   useServer,
   type MessageDelivery,
@@ -46,6 +47,13 @@ import {
   toggleReaction,
   type ReactionWrite,
 } from "@/utils/message-reactions";
+import { imageMediaFromParts, type ServerImageMedia } from "@/utils/message-outbox";
+import {
+  imageAttachmentFromServerMedia,
+  messagePreviewText,
+  reviveCachedMessage,
+  coerceEpochMillis,
+} from "@/utils/message-time";
 
 export type AudioAttachment = {
   uri: string;
@@ -63,6 +71,9 @@ export type ImageAttachment = {
   password?: string;
   viewAfter?: number;
   viewedBy?: string[];
+  /** Present only while a server send is being prepared. Never persisted. */
+  base64?: string;
+  mimeType?: string;
 };
 
 export type MessageFormatting = {
@@ -412,6 +423,8 @@ interface MessagingContextValue {
   setActiveChatId: (id: string | null) => void;
   sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
+  /** Pull durable server history, including images, into the open chat. */
+  syncServerChat: (chatId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
   createServerDirectChat: (serverUser: ServerUser) => Promise<{ chatId: string; approval?: "pending" | "blocked"; error?: string }>;
   createGroupChat: (name: string, participantIds: string[], description?: string) => Promise<string>;
@@ -456,6 +469,39 @@ const MessagingContext = createContext<MessagingContextValue | null>(null);
 
 function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
+
+function imageForLocalCache(image: ImageAttachment): ImageAttachment {
+  if (!image.base64 && !image.mimeType) return image;
+  const cached: ImageAttachment = { ...image };
+  delete cached.base64;
+  delete cached.mimeType;
+  return cached;
+}
+
+/** Server row → local message, keeping reaction ids and the image data URL. */
+function inboundMessageFromServer(msg: ServerMessage): Message {
+  const timestamp = coerceEpochMillis(msg.createdAt);
+  const base = localFieldsFromServerMessage({
+    id: msg.id,
+    chatId: msg.chatId,
+    text: typeof msg.text === "string" ? msg.text : "",
+    senderId: msg.senderId,
+    createdAt: Number.isFinite(timestamp) ? timestamp : 0,
+    localId: msg.localId,
+    clientId: msg.clientId,
+    reactions: msg.reactions,
+  });
+  const imageAttachment = imageAttachmentFromServerMedia(msg.media);
+  return imageAttachment ? { ...base, imageAttachment } : base;
+}
+
+function inboundPreview(msg: ServerMessage, message: Message): { preview: string; timestamp: number } {
+  const preview = messagePreviewText(message);
+  return {
+    preview: preview || (typeof msg.text === "string" ? msg.text : ""),
+    timestamp: message.timestamp,
+  };
 }
 
 function fromServerCheckinGroup(group: ServerCheckInGroup): CheckInGroup {
@@ -752,7 +798,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       }
       seenMessageIds.current.add(msg.id);
       const chatId = msg.chatId;
-      const newMsg: Message = localFieldsFromServerMessage(msg);
+      const newMsg: Message = inboundMessageFromServer(msg);
+      const { preview, timestamp } = inboundPreview(msg, newMsg);
       setMessages((prev) => {
         const existing = prev[chatId] || [];
         if (existing.some((m) => m.id === msg.id)) return prev;
@@ -766,7 +813,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           chatId,
           senderId: msg.senderId,
           senderName: msg.senderName,
-          text: msg.text,
+          text: preview,
         });
 
         if (!missedNotificationFlushScheduled.current) {
@@ -790,7 +837,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             chatId,
             senderId: msg.senderId,
             senderName: msg.senderName,
-            text: msg.text,
+            text: preview,
           }, chat);
           if (request) {
             scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
@@ -809,10 +856,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             type: "direct",
             name: msg.senderName || "Unknown",
             participantIds: [msg.senderId],
-            createdAt: msg.createdAt,
+            createdAt: timestamp,
             unreadCount: shouldCount ? 1 : 0,
-            lastMessage: msg.text,
-            lastMessageTime: msg.createdAt,
+            lastMessage: preview,
+            lastMessageTime: timestamp,
             isServerChat: true,
           };
           const updated = [placeholder, ...prev];
@@ -823,8 +870,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           c.id === chatId
             ? {
                 ...c,
-                lastMessage: msg.text,
-                lastMessageTime: msg.createdAt,
+                lastMessage: preview,
+                lastMessageTime: timestamp,
                 unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
               }
             : c
@@ -1122,6 +1169,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       let finalMsgs: Record<string, Message[]>;
       if (messagesStr) {
         const loadedMsgs: Record<string, Message[]> = JSON.parse(messagesStr);
+        for (const [chatId, list] of Object.entries(loadedMsgs)) {
+          loadedMsgs[chatId] = list.map((item) => reviveCachedMessage(item));
+        }
         if (!loadedMsgs[BETA_CHAT_ID]) {
           loadedMsgs[BETA_CHAT_ID] = [BETA_WELCOME_MSG];
           await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(loadedMsgs));
@@ -1181,7 +1231,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
         const existing = finalMsgs[chatId] || [];
-        const newMsg: Message = localFieldsFromServerMessage(msg);
+        const newMsg: Message = inboundMessageFromServer(msg);
         finalMsgs = { ...finalMsgs, [chatId]: [...existing, newMsg] };
         bufferedForChats.push(msg);
         if (delivery === "missed") {
@@ -1189,7 +1239,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             chatId,
             senderId: msg.senderId,
             senderName: msg.senderName,
-            text: msg.text,
+            text: inboundPreview(msg, newMsg).preview,
           });
         }
       }
@@ -1219,16 +1269,18 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             const isActiveChat = activeChatIdRef.current === chatId;
             const shouldCount = !isOwnMessage && !isActiveChat;
             const chat = updated.find((c) => c.id === chatId);
+            const incoming = inboundMessageFromServer(msg);
+            const { preview, timestamp } = inboundPreview(msg, incoming);
             if (!chat) {
               const placeholder: Chat = {
                 id: chatId,
                 type: "direct",
                 name: msg.senderName || "Unknown",
                 participantIds: [msg.senderId],
-                createdAt: msg.createdAt,
+                createdAt: timestamp,
                 unreadCount: shouldCount ? 1 : 0,
-                lastMessage: msg.text,
-                lastMessageTime: msg.createdAt,
+                lastMessage: preview,
+                lastMessageTime: timestamp,
                 isServerChat: true,
               };
               updated = [placeholder, ...updated];
@@ -1237,8 +1289,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
                 c.id === chatId
                   ? {
                       ...c,
-                      lastMessage: msg.text,
-                      lastMessageTime: msg.createdAt,
+                      lastMessage: preview,
+                      lastMessageTime: timestamp,
                       unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
                     }
                   : c
@@ -1271,7 +1323,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         }
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
-        const newMsg: Message = localFieldsFromServerMessage(msg);
+        const newMsg: Message = inboundMessageFromServer(msg);
+        const { preview, timestamp } = inboundPreview(msg, newMsg);
         if (hasServerMessage(messagesRef.current, chatId, msg.id, clientId)) {
           queueOrCommitReactionWrites(reactionWritesForKnownMessage(msg));
           continue;
@@ -1294,10 +1347,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
               type: "direct",
               name: msg.senderName || "Unknown",
               participantIds: [msg.senderId],
-              createdAt: msg.createdAt,
+              createdAt: timestamp,
               unreadCount: shouldCount ? 1 : 0,
-              lastMessage: msg.text,
-              lastMessageTime: msg.createdAt,
+              lastMessage: preview,
+              lastMessageTime: timestamp,
               isServerChat: true,
             };
             const updated = [placeholder, ...prev];
@@ -1308,8 +1361,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             c.id === chatId
               ? {
                   ...c,
-                  lastMessage: msg.text,
-                  lastMessageTime: msg.createdAt,
+                  lastMessage: preview,
+                  lastMessageTime: timestamp,
                   unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
                 }
               : c
@@ -1787,6 +1840,30 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           ? encryptMessage(finalText, chat.encryptionKey)
           : finalText;
 
+      let serverMedia: ServerImageMedia | undefined;
+      if (chat?.isServerChat && serverUserId && image) {
+        if (!image.base64 && !image.uri.startsWith("data:image/")) {
+          Alert.alert("Message not delivered", "Could not read that photo. Try choosing it again.");
+          return;
+        }
+        const prepared = imageMediaFromParts({
+          dataUrl: image.uri.startsWith("data:image/") ? image.uri : undefined,
+          base64: image.base64,
+          mimeType: image.mimeType,
+          width: image.width,
+          height: image.height,
+          security: image.security,
+          password: image.password,
+          viewAfter: image.viewAfter,
+        });
+        if (!prepared.ok) {
+          Alert.alert("Message not delivered", prepared.error);
+          return;
+        }
+        serverMedia = prepared.media;
+      }
+
+      const localImage = image ? imageForLocalCache(image) : undefined;
       const msg: Message = {
         id,
         localId: id,
@@ -1795,7 +1872,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         senderId: myId,
         timestamp: Date.now(),
         audioAttachment: audio,
-        imageAttachment: image,
+        imageAttachment: localImage,
         musicAttachment: music,
         formatting,
         selfDestruct,
@@ -1809,9 +1886,23 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           : undefined,
       };
 
-      if (chat?.isServerChat && serverUserId) {
+      if (chat?.isServerChat && serverUserId && (finalText.trim() || serverMedia)) {
         sentLocalIds.current.add(id);
-        sendServerMessage(chatId, serverUserId, finalText, id);
+        const result = await sendServerMessage(chatId, serverUserId, finalText, id, serverMedia);
+        if (result && result.ok === false && !result.retryable) {
+          sentLocalIds.current.delete(id);
+          if (!result.suppressed) {
+            if (result.code === "auth") {
+              Alert.alert("Session needs recovery", result.error, [
+                { text: "Cancel", style: "cancel" },
+                { text: "Recover", onPress: () => router.push("/onboarding?recover=1" as never) },
+              ]);
+            } else {
+              Alert.alert("Message not delivered", result.error);
+            }
+          }
+          return;
+        }
       }
 
       const linkedServerId = serverIdsByLocalId.current.get(id);
@@ -1838,8 +1929,68 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       }
 
     },
-    [chats, messages, myId, contacts, profile.primaryLanguage, translateMessage]
+    [chats, messages, myId, contacts, profile.primaryLanguage, translateMessage, sendServerMessage, serverUserId]
   );
+
+  const syncServerChat = useCallback(async (chatId: string) => {
+    const rows = await fetchMessages(chatId);
+    if (!rows.length) return;
+    // Commit against messagesRef, same as reaction writes. A functional setMessages
+    // would race the history reaction refresh and drop either photos or reactions.
+    const prev = messagesRef.current;
+    const existing = prev[chatId] ?? [];
+    let nextList = existing;
+    const additions: Message[] = [];
+    let changed = false;
+    for (const row of rows) {
+      const clientId = row.localId ?? row.clientId;
+      const incoming = inboundMessageFromServer(row);
+      const matchIndex = nextList.findIndex((message) =>
+        message.id === row.id
+        || message.serverMessageId === row.id
+        || (!!clientId && (message.id === clientId || message.localId === clientId))
+      );
+      const additionMatch = additions.some((message) =>
+        message.id === row.id
+        || (!!clientId && (message.id === clientId || message.localId === clientId))
+      );
+      seenMessageIds.current.add(row.id);
+      if (matchIndex >= 0) {
+        const current = nextList[matchIndex];
+        if (!current.imageAttachment && incoming.imageAttachment) {
+          if (nextList === existing) nextList = existing.slice();
+          nextList[matchIndex] = { ...current, imageAttachment: incoming.imageAttachment };
+          changed = true;
+        }
+        continue;
+      }
+      if (additionMatch) continue;
+      additions.push(incoming);
+    }
+    if (!additions.length && !changed) return;
+    const merged = additions.length
+      ? [...nextList, ...additions].sort((a, b) => a.timestamp - b.timestamp)
+      : nextList;
+    const updated = { ...prev, [chatId]: merged };
+    messagesRef.current = updated;
+    setMessages(updated);
+    AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+    const newest = merged[merged.length - 1];
+    if (!newest) return;
+    setChats((prevChats) => {
+      const chatsNext = prevChats.map((chat) => {
+        if (chat.id !== chatId) return chat;
+        if ((chat.lastMessageTime ?? 0) >= newest.timestamp) return chat;
+        return {
+          ...chat,
+          lastMessage: messagePreviewText(newest),
+          lastMessageTime: newest.timestamp,
+        };
+      });
+      AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(chatsNext)).catch(() => {});
+      return chatsNext;
+    });
+  }, [fetchMessages]);
 
   const simulateMemberReplies = useCallback(
     (broadcastId: string, memberIds: string[]) => {
@@ -2364,6 +2515,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setActiveChatId,
       sendMessage,
       markImageViewed,
+      syncServerChat,
       createDirectChat,
       createServerDirectChat,
       createGroupChat,
@@ -2413,6 +2565,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setActiveChatId,
       sendMessage,
       markImageViewed,
+      syncServerChat,
       createDirectChat,
       createServerDirectChat,
       createGroupChat,

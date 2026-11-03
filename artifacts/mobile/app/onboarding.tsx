@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -26,6 +26,7 @@ import { useServer } from "@/context/ServerContext";
 import { useContactSync } from "@/hooks/useContactSync";
 import { ContactCardWidget } from "@/components/ContactCardWidget";
 import { buildRegistrationOptions } from "@/utils/registration";
+import { recoveryEmailCopy } from "@/utils/recovery-email";
 
 export default function OnboardingScreen() {
   const colorScheme = useColorScheme();
@@ -35,7 +36,7 @@ export default function OnboardingScreen() {
 
   const { profile, updateProfile } = useProfile();
   const { updateContacts } = useMessaging();
-  const { registerOnServer, recoverServerAccount, showRecoveryCode } = useServer();
+  const { registerOnServer, recoverServerAccount, requestRecoveryEmail, showRecoveryCode } = useServer();
   const { status, syncedCount, syncContacts } = useContactSync();
 
   const [step, setStep] = useState<1 | 2>(1);
@@ -44,9 +45,15 @@ export default function OnboardingScreen() {
   const [username, setUsername] = useState("");
   const [avatarUri, setAvatarUri] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
-  const [showRecovery, setShowRecovery] = useState(false);
+  const { recover } = useLocalSearchParams<{ recover?: string | string[] }>();
+  const recoverParam = Array.isArray(recover) ? recover[0] : recover;
+  const recoverMode = recoverParam === "1" || recoverParam === "true";
+  const [showRecovery, setShowRecovery] = useState(recoverMode);
   const [recoveryCode, setRecoveryCode] = useState("");
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoveryContact, setRecoveryContact] = useState("");
+  const [sendingRecoveryEmail, setSendingRecoveryEmail] = useState(false);
+  const [recoveryEmailNotice, setRecoveryEmailNotice] = useState<{ text: string; isError: boolean } | null>(null);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -131,6 +138,26 @@ export default function OnboardingScreen() {
     router.replace("/(tabs)");
   }
 
+  function cancelRecovery() {
+    setRecoveryError(null);
+    if (router.canGoBack()) router.back();
+    else router.replace("/(tabs)");
+  }
+
+  async function handleSendRecoveryEmail() {
+    const contact = recoveryContact.trim();
+    if (!contact) {
+      setRecoveryEmailNotice({ text: "Enter the email or phone number on your account.", isError: true });
+      return;
+    }
+    setSendingRecoveryEmail(true);
+    setRecoveryEmailNotice(null);
+    const target = contact.includes("@") ? { email: contact } : { phone: contact };
+    const outcome = await requestRecoveryEmail(target);
+    setSendingRecoveryEmail(false);
+    setRecoveryEmailNotice(recoveryEmailCopy(outcome));
+  }
+
   async function handleRecoverAccount() {
     if (!recoveryCode.trim()) return;
     setSaving(true);
@@ -187,8 +214,42 @@ export default function OnboardingScreen() {
               <>
                 <Text style={[styles.headline, { color: colors.text }]}>Restore your account</Text>
                 <Text style={[styles.subline, { color: colors.textSecondary }]}>
-                  Enter the recovery code you saved when you joined ZIVR.
+                  Enter the recovery code you saved when you joined ZIVR, or have a code sent to your email.
                 </Text>
+
+                <View style={[styles.inputCard, { backgroundColor: colors.surface }]}>
+                  <Ionicons name="mail-outline" size={20} color={colors.textSecondary} style={{ marginRight: 10 }} />
+                  <TextInput
+                    value={recoveryContact}
+                    onChangeText={setRecoveryContact}
+                    placeholder="Email (or phone number)"
+                    placeholderTextColor={colors.textSecondary}
+                    style={[styles.inputField, { color: colors.text }]}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="email-address"
+                    textContentType="emailAddress"
+                    autoComplete="email"
+                    editable={!sendingRecoveryEmail}
+                    accessibilityLabel="Email or phone for recovery code"
+                  />
+                </View>
+                <Pressable
+                  onPress={handleSendRecoveryEmail}
+                  disabled={sendingRecoveryEmail || saving || !recoveryContact.trim()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send code to my email"
+                  style={[styles.sendCodeBtn, { borderColor: "#0A84FF", opacity: sendingRecoveryEmail || saving || !recoveryContact.trim() ? 0.45 : 1 }]}
+                >
+                  {sendingRecoveryEmail ? <ActivityIndicator color="#0A84FF" /> : (
+                    <Text style={styles.sendCodeBtnText}>Send code to my email</Text>
+                  )}
+                </Pressable>
+                {recoveryEmailNotice && (
+                  <Text style={[styles.recoveryError, { color: recoveryEmailNotice.isError ? "#FF453A" : colors.textSecondary }]}>
+                    {recoveryEmailNotice.text}
+                  </Text>
+                )}
 
                 <View style={[styles.inputCard, { backgroundColor: colors.surface }]}>
                   <Ionicons name="key-outline" size={20} color={colors.textSecondary} style={{ marginRight: 10 }} />
@@ -220,9 +281,15 @@ export default function OnboardingScreen() {
                   </LinearGradient>
                 </Pressable>
 
-                <Pressable onPress={() => { setShowRecovery(false); setRecoveryError(null); }} style={styles.skipBtn}>
-                  <Text style={[styles.skipText, { color: colors.textSecondary }]}>← Set up a new account</Text>
-                </Pressable>
+                {recoverMode ? (
+                  <Pressable onPress={cancelRecovery} disabled={saving} style={styles.skipBtn}>
+                    <Text style={[styles.skipText, { color: colors.textSecondary }]}>Cancel</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={() => { setShowRecovery(false); setRecoveryError(null); }} style={styles.skipBtn}>
+                    <Text style={[styles.skipText, { color: colors.textSecondary }]}>← Set up a new account</Text>
+                  </Pressable>
+                )}
               </>
             ) : step === 1 ? (
               <>
@@ -421,6 +488,8 @@ const styles = StyleSheet.create({
   syncTitle: { fontSize: 15, fontFamily: "Inter_500Medium" },
   syncSub: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   recoveryError: { fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
+  sendCodeBtn: { borderWidth: 1.5, borderRadius: 14, paddingVertical: 14, alignItems: "center", justifyContent: "center" },
+  sendCodeBtnText: { color: "#0A84FF", fontSize: 16, fontFamily: "Inter_600SemiBold" },
   autoSyncBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   autoSyncText: { fontSize: 11, color: "#fff", fontFamily: "Inter_700Bold" },
   continueBtn: { marginTop: 4 },

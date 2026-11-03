@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { getRecoveredLanguageUpdate } from "./language-sync.ts";
 import {
+  pickRehydratedAuthToken,
   resolveServerIdentity,
   serializeServerIdentity,
 } from "./server-identity.ts";
@@ -39,4 +40,18 @@ test("an Android-style reinstall with both stores wiped requires verified recove
     primaryLanguage: "es",
     primaryLanguageUserId: "recovered-account",
   });
+});
+test("rehydrates the auth token from SecureStore when AsyncStorage is empty", () => {
+  const secure = serializeServerIdentity({ userId: "u1", authToken: "secure-token" });
+  assert.equal(pickRehydratedAuthToken(null, secure), "secure-token");
+  assert.equal(pickRehydratedAuthToken("local-token", secure), "local-token");
+  assert.equal(pickRehydratedAuthToken(null, null), null);
+  assert.equal(pickRehydratedAuthToken(null, "{bad"), null);
+});
+
+test("after a 401, prefers a stored token different from the rejected one", () => {
+  const secure = serializeServerIdentity({ userId: "u1", authToken: "secure-token" });
+  assert.equal(pickRehydratedAuthToken("stale", secure, "stale"), "secure-token");
+  // Only the rejected token exists: still returns it so the single retry runs.
+  assert.equal(pickRehydratedAuthToken("stale", null, "stale"), "stale");
 });

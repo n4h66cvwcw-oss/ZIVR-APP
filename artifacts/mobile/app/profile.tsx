@@ -4,7 +4,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -47,7 +47,7 @@ export default function ProfileScreen() {
   const colors = isDark ? Colors.dark : Colors.light;
   const insets = useSafeAreaInsets();
   const { profile, updateProfile } = useProfile();
-  const { serverUserId, updateServerProfile, previousUserId, switchBackToPreviousUser } = useServer();
+  const { serverUserId, updateServerProfile, previousUserId, switchBackToPreviousUser, fetchRecoveryEmail, updateRecoveryEmail } = useServer();
   const { isParentMode, children, setParentMode, loadChildren } = useParental();
   const [displayName, setDisplayName] = useState(profile.displayName);
   const [status, setStatus] = useState(profile.statusMessage);
@@ -55,6 +55,42 @@ export default function ProfileScreen() {
   const [showDefaultSoundPicker, setShowDefaultSoundPicker] = useState(false);
   const [showTypingEmojiPicker, setShowTypingEmojiPicker] = useState(false);
   const [showLanguagePicker, setShowLanguagePicker] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [savedRecoveryEmail, setSavedRecoveryEmail] = useState("");
+  const [savingRecoveryEmail, setSavingRecoveryEmail] = useState(false);
+  const [recoveryEmailStatus, setRecoveryEmailStatus] = useState<{ text: string; isError: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!serverUserId) return;
+    let cancelled = false;
+    fetchRecoveryEmail().then((email) => {
+      const existing = email?.trim();
+      if (cancelled || !existing) return;
+      setSavedRecoveryEmail(existing);
+      setRecoveryEmail((current) => current || existing);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverUserId, fetchRecoveryEmail]);
+
+  async function handleSaveRecoveryEmail() {
+    const clean = recoveryEmail.trim();
+    if (!clean || clean === savedRecoveryEmail) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
+      setRecoveryEmailStatus({ text: "Enter a valid email address.", isError: true });
+      return;
+    }
+    setSavingRecoveryEmail(true);
+    setRecoveryEmailStatus(null);
+    const ok = await updateRecoveryEmail(clean);
+    setSavingRecoveryEmail(false);
+    if (ok) {
+      setSavedRecoveryEmail(clean);
+      setRecoveryEmailStatus({ text: "Recovery email saved.", isError: false });
+    } else {
+      setRecoveryEmailStatus({ text: "Couldn't save recovery email. Try again later.", isError: true });
+    }
+  }
+
   const currentLanguage = profile.primaryLanguage
     ? (getLanguageByCode(profile.primaryLanguage) ?? LANGUAGES[0])
     : LANGUAGES[0];
@@ -477,6 +513,66 @@ export default function ProfileScreen() {
           </Pressable>
           <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
             Others see this emoji animate when you're typing. Can be overridden per chat.
+          </Text>
+        </View>
+
+        <View style={[styles.section, { backgroundColor: colors.surface }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
+            ACCOUNT
+          </Text>
+          {serverUserId ? (
+            <>
+              <View style={[styles.field, { borderBottomColor: colors.border }]}>
+                <Ionicons name="mail-outline" size={18} color={colors.primary} />
+                <TextInput
+                  style={[styles.fieldInput, { color: colors.text }]}
+                  value={recoveryEmail}
+                  onChangeText={(text) => { setRecoveryEmail(text); setRecoveryEmailStatus(null); }}
+                  placeholder="Recovery email (optional)"
+                  placeholderTextColor={colors.textTertiary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  textContentType="emailAddress"
+                  autoComplete="email"
+                  editable={!savingRecoveryEmail}
+                  onSubmitEditing={handleSaveRecoveryEmail}
+                  returnKeyType="done"
+                  accessibilityLabel="Recovery email"
+                />
+                {recoveryEmail.trim() && recoveryEmail.trim() !== savedRecoveryEmail ? (
+                  <Pressable
+                    onPress={handleSaveRecoveryEmail}
+                    disabled={savingRecoveryEmail}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save recovery email"
+                    style={({ pressed }) => ({ opacity: pressed || savingRecoveryEmail ? 0.5 : 1 })}
+                  >
+                    <Text style={[styles.fieldInput, { flex: 0, color: colors.primary }]}>
+                      {savingRecoveryEmail ? "Saving…" : "Save"}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              <Text style={[styles.sectionSubtitle, { color: recoveryEmailStatus?.isError ? "#FF453A" : colors.textSecondary }]}>
+                {recoveryEmailStatus?.text ?? "Optional. Lets you get a recovery code by email if you lose this device."}
+              </Text>
+            </>
+          ) : null}
+          <Pressable
+            onPress={() => router.push("/onboarding?recover=1" as never)}
+            accessibilityRole="button"
+            accessibilityLabel="Recover account with recovery code"
+            style={({ pressed }) => [styles.field, { borderBottomColor: "transparent", opacity: pressed ? 0.7 : 1 }]}
+          >
+            <Ionicons name="key-outline" size={18} color={colors.primary} />
+            <Text style={[styles.fieldLabel, { color: colors.text, width: "auto", flex: 1 }]}>
+              Recover account
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+          </Pressable>
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            Restore your ZIVR account on this device using the recovery code you saved when you joined. Use this if messages fail with a session that needs recovery. This does not sign you out.
           </Text>
         </View>
       </ScrollView>

@@ -58,7 +58,7 @@ const serverMock = {
     newMessageHandler = handler;
     return () => { newMessageHandler = undefined; };
   },
-  sendServerMessage: async () => undefined,
+  sendServerMessage: async () => ({ ok: true as const }),
   fetchMessages: async () => fetchedMessages,
   postMessageReaction: async (chatId: string, messageId: string, emoji: string) => {
     reactionPosts.push({ chatId, messageId, emoji });
