@@ -24,6 +24,7 @@ build({
     "@/utils/crypto": path.join(mocks, "crypto.ts"),
     "@/utils/betaFeedback": path.join(mocks, "betaFeedback.ts"),
     "react-native": path.join(mocks, "react-native.ts"),
+    "expo-router": path.join(mocks, "expo-router.ts"),
   },
 }).then(() => {
   const result = spawnSync(process.execPath, ["--test", output], { stdio: "inherit" });

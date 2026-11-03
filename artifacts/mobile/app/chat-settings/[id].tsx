@@ -327,7 +327,7 @@ export default function ChatSettingsScreen() {
         senderId: message.senderId,
         senderName: message.senderName,
         text: message.type === "text" ? message.text : `[${message.type} attachment]`,
-        timestamp: message.createdAt,
+        timestamp: typeof message.createdAt === "number" ? message.createdAt : Number(message.createdAt),
       })));
       setPdfSourceLabel("Complete history available from ZIVR");
       setPdfFullHistoryAvailable(true);
