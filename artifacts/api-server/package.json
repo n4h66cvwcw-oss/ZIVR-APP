@@ -15,7 +15,9 @@
     "test:checkins-socket": "node ./test-build.mjs src/lib/checkins.socket.integration.test.ts && node --test --test-concurrency=1 dist/checkins.socket.integration.test.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:recover-email": "node ./test-build.mjs src/lib/recover-email.test.ts && node ./test-build.mjs src/lib/recover-email-service.test.ts && node --test dist/recover-email.test.cjs dist/recover-email-service.test.cjs",
-    "test:user-find": "node ./test-build.mjs src/lib/user-find.test.ts && node --test dist/user-find.test.cjs"
+    "test:user-find": "node ./test-build.mjs src/lib/user-find.test.ts && node --test dist/user-find.test.cjs",
+    "test:agents": "SESSION_SECRET=unit-test-session-secret node ./test-build.mjs src/lib/agent-policy.test.ts && SESSION_SECRET=unit-test-session-secret node ./test-build.mjs src/lib/agent-crypto.test.ts && SESSION_SECRET=unit-test-session-secret node ./test-build.mjs src/lib/agent-media.test.ts && SESSION_SECRET=unit-test-session-secret node ./test-build.mjs src/routes/agent-routes.smoke.test.ts && SESSION_SECRET=unit-test-session-secret node --test dist/agent-policy.test.cjs dist/agent-crypto.test.cjs dist/agent-media.test.cjs dist/agent-routes.smoke.test.cjs",
+    "test:sub-profiles": "SESSION_SECRET=unit-test-session-secret node ./test-build.mjs src/routes/sub-profiles.integration.test.ts && SESSION_SECRET=unit-test-session-secret node --test --test-concurrency=1 dist/sub-profiles.integration.test.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",

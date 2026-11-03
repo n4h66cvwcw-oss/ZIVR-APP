@@ -18,6 +18,13 @@ import {
   serializeHistoryMessage,
   serializedMessageFromRow,
 } from "../lib/message-content";
+import {
+  assertGroupHasNoAgents,
+  assertHumanCanOpenDirect,
+  noteHumanCiphertext,
+  notifyChatAgents,
+  rejectAgentMemberSend,
+} from "../lib/agent-delivery";
 
 const router = Router();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -30,6 +37,12 @@ router.post("/direct", async (req, res) => {
     const authUserId = getAuthUserId(req);
     if (!authUserId || authUserId !== myUserId) {
       res.status(401).json({ error: "Invalid or missing auth token", code: "auth" });
+      return;
+    }
+
+    const partyGate = await assertHumanCanOpenDirect(myUserId, theirUserId);
+    if (!partyGate.ok) {
+      res.status(partyGate.status).json({ error: partyGate.error, code: partyGate.code });
       return;
     }
 
@@ -91,6 +104,11 @@ router.post("/:chatId/messages", async (req, res) => {
     const authUserId = getAuthUserId(req);
     if (!authUserId) {
       res.status(401).json({ error: "Invalid or missing auth token", code: "auth" });
+      return;
+    }
+    const agentGate = await rejectAgentMemberSend(authUserId);
+    if (!agentGate.ok) {
+      res.status(agentGate.status).json({ error: agentGate.error, code: agentGate.code });
       return;
     }
     const { text, type = "text", clientId, media } = req.body as {
@@ -202,12 +220,14 @@ router.post("/:chatId/messages", async (req, res) => {
     });
     res.json({ message: outgoing });
     if (duplicate) return;
+    void noteHumanCiphertext(chatId, messageText);
     // The row and canonical response are authoritative. Fanout/moderation is
     // best effort and must never turn an already committed write into a 500.
     try {
       await query(`UPDATE vm_chats SET last_message_at = $1 WHERE id = $2`, [now, chatId]);
     } catch { /* history remains authoritative even if the preview update fails */ }
     await fanoutMessage(outgoing); // cross-instance; never throws
+    void notifyChatAgents(chatId, outgoing, authUserId);
     if (outgoing.type === "text") {
       void checkContentForChild(outgoing.id, chatId, authUserId, outgoing.text).catch(() => {});
     }
@@ -246,6 +266,11 @@ router.post("/group", async (req, res) => {
     }
 
     const all = [...new Set([myUserId, ...memberIds])];
+    const agentMembers = await assertGroupHasNoAgents(myUserId, all);
+    if (!agentMembers.ok) {
+      res.status(agentMembers.status).json({ error: agentMembers.error, code: agentMembers.code });
+      return;
+    }
     if (all.length > MAX_GROUP_MEMBERS) {
       res.status(400).json({
         error: `Groups can have up to ${MAX_GROUP_MEMBERS} members.`,
@@ -321,10 +346,13 @@ router.get("/user/:userId", async (req, res) => {
       return;
     }
     const chats = await query(
-      `SELECT c.id, c.type, c.name, c.description, c.last_message_at,
+      `SELECT c.id, c.type, c.name, c.description, c.is_e2e AS "isE2e", c.last_message_at,
          (SELECT m.text FROM vm_messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) as last_message,
          (SELECT m.created_at FROM vm_messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) as last_message_time,
-         (SELECT json_agg(json_build_object('id', u.id, 'displayName', u.display_name, 'avatar', u.avatar, 'isOnline', u.is_online))
+         (SELECT json_agg(json_build_object(
+            'id', u.id, 'displayName', u.display_name, 'avatar', u.avatar, 'isOnline', u.is_online,
+            'accountType', u.account_type, 'profileMode', u.profile_mode, 'ownerUserId', u.owner_user_id
+          ))
           FROM vm_chat_members cm2 JOIN vm_users u ON u.id = cm2.user_id WHERE cm2.chat_id = c.id) as members
        FROM vm_chats c
        JOIN vm_chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1

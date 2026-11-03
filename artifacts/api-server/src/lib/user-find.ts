@@ -1,5 +1,8 @@
 import { phoneLookupCandidates, type PhoneLookup } from "./phone-number";
 
+/** Agents are not discoverable by phone, username, or public search. */
+export const AGENT_FIND_EXCLUSION = "COALESCE(account_type, '') <> 'agent'";
+
 export type UserFindPlan =
   | { kind: "phone"; lookup: PhoneLookup }
   | { kind: "phone-exact"; phone: string }

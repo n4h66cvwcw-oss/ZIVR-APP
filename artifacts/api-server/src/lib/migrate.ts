@@ -285,4 +285,109 @@ export async function migrate(): Promise<void> {
   await query(`CREATE INDEX IF NOT EXISTS idx_checkin_replies_broadcast_created ON vm_checkin_replies (broadcast_id, created_at ASC)`);
   // vm_users.email + unique lower(email) (recover-email pack)
   await migrateUserEmail();
+
+  // Sub-profiles: twin vm_users rows (account_type = 'agent') plus credentials.
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES vm_users(id) ON DELETE CASCADE
+  `);
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS profile_mode TEXT
+  `);
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS agent_provider TEXT
+  `);
+  await query(`
+    ALTER TABLE vm_users
+    ADD COLUMN IF NOT EXISTS agent_status TEXT
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_vm_users_owner_user_id
+      ON vm_users (owner_user_id)
+      WHERE owner_user_id IS NOT NULL
+  `);
+
+  // Server-side E2E flag. Device encryption is still local; ciphertext that
+  // matches the mobile AES prefix also marks the chat (see agent delivery).
+  await query(`
+    ALTER TABLE vm_chats
+    ADD COLUMN IF NOT EXISTS is_e2e BOOLEAN NOT NULL DEFAULT false
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_agent_credentials (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      hash TEXT,
+      key_prefix TEXT,
+      scopes TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      webhook_url TEXT,
+      secret_sealed TEXT,
+      created_at BIGINT NOT NULL,
+      last_used_at BIGINT,
+      revoked_at BIGINT
+    )
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_vm_agent_credentials_agent
+      ON vm_agent_credentials (agent_user_id)
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_vm_agent_credentials_api_key_hash
+      ON vm_agent_credentials (hash)
+      WHERE kind = 'api_key' AND revoked_at IS NULL
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS vm_agent_credentials_one_live_webhook
+      ON vm_agent_credentials (agent_user_id)
+      WHERE kind = 'webhook' AND revoked_at IS NULL
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_agent_audit (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      chat_id UUID,
+      detail JSONB,
+      at BIGINT NOT NULL
+    )
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_vm_agent_audit_agent_at
+      ON vm_agent_audit (agent_user_id, at DESC)
+  `);
+
+  // In-chat calendar slot cards. Yes/No is a single owner or chat-admin tap.
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_calendar_proposals (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      owner_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      chat_id UUID NOT NULL REFERENCES vm_chats(id) ON DELETE CASCADE,
+      message_id UUID REFERENCES vm_messages(id) ON DELETE SET NULL,
+      client_id TEXT,
+      title TEXT NOT NULL,
+      starts_at BIGINT NOT NULL,
+      ends_at BIGINT NOT NULL,
+      note TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      decided_by UUID REFERENCES vm_users(id) ON DELETE SET NULL,
+      decided_at BIGINT,
+      calendar_write TEXT NOT NULL DEFAULT 'not_attempted',
+      created_at BIGINT NOT NULL
+    )
+  `);
+  await query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS vm_calendar_proposals_agent_client
+      ON vm_calendar_proposals (agent_user_id, client_id)
+      WHERE client_id IS NOT NULL
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_vm_calendar_proposals_chat
+      ON vm_calendar_proposals (chat_id, created_at DESC)
+  `);
 }

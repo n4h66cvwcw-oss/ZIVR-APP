@@ -19,6 +19,7 @@ import {
   serializedMessageFromRow,
   type MessageMedia,
 } from "./message-content";
+import { deliverSubProfileMessage, noteHumanCiphertext, notifyChatAgents, rejectAgentMemberSend } from "./agent-delivery";
 import Anthropic from "@anthropic-ai/sdk";
 
 let ioInstance: SocketServer | null = null;
@@ -634,9 +635,10 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       type?: string;
       localId?: string;
       media?: unknown;
+      asProfileId?: string;
     }, acknowledge?: (result: { ok: true; message: ServerMessage } | { ok: false; error: string; status?: string }) => void) => {
       try {
-        const { chatId, text, type = "text", localId, media } = payload;
+        const { chatId, text, type = "text", localId, media, asProfileId } = payload;
         const senderId = currentUserId;
 
         // Sender identity is derived exclusively from the verified handshake
@@ -644,6 +646,29 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         if (!senderId) {
           acknowledge?.({ ok: false, error: "Not authenticated as this sender", status: "auth" });
           socket.emit("error", { message: "Not authenticated as this sender" });
+          return;
+        }
+        if (typeof asProfileId === "string" && asProfileId.length > 0) {
+          const sent = await deliverSubProfileMessage({
+            profileId: asProfileId,
+            actorUserId: senderId,
+            chatId,
+            clientId: localId,
+            text,
+            type,
+            media,
+            mode: "owner_send_as",
+          });
+          if (!sent.ok) {
+            acknowledge?.({ ok: false, error: sent.error, status: sent.code });
+            return;
+          }
+          acknowledge?.({ ok: true, message: sent.message });
+          return;
+        }
+        const agentGate = await rejectAgentMemberSend(senderId);
+        if (!agentGate.ok) {
+          acknowledge?.({ ok: false, error: agentGate.error, status: agentGate.code });
           return;
         }
         const prepared = prepareOutgoingMessage({ text, type, media });
@@ -787,6 +812,7 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         // pushes a second live notification.
         acknowledge?.({ ok: true, message: outgoing });
         if (duplicate) return;
+        void noteHumanCiphertext(chatId, messageText);
         try {
           await query(
             `UPDATE vm_chats SET last_message_at = $1 WHERE id = $2`,
@@ -796,6 +822,7 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         // Cross-instance fan-out (Autoscale): chat room + every member's user
         // room on every instance. Never throws.
         await fanoutMessage(outgoing);
+        void notifyChatAgents(chatId, outgoing, senderId);
 
         // AI content check for child accounts — fire-and-forget, never blocks delivery
         if (messageType === "text") {
