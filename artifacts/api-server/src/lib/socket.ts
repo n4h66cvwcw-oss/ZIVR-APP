@@ -11,6 +11,14 @@ import {
   requestApprovalAndNotifyParents,
 } from "./approvals";
 import { shouldNotifyForSeverity } from "./content-alert-preferences";
+import {
+  MAX_MESSAGE_REQUEST_BYTES,
+  mediaJsonParam,
+  messagePreview,
+  prepareOutgoingMessage,
+  serializedMessageFromRow,
+  type MessageMedia,
+} from "./message-content";
 import Anthropic from "@anthropic-ai/sdk";
 
 let ioInstance: SocketServer | null = null;
@@ -183,6 +191,7 @@ export type ServerMessage = {
   type: string;
   createdAt: number;
   localId?: string;
+  media?: MessageMedia;
 };
 
 const onlineUsers = new Map<string, string>();
@@ -317,6 +326,8 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
     path: "/api/socket.io",
     cors: { origin: "*", methods: ["GET", "POST"] },
     transports: ["websocket", "polling"],
+    // Default is 1 MiB, which drops an inline image before message:send runs.
+    maxHttpBufferSize: MAX_MESSAGE_REQUEST_BYTES,
   });
 
   ioInstance = io;
@@ -396,11 +407,12 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
             sender_name: string;
             text: string;
             type: string;
-            created_at: number;
+            media: unknown;
+            created_at: string | number;
           }>(
             `SELECT m.id, m.chat_id, m.sender_id, m.client_id,
                     u.display_name AS sender_name,
-                    m.text, m.type, m.created_at
+                    m.text, m.type, m.media, m.created_at
              FROM vm_messages m
              JOIN vm_users u ON u.id = m.sender_id
              WHERE m.created_at > $1
@@ -411,15 +423,10 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
           if (missed.length > 0) {
             socket.emit("missed_messages", {
-              messages: missed.map((m) => ({
-                id: m.id,
-                chatId: m.chat_id,
+              messages: missed.map((m) => serializedMessageFromRow(m, {
                 senderId: m.sender_id,
                 senderName: m.sender_name,
-                text: m.text,
-                type: m.type,
-                createdAt: m.created_at,
-                localId: m.client_id ?? undefined,
+                localId: m.client_id,
               })),
             });
           }
@@ -623,12 +630,13 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
     socket.on("message:send", async (payload: {
       chatId: string;
-      text: string;
+      text?: string;
       type?: string;
       localId?: string;
+      media?: unknown;
     }, acknowledge?: (result: { ok: true; message: ServerMessage } | { ok: false; error: string; status?: string }) => void) => {
       try {
-        const { chatId, text, type = "text", localId } = payload;
+        const { chatId, text, type = "text", localId, media } = payload;
         const senderId = currentUserId;
 
         // Sender identity is derived exclusively from the verified handshake
@@ -638,8 +646,9 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
           socket.emit("error", { message: "Not authenticated as this sender" });
           return;
         }
-        if (typeof text !== "string" || text.length > 2000 || !text.trim()) {
-          acknowledge?.({ ok: false, error: "Message text is required", status: "invalid" });
+        const prepared = prepareOutgoingMessage({ text, type, media });
+        if (!prepared.ok) {
+          acknowledge?.({ ok: false, error: prepared.error, status: "invalid" });
           return;
         }
         if (typeof localId !== "string" || localId.length < 1 || localId.length > 200) {
@@ -742,16 +751,17 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         );
 
         const now = Date.now();
-        const inserted = await queryOne<{ id: string; chat_id: string; text: string; type: string; created_at: number }>(
-          `INSERT INTO vm_messages (chat_id, sender_id, client_id, text, type, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
+        const { text: messageText, type: messageType, media: messageMedia } = prepared.message;
+        const inserted = await queryOne<{ id: string; chat_id: string; text: string; type: string; media: unknown; created_at: string | number }>(
+          `INSERT INTO vm_messages (chat_id, sender_id, client_id, text, type, media, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
            ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
-           RETURNING id, chat_id, text, type, created_at`,
-          [chatId, senderId, localId, text, type, now]
+           RETURNING id, chat_id, text, type, media, created_at`,
+          [chatId, senderId, localId, messageText, messageType, mediaJsonParam(messageMedia), now]
         );
         const msg = inserted ?? (localId
-          ? await queryOne<{ id: string; chat_id: string; text: string; type: string; created_at: number }>(
-            `SELECT id, chat_id, text, type, created_at
+          ? await queryOne<{ id: string; chat_id: string; text: string; type: string; media: unknown; created_at: string | number }>(
+            `SELECT id, chat_id, text, type, media, created_at
                FROM vm_messages WHERE sender_id = $1 AND client_id = $2`,
             [senderId, localId],
           )
@@ -766,16 +776,11 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         }
         const duplicate = !inserted;
 
-        const outgoing: ServerMessage = {
-          id: msg.id,
-          chatId,
+        const outgoing: ServerMessage = serializedMessageFromRow(msg, {
           senderId,
           senderName: sender?.display_name ?? "Unknown",
-          text: msg.text,
-          type: msg.type,
-          createdAt: Number(msg.created_at),
           localId,
-        };
+        });
 
         // Canonical persistence precedes the acknowledgement and event. A
         // duplicate retry only receives the canonical row and never emits or
@@ -793,16 +798,15 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         await fanoutMessage(outgoing);
 
         // AI content check for child accounts — fire-and-forget, never blocks delivery
-        if (type === "text") {
-          void checkContentForChild(msg!.id, chatId, senderId, text);
+        if (messageType === "text") {
+          void checkContentForChild(msg!.id, chatId, senderId, messageText);
         }
 
         try {
           const tokens = await pushTokensForChat(chatId, senderId);
 
           if (tokens.length > 0) {
-            const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
-            await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
+            await sendExpoPush(tokens, sender?.display_name ?? "New message", messagePreview(outgoing.text, outgoing.type), "default");
           }
         } catch { /* push failure cannot invalidate the committed message */ }
       } catch (err) {

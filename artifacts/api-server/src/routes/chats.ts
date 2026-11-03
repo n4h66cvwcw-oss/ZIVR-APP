@@ -11,6 +11,13 @@ import { checkContentForChild } from "../lib/socket";
 import { sendExpoPush } from "../lib/push";
 import { fanoutMessage, pushTokensForChat } from "../lib/realtime-bus";
 import type { ServerMessage } from "../lib/socket";
+import {
+  mediaJsonParam,
+  messagePreview,
+  prepareOutgoingMessage,
+  serializeHistoryMessage,
+  serializedMessageFromRow,
+} from "../lib/message-content";
 
 const router = Router();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -86,13 +93,15 @@ router.post("/:chatId/messages", async (req, res) => {
       res.status(401).json({ error: "Invalid or missing auth token", code: "auth" });
       return;
     }
-    const { text, type = "text", clientId } = req.body as {
+    const { text, type = "text", clientId, media } = req.body as {
       text?: string;
       type?: string;
       clientId?: string;
+      media?: unknown;
     };
-    if (typeof text !== "string" || text.length > 2000 || !text.trim()) {
-      res.status(400).json({ error: "Message text is required", code: "invalid" });
+    const prepared = prepareOutgoingMessage({ text, type, media });
+    if (!prepared.ok) {
+      res.status(400).json({ error: prepared.error, code: "invalid" });
       return;
     }
     if (typeof clientId !== "string" || clientId.length < 1 || clientId.length > 200) {
@@ -164,15 +173,16 @@ router.post("/:chatId/messages", async (req, res) => {
       `SELECT display_name FROM vm_users WHERE id = $1`, [authUserId],
     );
     const now = Date.now();
-    const inserted = await queryOne<{ id: string; chat_id: string; text: string; type: string; created_at: number }>(
-      `INSERT INTO vm_messages (chat_id, sender_id, client_id, text, type, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
+    const { text: messageText, type: messageType, media: messageMedia } = prepared.message;
+    const inserted = await queryOne<{ id: string; chat_id: string; text: string; type: string; media: unknown; created_at: number }>(
+      `INSERT INTO vm_messages (chat_id, sender_id, client_id, text, type, media, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
        ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
-       RETURNING id, chat_id, text, type, created_at`,
-      [chatId, authUserId, clientId, text, type, now],
+       RETURNING id, chat_id, text, type, media, created_at`,
+      [chatId, authUserId, clientId, messageText, messageType, mediaJsonParam(messageMedia), now],
     );
-    const msg = inserted ?? await queryOne<{ id: string; chat_id: string; text: string; type: string; created_at: number }>(
-      `SELECT id, chat_id, text, type, created_at
+    const msg = inserted ?? await queryOne<{ id: string; chat_id: string; text: string; type: string; media: unknown; created_at: number }>(
+      `SELECT id, chat_id, text, type, media, created_at
          FROM vm_messages WHERE sender_id = $1 AND client_id = $2`,
       [authUserId, clientId],
     );
@@ -185,16 +195,11 @@ router.post("/:chatId/messages", async (req, res) => {
       return;
     }
     const duplicate = !inserted;
-    const outgoing: ServerMessage = {
-      id: msg.id,
-      chatId,
+    const outgoing: ServerMessage = serializedMessageFromRow(msg, {
       senderId: authUserId,
       senderName: sender?.display_name ?? "Unknown",
-      text: msg.text,
-      type: msg.type,
-      createdAt: Number(msg.created_at),
       localId: clientId,
-    };
+    });
     res.json({ message: outgoing });
     if (duplicate) return;
     // The row and canonical response are authoritative. Fanout/moderation is
@@ -209,7 +214,7 @@ router.post("/:chatId/messages", async (req, res) => {
     try {
       const tokens = await pushTokensForChat(chatId, authUserId);
       if (tokens.length > 0) {
-        await sendExpoPush(tokens, sender?.display_name ?? "New message", outgoing.text.length > 80 ? `${outgoing.text.slice(0, 80)}…` : outgoing.text, "default");
+        await sendExpoPush(tokens, sender?.display_name ?? "New message", messagePreview(outgoing.text, outgoing.type), "default");
       }
     } catch { /* push delivery is retryable by reconnect/history */ }
   } catch (err) {
@@ -346,7 +351,19 @@ router.get("/:chatId/messages", async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const before = req.query.before ? Number(req.query.before) : Date.now() + 1000;
 
-    const messages = await query(
+    const messages = await query<{
+      id: string;
+      chatId: string;
+      senderId: string;
+      localId: string | null;
+      text: string;
+      type: string;
+      isEncrypted: boolean;
+      createdAt: string | number;
+      senderName: string | null;
+      senderAvatar: string | null;
+      media: unknown;
+    }>(
       `SELECT
          m.id,
          m.chat_id      AS "chatId",
@@ -354,6 +371,7 @@ router.get("/:chatId/messages", async (req, res) => {
           m.client_id    AS "localId",
          m.text,
          m.type,
+         m.media,
          m.is_encrypted AS "isEncrypted",
          m.created_at   AS "createdAt",
          u.display_name AS "senderName",
@@ -365,7 +383,9 @@ router.get("/:chatId/messages", async (req, res) => {
       [chatId, before, limit]
     );
 
-    res.json({ messages: messages.reverse() });
+    res.json({
+      messages: messages.reverse().map((row) => serializeHistoryMessage(row)),
+    });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });
   }

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { query, queryOne } from "../lib/db";
 import { getAuthUserId } from "../lib/auth";
+import { parseStoredMedia, coerceCreatedAt } from "../lib/message-content";
 
 const router = Router();
 
@@ -19,15 +20,16 @@ router.get("/chats/:chatId/export", async (req, res) => {
     );
     if (!member) { res.status(403).json({ error: "Not a member of this chat" }); return; }
 
-    const messages = await query<{
+    const rows = await query<{
       id: string; senderId: string; senderName: string;
-      text: string; type: string; createdAt: number;
+      text: string; type: string; createdAt: string | number; media: unknown;
     }>(
       `SELECT m.id,
               m.sender_id    AS "senderId",
               u.display_name AS "senderName",
               m.text,
               m.type,
+              m.media,
               m.created_at   AS "createdAt"
          FROM vm_messages m
          LEFT JOIN vm_users u ON u.id = m.sender_id
@@ -35,6 +37,18 @@ router.get("/chats/:chatId/export", async (req, res) => {
         ORDER BY m.created_at ASC`,
       [chatId]
     );
+    const messages = rows.map((row) => {
+      const media = parseStoredMedia(row.media);
+      return {
+        id: row.id,
+        senderId: row.senderId,
+        senderName: row.senderName,
+        text: row.text,
+        type: row.type,
+        createdAt: coerceCreatedAt(row.createdAt),
+        ...(media ? { media } : {}),
+      };
+    });
 
     const chatInfo = await queryOne<{ name: string | null; type: string }>(
       `SELECT name, type FROM vm_chats WHERE id = $1`,

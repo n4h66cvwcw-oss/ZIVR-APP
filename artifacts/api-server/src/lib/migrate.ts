@@ -82,6 +82,13 @@ export async function migrate(): Promise<void> {
       WHERE client_id IS NOT NULL
   `);
 
+  // Inline image payload (data URL). Nullable so existing text rows stay valid.
+  // See message-content.ts for the size cap. No object storage on Render Starter.
+  await query(`
+    ALTER TABLE vm_messages
+    ADD COLUMN IF NOT EXISTS media JSONB
+  `);
+
   await query(`
     CREATE TABLE IF NOT EXISTS vm_scheduled_messages (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

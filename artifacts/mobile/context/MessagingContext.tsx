@@ -37,6 +37,13 @@ import {
   migrateLegacyCheckins,
   shouldMarkCheckinRepliesRead,
 } from "@/utils/checkin-state";
+import { imageMediaFromParts, type ServerImageMedia } from "@/utils/message-outbox";
+import {
+  hasServerMessage,
+  localMessageFromServer,
+  messagePreviewText,
+  reviveCachedMessage,
+} from "@/utils/message-time";
 
 export type AudioAttachment = {
   uri: string;
@@ -54,6 +61,9 @@ export type ImageAttachment = {
   password?: string;
   viewAfter?: number;
   viewedBy?: string[];
+  /** Present only while a server send is being prepared. Never persisted. */
+  base64?: string;
+  mimeType?: string;
 };
 
 export type MessageFormatting = {
@@ -396,6 +406,8 @@ interface MessagingContextValue {
   setActiveChatId: (id: string | null) => void;
   sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
+  /** Pull durable server history, including images, into the open chat. */
+  syncServerChat: (chatId: string) => Promise<void>;
   createDirectChat: (contactId: string) => Promise<string>;
   createServerDirectChat: (serverUser: ServerUser) => Promise<{ chatId: string; approval?: "pending" | "blocked"; error?: string }>;
   createGroupChat: (name: string, participantIds: string[], description?: string) => Promise<string>;
@@ -442,6 +454,14 @@ function genId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
+function imageForLocalCache(image: ImageAttachment): ImageAttachment {
+  if (!image.base64 && !image.mimeType) return image;
+  const cached: ImageAttachment = { ...image };
+  delete cached.base64;
+  delete cached.mimeType;
+  return cached;
+}
+
 function fromServerCheckinGroup(group: ServerCheckInGroup): CheckInGroup {
   return {
     id: group.id,
@@ -482,6 +502,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     serverUserId,
     onNewMessage,
     sendServerMessage,
+    fetchMessages,
     getOrCreateDirectChat,
     onReadReceipt,
     fetchUserChats,
@@ -678,17 +699,11 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       if (seenMessageIds.current.has(msg.id)) return;
       seenMessageIds.current.add(msg.id);
       const chatId = msg.chatId;
-      const newMsg: Message = {
-        id: msg.id,
-        chatId,
-        text: msg.text,
-        senderId: msg.senderId,
-        timestamp: msg.createdAt,
-        read: false,
-      };
+      const newMsg: Message = localMessageFromServer(msg);
+      const preview = messagePreviewText(newMsg);
       setMessages((prev) => {
         const existing = prev[chatId] || [];
-        if (existing.some((m) => m.id === msg.id)) return prev;
+        if (hasServerMessage(existing, msg)) return prev;
         const updated = { ...prev, [chatId]: [...existing, newMsg] };
         AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
         return updated;
@@ -699,7 +714,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           chatId,
           senderId: msg.senderId,
           senderName: msg.senderName,
-          text: msg.text,
+          text: preview || msg.text,
         });
 
         if (!missedNotificationFlushScheduled.current) {
@@ -723,7 +738,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             chatId,
             senderId: msg.senderId,
             senderName: msg.senderName,
-            text: msg.text,
+            text: preview || msg.text,
           }, chat);
           if (request) {
             scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
@@ -742,10 +757,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             type: "direct",
             name: msg.senderName || "Unknown",
             participantIds: [msg.senderId],
-            createdAt: msg.createdAt,
+            createdAt: newMsg.timestamp,
             unreadCount: shouldCount ? 1 : 0,
-            lastMessage: msg.text,
-            lastMessageTime: msg.createdAt,
+            lastMessage: preview,
+            lastMessageTime: newMsg.timestamp,
             isServerChat: true,
           };
           const updated = [placeholder, ...prev];
@@ -756,8 +771,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           c.id === chatId
             ? {
                 ...c,
-                lastMessage: msg.text,
-                lastMessageTime: msg.createdAt,
+                lastMessage: preview,
+                lastMessageTime: newMsg.timestamp,
                 unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
               }
             : c
@@ -1020,6 +1035,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       let finalMsgs: Record<string, Message[]>;
       if (messagesStr) {
         const loadedMsgs: Record<string, Message[]> = JSON.parse(messagesStr);
+        for (const [chatId, list] of Object.entries(loadedMsgs)) {
+          loadedMsgs[chatId] = list.map((item) => reviveCachedMessage(item));
+        }
         if (!loadedMsgs[BETA_CHAT_ID]) {
           loadedMsgs[BETA_CHAT_ID] = [BETA_WELCOME_MSG];
           await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(loadedMsgs));
@@ -1074,14 +1092,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
         const existing = finalMsgs[chatId] || [];
-        const newMsg: Message = {
-          id: msg.id,
-          chatId,
-          text: msg.text,
-          senderId: msg.senderId,
-          timestamp: msg.createdAt,
-          read: false,
-        };
+        if (hasServerMessage(existing, msg)) continue;
+        const newMsg: Message = localMessageFromServer(msg);
         finalMsgs = { ...finalMsgs, [chatId]: [...existing, newMsg] };
         bufferedForChats.push(msg);
         if (delivery === "missed") {
@@ -1089,7 +1101,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             chatId,
             senderId: msg.senderId,
             senderName: msg.senderName,
-            text: msg.text,
+            text: messagePreviewText(newMsg) || msg.text,
           });
         }
       }
@@ -1119,16 +1131,18 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             const isActiveChat = activeChatIdRef.current === chatId;
             const shouldCount = !isOwnMessage && !isActiveChat;
             const chat = updated.find((c) => c.id === chatId);
+            const preview = messagePreviewText(localMessageFromServer(msg));
+            const timestamp = localMessageFromServer(msg).timestamp;
             if (!chat) {
               const placeholder: Chat = {
                 id: chatId,
                 type: "direct",
                 name: msg.senderName || "Unknown",
                 participantIds: [msg.senderId],
-                createdAt: msg.createdAt,
+                createdAt: timestamp,
                 unreadCount: shouldCount ? 1 : 0,
-                lastMessage: msg.text,
-                lastMessageTime: msg.createdAt,
+                lastMessage: preview,
+                lastMessageTime: timestamp,
                 isServerChat: true,
               };
               updated = [placeholder, ...updated];
@@ -1137,8 +1151,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
                 c.id === chatId
                   ? {
                       ...c,
-                      lastMessage: msg.text,
-                      lastMessageTime: msg.createdAt,
+                      lastMessage: preview,
+                      lastMessageTime: timestamp,
                       unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
                     }
                   : c
@@ -1163,17 +1177,11 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         if (seenMessageIds.current.has(msg.id)) continue;
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
-        const newMsg: Message = {
-          id: msg.id,
-          chatId,
-          text: msg.text,
-          senderId: msg.senderId,
-          timestamp: msg.createdAt,
-          read: false,
-        };
+        const newMsg: Message = localMessageFromServer(msg);
+        const preview = messagePreviewText(newMsg);
         setMessages((prev) => {
           const existing = prev[chatId] || [];
-          if (existing.some((m) => m.id === msg.id)) return prev;
+          if (hasServerMessage(existing, msg)) return prev;
           const updated = { ...prev, [chatId]: [...existing, newMsg] };
           AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
           return updated;
@@ -1189,10 +1197,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
               type: "direct",
               name: msg.senderName || "Unknown",
               participantIds: [msg.senderId],
-              createdAt: msg.createdAt,
+              createdAt: newMsg.timestamp,
               unreadCount: shouldCount ? 1 : 0,
-              lastMessage: msg.text,
-              lastMessageTime: msg.createdAt,
+              lastMessage: preview,
+              lastMessageTime: newMsg.timestamp,
               isServerChat: true,
             };
             const updated = [placeholder, ...prev];
@@ -1203,8 +1211,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             c.id === chatId
               ? {
                   ...c,
-                  lastMessage: msg.text,
-                  lastMessageTime: msg.createdAt,
+                  lastMessage: preview,
+                  lastMessageTime: newMsg.timestamp,
                   unreadCount: shouldCount ? (c.unreadCount || 0) + 1 : (c.unreadCount || 0),
                 }
               : c
@@ -1680,6 +1688,30 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           ? encryptMessage(finalText, chat.encryptionKey)
           : finalText;
 
+      let serverMedia: ServerImageMedia | undefined;
+      if (chat?.isServerChat && serverUserId && image) {
+        if (!image.base64 && !image.uri.startsWith("data:image/")) {
+          Alert.alert("Message not delivered", "Could not read that photo. Try choosing it again.");
+          return;
+        }
+        const prepared = imageMediaFromParts({
+          dataUrl: image.uri.startsWith("data:image/") ? image.uri : undefined,
+          base64: image.base64,
+          mimeType: image.mimeType,
+          width: image.width,
+          height: image.height,
+          security: image.security,
+          password: image.password,
+          viewAfter: image.viewAfter,
+        });
+        if (!prepared.ok) {
+          Alert.alert("Message not delivered", prepared.error);
+          return;
+        }
+        serverMedia = prepared.media;
+      }
+
+      const localImage = image ? imageForLocalCache(image) : undefined;
       const msg: Message = {
         id,
         chatId,
@@ -1687,7 +1719,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         senderId: myId,
         timestamp: Date.now(),
         audioAttachment: audio,
-        imageAttachment: image,
+        imageAttachment: localImage,
         musicAttachment: music,
         formatting,
         selfDestruct,
@@ -1701,9 +1733,14 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           : undefined,
       };
 
-      if (chat?.isServerChat && serverUserId) {
+      if (chat?.isServerChat && serverUserId && (finalText.trim() || serverMedia)) {
         sentLocalIds.current.add(id);
-        sendServerMessage(chatId, serverUserId, finalText, id);
+        const result = await sendServerMessage(chatId, serverUserId, finalText, id, serverMedia);
+        if (result && result.ok === false && !result.retryable) {
+          sentLocalIds.current.delete(id);
+          if (!result.suppressed) Alert.alert("Message not delivered", result.error);
+          return;
+        }
       }
 
       const chatMessages = messages[chatId] || [];
@@ -1726,8 +1763,47 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       }
 
     },
-    [chats, messages, myId, contacts, profile.primaryLanguage, translateMessage]
+    [chats, messages, myId, contacts, profile.primaryLanguage, translateMessage, sendServerMessage, serverUserId, saveMessages, saveChats]
   );
+
+  const syncServerChat = useCallback(async (chatId: string) => {
+    if (!fetchMessages) return;
+    const rows = await fetchMessages(chatId);
+    if (!rows.length) return;
+    setMessages((prev) => {
+      const existing = prev[chatId] ?? [];
+      const additions: Message[] = [];
+      for (const row of rows) {
+        if (hasServerMessage(existing, row) || hasServerMessage(additions, row)) {
+          seenMessageIds.current.add(row.id);
+          continue;
+        }
+        seenMessageIds.current.add(row.id);
+        additions.push(localMessageFromServer(row));
+      }
+      if (!additions.length) return prev;
+      const merged = [...existing, ...additions].sort((a, b) => a.timestamp - b.timestamp);
+      const updated = { ...prev, [chatId]: merged };
+      AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+      const newest = merged[merged.length - 1];
+      if (newest) {
+        setChats((prevChats) => {
+          const next = prevChats.map((chat) => {
+            if (chat.id !== chatId) return chat;
+            if ((chat.lastMessageTime ?? 0) >= newest.timestamp) return chat;
+            return {
+              ...chat,
+              lastMessage: messagePreviewText(newest),
+              lastMessageTime: newest.timestamp,
+            };
+          });
+          AsyncStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+      }
+      return updated;
+    });
+  }, [fetchMessages]);
 
   const simulateMemberReplies = useCallback(
     (broadcastId: string, memberIds: string[]) => {
@@ -2237,6 +2313,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setActiveChatId,
       sendMessage,
       markImageViewed,
+      syncServerChat,
       createDirectChat,
       createServerDirectChat,
       createGroupChat,
@@ -2286,6 +2363,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setActiveChatId,
       sendMessage,
       markImageViewed,
+      syncServerChat,
       createDirectChat,
       createServerDirectChat,
       createGroupChat,
