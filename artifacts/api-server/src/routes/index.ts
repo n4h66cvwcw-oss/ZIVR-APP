@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import skinsRouter from "./skins";
+import usersRecoverEmailRouter from "./users-recover-email";
 import usersRouter from "./users";
 import chatsRouter from "./chats";
 import translateRouter from "./translate";
@@ -10,11 +11,16 @@ import parentalRouter from "./parental";
 import scheduledMessagesRouter from "./scheduled-messages";
 import backupRouter from "./backup";
 import checkinsRouter from "./checkins";
+import subProfilesRouter from "./sub-profiles";
+import agentRouter from "./agent";
+import gptActionsRouter from "./gpt-actions";
+import calendarProposalsRouter from "./calendar-proposals";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use("/skins", skinsRouter);
+router.use("/users", usersRecoverEmailRouter);
 router.use("/users", usersRouter);
 router.use("/chats", chatsRouter);
 router.use(translateRouter);
@@ -24,5 +30,9 @@ router.use("/parental", parentalRouter);
 router.use("/scheduled-messages", scheduledMessagesRouter);
 router.use(backupRouter);
 router.use("/checkins", checkinsRouter);
+router.use("/v1/sub-profiles", subProfilesRouter);
+router.use("/v1/agent", agentRouter);
+router.use("/v1/gpt-actions", gptActionsRouter);
+router.use("/v1/calendar/proposals", calendarProposalsRouter);
 
 export default router;

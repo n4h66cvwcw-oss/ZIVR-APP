@@ -22,14 +22,17 @@ interface ChatListItemProps {
   onLongPress?: () => void;
 }
 
-function formatTime(timestamp?: number): string {
-  if (!timestamp) return "";
+function formatTime(timestamp?: number | string): string {
+  const millis = typeof timestamp === "string" && /^\d+$/.test(timestamp.trim())
+    ? Number(timestamp)
+    : timestamp;
+  if (typeof millis !== "number" || !Number.isFinite(millis) || millis <= 0) return "";
   const now = Date.now();
-  const diff = now - timestamp;
+  const diff = now - millis;
   if (diff < 60000) return "now";
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
   if (diff < 86400000) {
-    return new Date(timestamp).toLocaleTimeString([], {
+    return new Date(millis).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -37,7 +40,7 @@ function formatTime(timestamp?: number): string {
   const days = Math.floor(diff / 86400000);
   if (days === 1) return "Yesterday";
   if (days < 7) return `${days}d`;
-  return new Date(timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
+  return new Date(millis).toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 export function ChatListItem({

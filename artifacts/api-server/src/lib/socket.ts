@@ -3,6 +3,7 @@ import { Server as SocketServer, Socket } from "socket.io";
 import { query, queryOne } from "./db";
 import { sendExpoPush } from "./push";
 import { verifyToken } from "./auth";
+import { fanoutEvent, fanoutMessage, pushTokensForChat, startRealtimeBus } from "./realtime-bus";
 import {
   checkDirectContactAllowed,
   checkGroupContactsAllowed,
@@ -10,6 +11,15 @@ import {
   requestApprovalAndNotifyParents,
 } from "./approvals";
 import { shouldNotifyForSeverity } from "./content-alert-preferences";
+import {
+  MAX_MESSAGE_REQUEST_BYTES,
+  mediaJsonParam,
+  messagePreview,
+  prepareOutgoingMessage,
+  serializedMessageFromRow,
+  type MessageMedia,
+} from "./message-content";
+import { deliverSubProfileMessage, noteHumanCiphertext, notifyChatAgents, rejectAgentMemberSend } from "./agent-delivery";
 import Anthropic from "@anthropic-ai/sdk";
 
 let ioInstance: SocketServer | null = null;
@@ -181,6 +191,8 @@ export type ServerMessage = {
   text: string;
   type: string;
   createdAt: number;
+  localId?: string;
+  media?: MessageMedia;
 };
 
 const onlineUsers = new Map<string, string>();
@@ -315,9 +327,12 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
     path: "/api/socket.io",
     cors: { origin: "*", methods: ["GET", "POST"] },
     transports: ["websocket", "polling"],
+    // Default is 1 MiB, which drops an inline image before message:send runs.
+    maxHttpBufferSize: MAX_MESSAGE_REQUEST_BYTES,
   });
 
   ioInstance = io;
+  startRealtimeBus(io);
 
   io.on("connection", (socket: Socket) => {
     let currentUserId: string | null = null;
@@ -339,6 +354,7 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       }
 
       currentUserId = userId;
+      (socket.data as { userId?: string }).userId = userId;
       onlineUsers.set(userId, socket.id);
 
       await query(
@@ -388,14 +404,17 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
             id: string;
             chat_id: string;
             sender_id: string;
+            client_id: string | null;
             sender_name: string;
             text: string;
             type: string;
-            created_at: number;
+            media: unknown;
+            reactions: unknown;
+            created_at: string | number;
           }>(
-            `SELECT m.id, m.chat_id, m.sender_id,
+            `SELECT m.id, m.chat_id, m.sender_id, m.client_id,
                     u.display_name AS sender_name,
-                    m.text, m.type, m.created_at
+                    m.text, m.type, m.media, m.reactions, m.created_at
              FROM vm_messages m
              JOIN vm_users u ON u.id = m.sender_id
              WHERE m.created_at > $1
@@ -406,14 +425,10 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
           if (missed.length > 0) {
             socket.emit("missed_messages", {
-              messages: missed.map((m) => ({
-                id: m.id,
-                chatId: m.chat_id,
+              messages: missed.map((m) => serializedMessageFromRow(m, {
                 senderId: m.sender_id,
                 senderName: m.sender_name,
-                text: m.text,
-                type: m.type,
-                createdAt: m.created_at,
+                localId: m.client_id,
               })),
             });
           }
@@ -502,23 +517,7 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         }
         acknowledge?.({ ok: true, broadcast });
         if (duplicate) return;
-        const members = await query<{ user_id: string }>(
-          `SELECT user_id FROM vm_checkin_group_members WHERE group_id = $1`,
-          [payload.groupId],
-        );
-        for (const member of members) {
-          const visible = member.user_id === currentUserId
-            ? broadcast
-            : (() => {
-              const { progress: _progress, ...withoutProgress } = broadcast;
-              return { ...withoutProgress, replies: {} };
-            })();
-          io.to(`user:${member.user_id}`).emit("checkin:new", visible);
-        }
-        io.to(`user:${currentUserId}`).emit("checkin:progress", {
-          broadcastId: broadcast.id,
-          ...(await checkinProgress(broadcast.id)),
-        });
+        await emitCheckinBroadcastCreated(broadcast.id);
       } catch {
         acknowledge?.({ ok: false, error: "Failed to send check-in broadcast" });
         socket.emit("error", { message: "Failed to send check-in broadcast" });
@@ -633,17 +632,53 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
     socket.on("message:send", async (payload: {
       chatId: string;
-      senderId: string;
-      text: string;
+      text?: string;
       type?: string;
       localId?: string;
-    }) => {
+      media?: unknown;
+      asProfileId?: string;
+    }, acknowledge?: (result: { ok: true; message: ServerMessage } | { ok: false; error: string; status?: string }) => void) => {
       try {
-        const { chatId, senderId, text, type = "text", localId } = payload;
+        const { chatId, text, type = "text", localId, media, asProfileId } = payload;
+        const senderId = currentUserId;
 
-        // senderId must match the authenticated identity of this connection
-        if (!currentUserId || senderId !== currentUserId) {
+        // Sender identity is derived exclusively from the verified handshake
+        // token. Any legacy senderId field is intentionally ignored.
+        if (!senderId) {
+          acknowledge?.({ ok: false, error: "Not authenticated as this sender", status: "auth" });
           socket.emit("error", { message: "Not authenticated as this sender" });
+          return;
+        }
+        if (typeof asProfileId === "string" && asProfileId.length > 0) {
+          const sent = await deliverSubProfileMessage({
+            profileId: asProfileId,
+            actorUserId: senderId,
+            chatId,
+            clientId: localId,
+            text,
+            type,
+            media,
+            mode: "owner_send_as",
+          });
+          if (!sent.ok) {
+            acknowledge?.({ ok: false, error: sent.error, status: sent.code });
+            return;
+          }
+          acknowledge?.({ ok: true, message: sent.message });
+          return;
+        }
+        const agentGate = await rejectAgentMemberSend(senderId);
+        if (!agentGate.ok) {
+          acknowledge?.({ ok: false, error: agentGate.error, status: agentGate.code });
+          return;
+        }
+        const prepared = prepareOutgoingMessage({ text, type, media });
+        if (!prepared.ok) {
+          acknowledge?.({ ok: false, error: prepared.error, status: "invalid" });
+          return;
+        }
+        if (typeof localId !== "string" || localId.length < 1 || localId.length > 200) {
+          acknowledge?.({ ok: false, error: "Invalid client operation id", status: "invalid" });
           return;
         }
 
@@ -651,7 +686,11 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
           `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id = $2`,
           [chatId, senderId]
         );
-        if (!isMember) { socket.emit("error", { message: "Not a member of this chat" }); return; }
+        if (!isMember) {
+          acknowledge?.({ ok: false, error: "Not a member of this chat", status: "not_member" });
+          socket.emit("error", { message: "Not a member of this chat" });
+          return;
+        }
 
         // Contact-approval enforcement for direct chats involving a child:
         // block sends between a child and a contact that isn't parent-approved.
@@ -659,6 +698,10 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
           `SELECT type FROM vm_chats WHERE id = $1`,
           [chatId]
         );
+        if (!chatInfo) {
+          acknowledge?.({ ok: false, error: "Chat not found", status: "not_member" });
+          return;
+        }
         if (chatInfo?.type === "direct") {
           const otherMember = await queryOne<{ user_id: string }>(
             `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id != $2 LIMIT 1`,
@@ -670,11 +713,15 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
               // Auto-create pending approval request(s) and notify parents,
               // same as the chat-creation path (no-op for blocked pairs).
               if (check.status === "pending") {
-                void requestApprovalAndNotifyParents(check.unapprovedPairs);
+                void requestApprovalAndNotifyParents(check.unapprovedPairs).catch(() => {});
               }
+              acknowledge?.({ ok: false, error: check.status === "blocked"
+                ? "This contact has been blocked by a parent."
+                : "Waiting for parent approval before you can chat with this contact.", status: check.status });
               socket.emit("message:blocked", {
                 chatId,
                 localId,
+                senderId,
                 status: check.status,
                 message:
                   check.status === "blocked"
@@ -690,9 +737,11 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
             [chatId]
           );
           if (groupMembers.length > MAX_GROUP_MEMBERS) {
+            acknowledge?.({ ok: false, error: `This group has more than ${MAX_GROUP_MEMBERS} members and can't send messages.`, status: "group_limit" });
             socket.emit("message:blocked", {
               chatId,
               localId,
+              senderId,
               status: "group_limit",
               message: `This group has more than ${MAX_GROUP_MEMBERS} members and can't send messages.`,
             });
@@ -704,10 +753,14 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
             // group was created, and protect groups created before enforcement.
             // The notifier ignores blocked pairs, but can still request other
             // pending approvals when a group also includes a blocked contact.
-            void requestApprovalAndNotifyParents(check.unapprovedPairs);
+            void requestApprovalAndNotifyParents(check.unapprovedPairs).catch(() => {});
+            acknowledge?.({ ok: false, error: check.status === "blocked"
+              ? "This group includes a contact who has been blocked by a parent."
+              : "Waiting for parent approval before messages can be sent in this group.", status: check.status });
             socket.emit("message:blocked", {
               chatId,
               localId,
+            senderId,
               status: check.status,
               message:
                 check.status === "blocked"
@@ -724,52 +777,69 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         );
 
         const now = Date.now();
-        const msg = await queryOne<{ id: string }>(
-          `INSERT INTO vm_messages (chat_id, sender_id, text, type, created_at)
-           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-          [chatId, senderId, text, type, now]
+        const { text: messageText, type: messageType, media: messageMedia } = prepared.message;
+        const inserted = await queryOne<{ id: string; chat_id: string; text: string; type: string; media: unknown; created_at: string | number }>(
+          `INSERT INTO vm_messages (chat_id, sender_id, client_id, text, type, media, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+           ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
+           RETURNING id, chat_id, text, type, media, created_at`,
+          [chatId, senderId, localId, messageText, messageType, mediaJsonParam(messageMedia), now]
         );
+        const msg = inserted ?? (localId
+          ? await queryOne<{ id: string; chat_id: string; text: string; type: string; media: unknown; created_at: string | number }>(
+            `SELECT id, chat_id, text, type, media, created_at
+               FROM vm_messages WHERE sender_id = $1 AND client_id = $2`,
+            [senderId, localId],
+          )
+          : null);
+        if (!msg) {
+          acknowledge?.({ ok: false, error: "Message could not be persisted", status: "unknown" });
+          return;
+        }
+        if (msg.chat_id !== chatId) {
+          acknowledge?.({ ok: false, error: "Client operation id belongs to another chat", status: "invalid" });
+          return;
+        }
+        const duplicate = !inserted;
 
-        await query(
-          `UPDATE vm_chats SET last_message_at = $1 WHERE id = $2`,
-          [now, chatId]
-        );
-
-        const outgoing: ServerMessage = {
-          id: msg!.id,
-          chatId,
+        const outgoing: ServerMessage = serializedMessageFromRow(msg, {
           senderId,
           senderName: sender?.display_name ?? "Unknown",
-          text,
-          type,
-          createdAt: now,
-        };
+          localId,
+        });
 
-        io.to(`chat:${chatId}`).emit("message:new", { ...outgoing, localId });
+        // Canonical persistence precedes the acknowledgement and event. A
+        // duplicate retry only receives the canonical row and never emits or
+        // pushes a second live notification.
+        acknowledge?.({ ok: true, message: outgoing });
+        if (duplicate) return;
+        void noteHumanCiphertext(chatId, messageText);
+        try {
+          await query(
+            `UPDATE vm_chats SET last_message_at = $1 WHERE id = $2`,
+            [now, chatId]
+          );
+        } catch { /* message history remains authoritative */ }
+        // Cross-instance fan-out (Autoscale): chat room + every member's user
+        // room on every instance. Never throws.
+        await fanoutMessage(outgoing);
+        void notifyChatAgents(chatId, outgoing, senderId);
 
         // AI content check for child accounts — fire-and-forget, never blocks delivery
-        if (type === "text") {
-          void checkContentForChild(msg!.id, chatId, senderId, text);
+        if (messageType === "text") {
+          void checkContentForChild(msg!.id, chatId, senderId, messageText);
         }
 
-        const offlineMembers = await query<{ id: string; push_token: string | null }>(
-          `SELECT u.id, u.push_token
-           FROM vm_chat_members cm
-           JOIN vm_users u ON u.id = cm.user_id
-           WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false`,
-          [chatId, senderId]
-        );
+        try {
+          const tokens = await pushTokensForChat(chatId, senderId);
 
-        const tokens = offlineMembers
-          .map((m) => m.push_token)
-          .filter((t): t is string => !!t && t.startsWith("ExponentPushToken"));
-
-        if (tokens.length > 0) {
-          const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
-          await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
-        }
+          if (tokens.length > 0) {
+            await sendExpoPush(tokens, sender?.display_name ?? "New message", messagePreview(outgoing.text, outgoing.type), "default");
+          }
+        } catch { /* push failure cannot invalidate the committed message */ }
       } catch (err) {
         console.error("message:send error", err);
+        acknowledge?.({ ok: false, error: "Failed to send message" });
         socket.emit("error", { message: "Failed to send message" });
       }
     });
@@ -801,7 +871,7 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
           const senderIds = [...new Set(unread.map((m) => m.sender_id))];
           for (const sid of senderIds) {
-            io.to(`user:${sid}`).emit("message:read", {
+            void fanoutEvent([`user:${sid}`], "message:read", {
               chatId,
               readByUserId: userId,
               readAt: now,
@@ -846,6 +916,13 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
     socket.on("disconnect", async () => {
       if (currentUserId) {
+        // Another device/tab of the same user may still be connected here;
+        // only the last local socket marks the user offline.
+        const remaining = await io.in(`user:${currentUserId}`).fetchSockets().catch(() => []);
+        if (remaining.length > 0) {
+          onlineUsers.set(currentUserId, remaining[0]!.id);
+          return;
+        }
         onlineUsers.delete(currentUserId);
         const now = Date.now();
         await query(

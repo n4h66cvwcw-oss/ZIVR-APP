@@ -22,7 +22,9 @@ migrate()
     const httpServer = http.createServer(app);
     attachSocket(httpServer);
     startScheduledMessageDispatcher();
-    httpServer.listen(port, () => {
+    // Bind every interface. Render's health check reaches the service over IPv4
+    // on process.env.PORT; a localhost-only listen would fail that check.
+    httpServer.listen(port, "0.0.0.0", () => {
       logger.info({ port }, "Server listening (HTTP + Socket.io)");
     });
   })

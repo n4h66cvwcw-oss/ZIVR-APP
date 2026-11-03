@@ -24,6 +24,7 @@ import Colors from "@/constants/colors";
 import type { AudioAttachment, ImageAttachment, Message, MessageFormatting, MusicAttachment } from "@/context/MessagingContext";
 import type { SkinTheme } from "@/context/SkinContext";
 import { useRecentClips } from "@/hooks/useRecentClips";
+import { formatMessageTime } from "@/utils/message-time";
 
 interface MessageBubbleProps {
   message: Message;
@@ -1011,10 +1012,7 @@ export function MessageBubble({
     scaleAnim.setValue(0);
   }, [scaleAnim]);
 
-  const time = new Date(message.timestamp).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const time = formatMessageTime(message.timestamp);
 
   const fmt = message.formatting;
   const hasGifBg = !!fmt?.backgroundGifUrl;

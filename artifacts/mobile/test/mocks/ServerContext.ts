@@ -31,7 +31,8 @@ const serverMock = {
     newMessageHandler = handler;
     return () => { newMessageHandler = undefined; };
   },
-  sendServerMessage: async () => undefined,
+  sendServerMessage: async () => ({ ok: true as const }),
+  fetchMessages: async () => [],
   getOrCreateDirectChat: async () => ({ chatId: "chat" }),
   onReadReceipt: subscribe,
   fetchUserChats: asyncEmpty,

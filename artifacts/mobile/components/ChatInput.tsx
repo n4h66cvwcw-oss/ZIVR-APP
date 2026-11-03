@@ -87,6 +87,8 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
   const [attachedAudio, setAttachedAudio] = useState<AudioAttachment | null>(null);
   const [attachedMusic, setAttachedMusic] = useState<MusicAttachment | null>(null);
   const [pendingImageUri, setPendingImageUri] = useState<string | null>(null);
+  const [pendingImageBase64, setPendingImageBase64] = useState<string | null>(null);
+  const [pendingImageMime, setPendingImageMime] = useState<string>("image/jpeg");
   const [pendingImageSize, setPendingImageSize] = useState<{ w?: number; h?: number }>({});
   const [showClipEditor, setShowClipEditor] = useState(false);
   const [showSecurePicture, setShowSecurePicture] = useState(false);
@@ -157,11 +159,17 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: false,
-        quality: 0.85,
+        // Quality under 1 transcodes to JPEG and keeps most photos under the
+        // 2 MiB decoded cap stored in vm_messages.media.
+        quality: 0.4,
+        base64: true,
+        exif: false,
       });
       if (!result.canceled && result.assets.length > 0) {
         const asset = result.assets[0];
         setPendingImageUri(asset.uri);
+        setPendingImageBase64(asset.base64 ?? null);
+        setPendingImageMime(asset.mimeType ?? "image/jpeg");
         setPendingImageSize({ w: asset.width, h: asset.height });
         setShowSecurePicture(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -536,12 +544,22 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
           imageWidth={pendingImageSize.w}
           imageHeight={pendingImageSize.h}
           onSend={(attachment) => {
-            onSend("", undefined, attachment, buildFormatting());
+            const caption = text.trim();
+            onSend(caption, undefined, {
+              ...attachment,
+              ...(pendingImageBase64 ? { base64: pendingImageBase64, mimeType: pendingImageMime } : {}),
+            }, buildFormatting());
+            textLenRef.current = 0;
+            setText("");
+            setInputHeight(INPUT_MIN_HEIGHT);
+            onTextChange?.("");
             setPendingImageUri(null);
+            setPendingImageBase64(null);
             setShowSecurePicture(false);
           }}
           onCancel={() => {
             setPendingImageUri(null);
+            setPendingImageBase64(null);
             setShowSecurePicture(false);
           }}
         />

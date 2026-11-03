@@ -1,0 +1,55 @@
+# Render Blueprint for the ZIVR production API (Express + Socket.IO).
+#
+# Postgres is already provisioned separately as `zivr-db`. This file does not
+# create a database. In the Render dashboard, set DATABASE_URL from zivr-db's
+# Internal Database URL (direct connection, same region as this service).
+# LISTEN/NOTIFY does not cross a connection pooler — do not use a pooled URL.
+# If the app URL is ever a pooler, also set DATABASE_URL_DIRECT to the direct URL.
+#
+# Do not put secret values in this file. SESSION_SECRET must be the same value
+# already used by echo-stream (do not rotate it). SMTP_* come from the existing
+# Migadu mailbox.
+
+services:
+  - type: web
+    name: zivr-api
+    runtime: node
+    plan: starter
+    # One instance: Socket.IO rooms are in-process (no Redis adapter).
+    # The Postgres bus still fans out if this is ever scaled, but production
+    # stays on a single instance.
+    numInstances: 1
+    healthCheckPath: /api/healthz
+    buildCommand: corepack enable && corepack prepare pnpm@10.33.4 --activate && NODE_ENV=development pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server run build
+    startCommand: pnpm --filter @workspace/api-server run start
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Link from the existing zivr-db instance. Internal / direct URL, not a pooler.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_DIRECT
+        sync: false
+      # Copy the existing echo-stream value. Do not generate a new one.
+      - key: SESSION_SECRET
+        sync: false
+      # ChatGPT Actions OAuth. Leave unset to keep /v1/gpt-actions closed.
+      # Codes and refresh tokens are in-process, which matches numInstances: 1.
+      - key: ZIVR_GPT_OAUTH_CLIENT_ID
+        sync: false
+      - key: ZIVR_GPT_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: RECOVER_EMAIL_MIN_RESPONSE_MS
+        sync: false
