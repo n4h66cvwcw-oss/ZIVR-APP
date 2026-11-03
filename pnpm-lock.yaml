@@ -178,6 +178,9 @@ importers:
       '@workspace/db':
         specifier: workspace:*
         version: link:../../lib/db
+      '@workspace/zivr-gpt-actions':
+        specifier: workspace:*
+        version: link:../../connectors/gpt-actions
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
@@ -873,6 +876,15 @@ importers:
       zod:
         specifier: 'catalog:'
         version: 3.25.76
+
+  connectors/gpt-actions:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      typescript:
+        specifier: ~5.9.2
+        version: 5.9.3
 
   lib/api-client-react:
     dependencies:
