@@ -15,6 +15,7 @@ import { randomUUID } from "crypto";
 import { Client } from "pg";
 import type { Server as SocketServer } from "socket.io";
 import { query, queryOne } from "./db";
+import { serializedMessageFromRow, type MessageMedia } from "./message-content";
 
 export const REALTIME_CHANNEL = "zivr_realtime";
 export const INSTANCE_ID = randomUUID();
@@ -47,6 +48,7 @@ export type FanoutMessage = {
   type: string;
   createdAt: number;
   localId?: string;
+  media?: MessageMedia;
 };
 
 let io: SocketServer | null = null;
@@ -123,25 +125,20 @@ async function emitMessageLocally(msg: FanoutMessage): Promise<void> {
 async function hydrateMessage(id: string): Promise<FanoutMessage | null> {
   const row = await queryOne<{
     id: string; chat_id: string; sender_id: string; client_id: string | null;
-    sender_name: string | null; text: string; type: string; created_at: number;
+    sender_name: string | null; text: string; type: string; media: unknown; created_at: string | number;
   }>(
     `SELECT m.id, m.chat_id, m.sender_id, m.client_id, u.display_name AS sender_name,
-            m.text, m.type, m.created_at
+            m.text, m.type, m.media, m.created_at
        FROM vm_messages m JOIN vm_users u ON u.id = m.sender_id
       WHERE m.id = $1`,
     [id],
   );
   if (!row) return null;
-  return {
-    id: row.id,
-    chatId: row.chat_id,
+  return serializedMessageFromRow(row, {
     senderId: row.sender_id,
     senderName: row.sender_name ?? "Unknown",
-    text: row.text,
-    type: row.type,
-    createdAt: Number(row.created_at),
-    localId: row.client_id ?? undefined,
-  };
+    localId: row.client_id,
+  });
 }
 
 async function notify(envelope: Envelope): Promise<void> {

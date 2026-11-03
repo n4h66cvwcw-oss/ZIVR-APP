@@ -47,6 +47,7 @@ export default function ChatScreen() {
     myId,
     getDecryptedMessages,
     sendMessage,
+    syncServerChat,
     markImageViewed,
     editMessage,
     deleteMessage,
@@ -88,6 +89,11 @@ export default function ChatScreen() {
     setActiveChatId(id);
     return () => setActiveChatId(null);
   }, [id]);
+
+  useEffect(() => {
+    if (!id || !chat?.isServerChat) return;
+    void syncServerChat(id);
+  }, [id, chat?.isServerChat, syncServerChat]);
 
   useEffect(() => {
     if (id) {

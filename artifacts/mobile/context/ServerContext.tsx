@@ -20,6 +20,14 @@ import {
   resolveServerIdentity,
   serializeServerIdentity,
 } from "@/utils/server-identity";
+import {
+  outboxStorageKey,
+  removeOutboxEntry,
+  upsertOutboxEntry,
+  type MessageOutboxEntry,
+  type ServerImageMedia,
+} from "@/utils/message-outbox";
+import { coerceEpochMillis } from "@/utils/message-time";
 
 export type ServerUser = {
   id: string;
@@ -49,6 +57,7 @@ export type ServerMessage = {
   type: string;
   createdAt: number;
   localId?: string;
+  media?: ServerImageMedia | null;
 };
 
 export type ServerChat = {
@@ -206,7 +215,13 @@ interface ServerContextValue {
   switchBackToPreviousUser: () => Promise<boolean>;
   createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<GroupChatResult>;
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
-  sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
+  sendServerMessage: (
+    chatId: string,
+    senderId: string,
+    text: string,
+    localId?: string,
+    media?: ServerImageMedia,
+  ) => Promise<{ ok: true } | { ok: false; error: string; retryable: boolean; suppressed?: boolean }>;
   listScheduledMessages: () => Promise<ScheduledMessage[]>;
   createScheduledMessage: (input: { chatId: string; text: string; scheduledFor: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
   updateScheduledMessage: (id: string, input: { text?: string; scheduledFor?: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
@@ -300,6 +315,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const checkinReplyHandlers = useRef<Set<CheckinReplyHandler>>(new Set());
   const checkinProgressHandlers = useRef<Set<CheckinProgressHandler>>(new Set());
   const authTokenRef = useRef<string | null>(null);
+  const outboxRef = useRef<MessageOutboxEntry[]>([]);
+  const flushOutboxRef = useRef<() => Promise<void>>(async () => {});
   // Tracks when the socket last disconnected so we can request missed messages on rejoin
   const disconnectTimeRef = useRef<number | null>(null);
   const serverUserIdRef = useRef<string | null>(null);
@@ -420,6 +437,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       const since = disconnectTimeRef.current ?? undefined;
       socket.emit("user:join", since ? { userId, since } : userId);
       disconnectTimeRef.current = null;
+      void flushOutboxRef.current();
     });
 
     socket.on("disconnect", () => {
@@ -766,7 +784,10 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         const res = await fetch(url, { headers: await getAuthHeaders() });
         if (!res.ok) return [];
         const data = await res.json() as { messages: ServerMessage[] };
-        return data.messages ?? [];
+        return (data.messages ?? []).map((message) => {
+          const createdAt = coerceEpochMillis(message.createdAt);
+          return { ...message, createdAt: Number.isFinite(createdAt) ? createdAt : 0 };
+        });
       } catch {
         return [];
       }
@@ -774,13 +795,135 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const persistOutbox = useCallback((ownerUserId: string, entries: MessageOutboxEntry[]) => {
+    outboxRef.current = entries;
+    AsyncStorage.setItem(outboxStorageKey(ownerUserId), JSON.stringify(entries)).catch(() => {});
+  }, []);
+
+  const postOutboxEntry = useCallback(async (entry: MessageOutboxEntry) => {
+    const res = await fetch(`${getApiBase()}/chats/${entry.chatId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+      body: JSON.stringify({
+        text: entry.text,
+        type: entry.media ? "image" : "text",
+        clientId: entry.localId,
+        ...(entry.media ? { media: entry.media } : {}),
+      }),
+    });
+    const data = await res.json().catch(() => ({})) as { error?: string; code?: string; approval?: string };
+    if (res.ok) return { ok: true as const };
+    const status = data.code || data.approval || "";
+    return {
+      ok: false as const,
+      error: data.error ?? "Message not delivered",
+      retryable: res.status >= 500,
+      suppressed: status === "blocked" || status === "pending" || status === "group_limit",
+    };
+  }, []);
+
+  const deliverOutboxEntry = useCallback(async (entry: MessageOutboxEntry) => {
+    const payload = {
+      chatId: entry.chatId,
+      senderId: entry.ownerUserId,
+      text: entry.text,
+      type: entry.media ? "image" : "text",
+      localId: entry.localId,
+      ...(entry.media ? { media: entry.media } : {}),
+    };
+    const socket = socketRef.current;
+    if (socket?.connected) {
+      const acked = await new Promise<{ ok: boolean; error?: string; status?: string } | null>((resolve) => {
+        let settled = false;
+        const finish = (value: { ok: boolean; error?: string; status?: string } | null) => {
+          if (settled) return;
+          settled = true;
+          resolve(value);
+        };
+        socket.timeout(20000).emit("message:send", payload, (err: unknown, result?: { ok: boolean; error?: string; status?: string }) => {
+          if (err || !result) finish(null);
+          else finish(result);
+        });
+      });
+      if (acked?.ok) {
+        persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
+        return { ok: true as const };
+      }
+      const terminal = acked?.status != null && ["invalid", "auth", "not_member", "blocked", "pending", "group_limit"].includes(acked.status);
+      if (acked && acked.ok === false && terminal) {
+        persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
+        return {
+          ok: false as const,
+          error: acked.error ?? "Message not delivered",
+          retryable: false,
+          suppressed: acked.status === "blocked" || acked.status === "pending" || acked.status === "group_limit",
+        };
+      }
+    }
+    try {
+      const posted = await postOutboxEntry(entry);
+      if (posted.ok || !posted.retryable) {
+        persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
+      }
+      return posted;
+    } catch {
+      return { ok: false as const, error: "Message not delivered", retryable: true };
+    }
+  }, [persistOutbox, postOutboxEntry]);
+
+  const flushOutbox = useCallback(async () => {
+    const ownerUserId = serverUserIdRef.current;
+    if (!ownerUserId) return;
+    const pending = outboxRef.current.filter((entry) => entry.ownerUserId === ownerUserId);
+    for (const entry of pending) {
+      await deliverOutboxEntry(entry);
+    }
+  }, [deliverOutboxEntry]);
+  flushOutboxRef.current = flushOutbox;
+
   const sendServerMessage = useCallback(
-    (chatId: string, senderId: string, text: string, localId?: string) => {
-      if (!socketRef.current?.connected) return;
-      socketRef.current.emit("message:send", { chatId, senderId, text, type: "text", localId });
+    async (
+      chatId: string,
+      senderId: string,
+      text: string,
+      localId?: string,
+      media?: ServerImageMedia,
+    ) => {
+      if (!localId) {
+        if (!socketRef.current?.connected) {
+          return { ok: false as const, error: "Message not delivered", retryable: true };
+        }
+        socketRef.current.emit("message:send", { chatId, senderId, text, type: media ? "image" : "text", media });
+        return { ok: true as const };
+      }
+      const entry: MessageOutboxEntry = { chatId, text, localId, ownerUserId: senderId, ...(media ? { media } : {}) };
+      persistOutbox(senderId, upsertOutboxEntry(outboxRef.current, entry));
+      return deliverOutboxEntry(entry);
     },
-    []
+    [deliverOutboxEntry, persistOutbox],
   );
+
+  useEffect(() => {
+    if (!serverUserId) {
+      outboxRef.current = [];
+      return;
+    }
+    let cancelled = false;
+    AsyncStorage.getItem(outboxStorageKey(serverUserId)).then((raw) => {
+      if (cancelled || !raw) return;
+      try {
+        const parsed = JSON.parse(raw) as MessageOutboxEntry[];
+        if (!Array.isArray(parsed)) return;
+        outboxRef.current = parsed.filter((entry) => entry?.ownerUserId === serverUserId && entry.chatId && entry.localId);
+        void flushOutboxRef.current();
+      } catch {
+        // A corrupt queue must not block new sends.
+      }
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [serverUserId]);
 
   const scheduledRequest = useCallback(async <T,>(
     path: string,

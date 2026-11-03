@@ -12,6 +12,7 @@
     "test:contacts": "node --experimental-strip-types --test utils/contact-sync.test.ts utils/invite-picker.test.ts",
     "test:time-lock": "node --experimental-strip-types --test utils/time-lock-gate.test.ts",
     "test:checkins": "node --experimental-strip-types --test utils/checkin-state.test.ts",
+    "test:messages": "node --experimental-strip-types --test utils/message-delivery.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/patch-expo-cli.js"
   },
