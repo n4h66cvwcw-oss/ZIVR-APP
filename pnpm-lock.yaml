@@ -877,7 +877,42 @@ importers:
         specifier: 'catalog:'
         version: 3.25.76
 
+  connectors/agent-client:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      typescript:
+        specifier: ~5.9.2
+        version: 5.9.3
+
+  connectors/gemini:
+    dependencies:
+      '@workspace/zivr-agent-client':
+        specifier: workspace:*
+        version: link:../agent-client
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      typescript:
+        specifier: ~5.9.2
+        version: 5.9.3
+
   connectors/gpt-actions:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      typescript:
+        specifier: ~5.9.2
+        version: 5.9.3
+
+  connectors/perplexity:
+    dependencies:
+      '@workspace/zivr-agent-client':
+        specifier: workspace:*
+        version: link:../agent-client
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
