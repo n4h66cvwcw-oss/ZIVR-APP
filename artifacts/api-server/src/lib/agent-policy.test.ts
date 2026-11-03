@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AGENT_FIND_EXCLUSION } from "./user-find.ts";
 import {
+  agentMayMessagePeer,
   calendarProposeEnabled,
   canDecideProposal,
   chatAllowsAgent,
   nextProposalStatus,
   ownerMayCreateSubProfile,
+  ownerMayIncludeOwnAgents,
   proposalDecisionText,
   proposalSummary,
   rateLimitDecision,
@@ -159,6 +161,30 @@ test("rate limits use the v1 caps", () => {
     isMedia: false,
     now,
   }).ok, true);
+});
+
+test("same-owner agents may message each other and strangers may not", () => {
+  const claude = {
+    id: owner,
+    accountType: "agent",
+    ownerUserId: "owner-1",
+    profileMode: "agent" as const,
+    agentStatus: "active" as const,
+  };
+  const axe = { ...claude, id: admin };
+  assert.equal(agentMayMessagePeer(claude, axe).ok, true);
+  const stranger = { ...axe, ownerUserId: "owner-2" };
+  const cold = agentMayMessagePeer(claude, stranger);
+  assert.equal(cold.ok, false);
+  if (!cold.ok) assert.equal(cold.code, "cold_dm");
+  const persona = { ...axe, profileMode: "persona" as const };
+  assert.equal(agentMayMessagePeer(claude, persona).ok, false);
+  assert.equal(ownerMayIncludeOwnAgents(owner, { accountType: "parent", supervised: false }, [
+    { ownerUserId: owner, profileMode: "agent", agentStatus: "active" },
+  ]).ok, true);
+  assert.equal(ownerMayIncludeOwnAgents(owner, { accountType: "parent", supervised: false }, [
+    { ownerUserId: admin, profileMode: "agent", agentStatus: "active" },
+  ]).ok, false);
 });
 
 test("public find queries exclude agent accounts", () => {

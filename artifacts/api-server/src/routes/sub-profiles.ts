@@ -4,6 +4,7 @@ import { sendFailure } from "../lib/agent-http";
 import {
   addAgentToChat,
   clearWebhook,
+  openOwnerAgentDirect,
   createSubProfile,
   deleteSubProfile,
   deliverSubProfileMessage,
@@ -137,6 +138,20 @@ router.delete("/:id/webhook", async (req, res) => {
     const result = await clearWebhook(userId, req.params.id);
     if (!result.ok) { sendFailure(res, result); return; }
     res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
+router.post("/:id/direct", async (req, res) => {
+  try {
+    const userId = ownerId(req);
+    if (!userId) { sendFailure(res, { ok: false, status: 401, error: "Invalid or missing auth token", code: "auth" }); return; }
+    const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+    const peerId = typeof body["peerId"] === "string" ? body["peerId"] : "";
+    const result = await openOwnerAgentDirect(userId, req.params.id, peerId);
+    if (!result.ok) { sendFailure(res, result); return; }
+    res.status(result.existed ? 200 : 201).json({ chatId: result.chatId, existed: result.existed });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });
   }

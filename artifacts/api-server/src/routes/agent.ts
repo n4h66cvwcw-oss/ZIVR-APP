@@ -9,6 +9,7 @@ import {
   getProposalForAgent,
   listAgentChats,
   listAgentEvents,
+  openSameOwnerAgentDirect,
   requireAgent,
 } from "../lib/agent-delivery";
 
@@ -55,10 +56,16 @@ router.post("/messages", async (req, res) => {
       sendFailure(res, { ok: false, status: 403, error: "Missing scope media:send", code: "scope" });
       return;
     }
+    let chatId = typeof body["chatId"] === "string" ? body["chatId"] : "";
+    if (!chatId && typeof body["peerId"] === "string") {
+      const opened = await openSameOwnerAgentDirect(auth.actor.id, body["peerId"]);
+      if (!opened.ok) { sendFailure(res, opened); return; }
+      chatId = opened.chatId;
+    }
     const result = await deliverSubProfileMessage({
       profileId: auth.actor.id,
       actorUserId: auth.actor.id,
-      chatId: typeof body["chatId"] === "string" ? body["chatId"] : "",
+      chatId,
       clientId: body["clientId"],
       text: body["text"],
       type: body["type"],

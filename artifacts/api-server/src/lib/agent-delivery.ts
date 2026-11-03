@@ -10,6 +10,7 @@ import {
   type SerializedMessage,
 } from "./message-content";
 import {
+  agentMayMessagePeer,
   assistantLabel,
   calendarProposeEnabled,
   canDecideProposal,
@@ -19,6 +20,7 @@ import {
   MAX_AGENTS_PER_OWNER,
   nextProposalStatus,
   ownerMayCreateSubProfile,
+  ownerMayIncludeOwnAgents,
   parseAvatar,
   parseClientId,
   parseDisplayName,
@@ -640,6 +642,12 @@ export async function noteHumanCiphertext(chatId: string, text: string): Promise
   }
 }
 
+/**
+ * Posts message.created to every other active agent's webhook in the chat.
+ * Same-owner agent DMs use this too, so a connector learns about replies and
+ * file/image attachments without a separate bridge. The serialized message
+ * includes media when one was stored.
+ */
 export async function notifyChatAgents(chatId: string, message: SerializedMessage, senderId: string): Promise<void> {
   try {
     const hooks = await query<{ id: string; webhook_url: string; secret_sealed: string }>(
@@ -1184,6 +1192,71 @@ export async function respondToCalendarProposal(input: {
   return { ok: true, proposal: toPublicProposal(updated), role: allowed.role, calendarWrite, todo, idempotent: false };
 }
 
+async function ensureAgentDirect(
+  left: Actor,
+  right: Actor,
+  createdBy: string,
+): Promise<{ ok: true; chatId: string; existed: boolean } | Gate> {
+  const allowed = agentMayMessagePeer(left, right);
+  if (!allowed.ok) return allowed;
+  const existing = await queryOne<{ id: string }>(
+    `SELECT c.id FROM vm_chats c
+       JOIN vm_chat_members m1 ON m1.chat_id = c.id AND m1.user_id = $1
+       JOIN vm_chat_members m2 ON m2.chat_id = c.id AND m2.user_id = $2
+      WHERE c.type = 'direct'
+      LIMIT 1`,
+    [left.id, right.id],
+  );
+  if (existing) {
+    const chat = await loadChatGate(existing.id);
+    if (!chat) return fail(404, "Chat not found", "not_found");
+    const blocked = chatAllowsAgent(chat);
+    if (!blocked.ok) return blocked;
+    return { ok: true, chatId: existing.id, existed: true };
+  }
+  const created = await queryOne<{ id: string }>(
+    `INSERT INTO vm_chats (type, created_by) VALUES ('direct', $1) RETURNING id`,
+    [createdBy],
+  );
+  if (!created) return fail(500, "Could not open the agent chat", "error");
+  await query(
+    `INSERT INTO vm_chat_members (chat_id, user_id) VALUES ($1, $2), ($1, $3)`,
+    [created.id, left.id, right.id],
+  );
+  await audit(left.id, "chat.direct", created.id, { peerId: right.id });
+  return { ok: true, chatId: created.id, existed: false };
+}
+
+/** Owner opens (or reuses) a DM between two of their Agent-mode profiles. */
+export async function openOwnerAgentDirect(
+  callerId: string,
+  agentId: string,
+  peerId: string,
+): Promise<{ ok: true; chatId: string; existed: boolean } | Gate> {
+  if (!parseUuid(agentId) || !parseUuid(peerId)) return fail(400, "Invalid id", "invalid");
+  const caller = await loadActor(callerId);
+  if (!caller) return fail(401, "Invalid or missing auth token", "auth");
+  const callerGate = ownerMayCreateSubProfile(caller);
+  if (!callerGate.ok) return callerGate;
+  const [left, right] = await Promise.all([loadActor(agentId), loadActor(peerId)]);
+  if (!left || !right || left.ownerUserId !== callerId || right.ownerUserId !== callerId) {
+    return fail(404, "Sub-profile not found", "not_found");
+  }
+  return ensureAgentDirect(left, right, callerId);
+}
+
+/** Agent opens (or reuses) a DM with another agent that shares its owner. */
+export async function openSameOwnerAgentDirect(
+  agentId: string,
+  peerId: string,
+): Promise<{ ok: true; chatId: string; existed: boolean } | Gate> {
+  if (!parseUuid(peerId)) return fail(400, "Invalid peer id", "invalid");
+  const [left, right] = await Promise.all([loadActor(agentId), loadActor(peerId)]);
+  if (!left?.ownerUserId) return fail(404, "Sub-profile not found", "not_found");
+  if (!right) return fail(404, "Agent not found", "not_found");
+  return ensureAgentDirect(left, right, left.ownerUserId);
+}
+
 export async function assertHumanCanOpenDirect(myUserId: string, theirUserId: string): Promise<Gate | { ok: true }> {
   const [me, them] = await Promise.all([loadActor(myUserId), loadActor(theirUserId)]);
   if (me?.accountType === "agent") return fail(403, "Agents cannot start chats", "agent_cannot_start");
@@ -1201,14 +1274,26 @@ export async function assertGroupHasNoAgents(creatorId: string, memberIds: strin
   const creator = await loadActor(creatorId);
   if (creator?.accountType === "agent") return fail(403, "Agents cannot start chats", "agent_cannot_start");
   if (memberIds.length === 0) return { ok: true };
-  const rows = await query<{ id: string }>(
-    `SELECT id FROM vm_users WHERE id = ANY($1::uuid[]) AND account_type = 'agent'`,
+  const rows = await query<{
+    owner_user_id: string | null;
+    profile_mode: string | null;
+    agent_status: string | null;
+  }>(
+    `SELECT owner_user_id, profile_mode, agent_status
+       FROM vm_users
+      WHERE id = ANY($1::uuid[]) AND account_type = 'agent'`,
     [memberIds],
   );
-  if (rows.length > 0) {
-    return fail(403, "Add an agent with the sub-profile chat endpoint", "agent_membership");
-  }
-  return { ok: true };
+  return ownerMayIncludeOwnAgents(creatorId, {
+    accountType: creator?.accountType ?? null,
+    supervised: creator?.supervised === true,
+  }, rows.map((row) => ({
+    ownerUserId: row.owner_user_id,
+    profileMode: row.profile_mode === "persona" || row.profile_mode === "agent" ? row.profile_mode : null,
+    agentStatus: row.agent_status === "active" || row.agent_status === "paused" || row.agent_status === "revoked"
+      ? row.agent_status
+      : null,
+  })));
 }
 
 export async function rejectAgentMemberSend(userId: string): Promise<Gate | { ok: true }> {

@@ -150,6 +150,58 @@ export function ownerMayCreateSubProfile(owner: {
   return { ok: true };
 }
 
+/**
+ * Agent-to-agent rule: two Agent-mode profiles may DM or share a thread when
+ * they have the same owner_user_id, or when an owner/admin already added them
+ * to a chat. A different owner's agent is a cold DM and stays blocked.
+ * Persona profiles, paused profiles, kids, and E2E chats stay blocked.
+ */
+export type AgentPeerIdentity = {
+  id: string;
+  accountType: string | null;
+  ownerUserId: string | null;
+  profileMode: "persona" | "agent" | null;
+  agentStatus: "active" | "paused" | "revoked" | null;
+};
+
+export function agentMayMessagePeer(self: AgentPeerIdentity, peer: AgentPeerIdentity): Gate | { ok: true } {
+  if (self.id === peer.id) return deny(400, "Choose a different agent", "invalid");
+  if (self.accountType !== "agent" || peer.accountType !== "agent") {
+    return deny(403, "Only agent profiles can open an agent-to-agent chat", "forbidden");
+  }
+  if (self.profileMode !== "agent" || peer.profileMode !== "agent") {
+    return deny(403, "Persona profiles cannot open agent-to-agent chats", "persona");
+  }
+  if (self.agentStatus !== "active" || peer.agentStatus !== "active") {
+    return deny(403, "Both agents must be active", "paused");
+  }
+  if (!self.ownerUserId || self.ownerUserId !== peer.ownerUserId) {
+    return deny(403, "Agents cannot start a chat with another owner's agent", "cold_dm");
+  }
+  return { ok: true };
+}
+
+export function ownerMayIncludeOwnAgents(
+  creatorId: string,
+  creator: { accountType: string | null; supervised: boolean },
+  agents: Array<Pick<AgentPeerIdentity, "ownerUserId" | "profileMode" | "agentStatus">>,
+): Gate | { ok: true } {
+  if (agents.length === 0) return { ok: true };
+  if (creator.accountType === "agent") return deny(403, "Agents cannot start chats", "agent_cannot_start");
+  if (creator.accountType === "child" || creator.supervised) {
+    return deny(403, "Supervised accounts cannot create or assign agents", "kids");
+  }
+  for (const agent of agents) {
+    if (agent.profileMode !== "agent" || agent.agentStatus !== "active") {
+      return deny(403, "This profile cannot be added to a chat", "agent_unavailable");
+    }
+    if (agent.ownerUserId !== creatorId) {
+      return deny(403, "Add another owner's agent with the sub-profile chat endpoint", "agent_membership");
+    }
+  }
+  return { ok: true };
+}
+
 export function chatAllowsAgent(chat: {
   isE2e: boolean;
   hasE2eMessage: boolean;

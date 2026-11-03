@@ -20,6 +20,8 @@ let signToken: typeof import("../lib/auth.ts").signToken;
 const userIds: string[] = [];
 
 const TINY_PDF = "data:application/pdf;base64,JVBERi0xLjEKJcKlwrE=";
+const TINY_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
 async function createUser(label: string, accountType = "standard") {
   const uniqueName = `${runId}-${label}-${crypto.randomUUID().slice(0, 4)}`;
@@ -169,9 +171,9 @@ test("sub-profiles, agent send, and calendar yes/no", async () => {
 
   const group = await api("POST", "/api/chats/group", {
     token: ownerToken,
-    body: { myUserId: owner.id, name: "nope", memberIds: [personaId, friend.id] },
+    body: { myUserId: owner.id, name: "Own agents", memberIds: [personaId, friend.id] },
   });
-  assert.equal(group.status, 403);
+  assert.equal(group.status, 200);
 
   const added = await api("POST", `/api/v1/sub-profiles/${personaId}/chats/${chatId}`, { token: ownerToken });
   assert.equal(added.status, 200);
@@ -320,6 +322,113 @@ test("sub-profiles, agent send, and calendar yes/no", async () => {
   assert.equal(busy.status, 200);
   assert.equal((busy.json as { stub?: boolean }).stub, true);
   assert.deepEqual((busy.json as { busy: unknown[] }).busy, []);
+
+  const axe = await api("POST", "/api/v1/sub-profiles", {
+    token: ownerToken,
+    body: { displayName: "AXE twin", profileMode: "agent", provider: "custom" },
+  });
+  assert.equal(axe.status, 201);
+  const axeId = (axe.json as { subProfile: { id: string } }).subProfile.id;
+  userIds.push(axeId);
+  const dm = await api("POST", `/api/v1/sub-profiles/${personaId}/direct`, {
+    token: ownerToken,
+    body: { peerId: axeId },
+  });
+  assert.equal(dm.status, 201);
+  const dmId = (dm.json as { chatId: string }).chatId;
+  const fileToAxe = await api("POST", "/api/v1/agent/messages", {
+    bearer: accessToken,
+    body: {
+      chatId: dmId,
+      text: "spec",
+      clientId: `dm-file-${runId}`,
+      media: { kind: "file", dataUrl: TINY_PDF, fileName: "spec.pdf" },
+    },
+  });
+  assert.equal(fileToAxe.status, 200);
+  assert.equal((fileToAxe.json as { message: { type: string } }).message.type, "file");
+
+  const axeKey = await api("POST", `/api/v1/sub-profiles/${axeId}/keys`, { token: ownerToken, body: {} });
+  assert.equal(axeKey.status, 201);
+  const axeToken = await api("POST", "/api/v1/agent/token", {
+    body: { apiKey: (axeKey.json as { key: string }).key },
+  });
+  assert.equal(axeToken.status, 200);
+  const axeAccess = (axeToken.json as { accessToken: string }).accessToken;
+
+  const received: string[] = [];
+  const hookServer = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      received.push(Buffer.concat(chunks).toString("utf8"));
+      res.writeHead(204);
+      res.end();
+    });
+  });
+  await new Promise<void>((resolve) => hookServer.listen(0, "127.0.0.1", resolve));
+  const hookAddress = hookServer.address();
+  assert.ok(hookAddress && typeof hookAddress === "object");
+  try {
+    const hooked = await api("PUT", `/api/v1/sub-profiles/${personaId}/webhook`, {
+      token: ownerToken,
+      body: { url: `http://127.0.0.1:${hookAddress.port}/hook` },
+    });
+    assert.equal(hooked.status, 200);
+    const reply = await api("POST", "/api/v1/agent/messages", {
+      bearer: axeAccess,
+      body: {
+        peerId: personaId,
+        text: "",
+        clientId: `dm-img-${runId}`,
+        media: { kind: "image", mimeType: "image/png", dataUrl: TINY_PNG, security: "none" },
+      },
+    });
+    assert.equal(reply.status, 200);
+    assert.equal((reply.json as { message: { chatId: string; type: string } }).message.chatId, dmId);
+    assert.equal((reply.json as { message: { type: string } }).message.type, "image");
+    const started = Date.now();
+    while (received.length === 0 && Date.now() - started < 2000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(received.length > 0, true);
+    const payload = JSON.parse(received[0] ?? "{}") as {
+      type?: string;
+      message?: { type?: string; media?: { kind?: string } };
+    };
+    assert.equal(payload.type, "message.created");
+    assert.equal(payload.message?.type, "image");
+    assert.equal(payload.message?.media?.kind, "image");
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      hookServer.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+
+  const claudeEvents = await api("GET", `/api/v1/agent/events?since=0`, { bearer: accessToken });
+  const claudeMessages = (claudeEvents.json as { events: Array<{ message: { chatId: string; type: string } }> }).events;
+  assert.equal(claudeMessages.some((event) => event.message.chatId === dmId && event.message.type === "image"), true);
+
+  const other = await createUser("other-owner");
+  const foreign = await api("POST", "/api/v1/sub-profiles", {
+    token: signToken(other.id),
+    body: { displayName: "Other bot", profileMode: "agent" },
+  });
+  assert.equal(foreign.status, 201);
+  const foreignId = (foreign.json as { subProfile: { id: string } }).subProfile.id;
+  userIds.push(foreignId);
+  const coldPeer = await api("POST", "/api/v1/agent/messages", {
+    bearer: accessToken,
+    body: { peerId: foreignId, text: "hello stranger", clientId: `cold-peer-${runId}` },
+  });
+  assert.equal(coldPeer.status, 403);
+  assert.equal((coldPeer.json as { code?: string }).code, "cold_dm");
+  const foreignGroup = await api("POST", "/api/chats/group", {
+    token: ownerToken,
+    body: { myUserId: owner.id, name: "Foreign", memberIds: [foreignId] },
+  });
+  assert.equal(foreignGroup.status, 403);
+  assert.equal((foreignGroup.json as { code?: string }).code, "agent_membership");
 
   const hook = await api("PUT", `/api/v1/sub-profiles/${personaId}/webhook`, {
     token: ownerToken,
