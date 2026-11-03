@@ -3,11 +3,13 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const output = path.join(root, "node_modules", ".cache", "zivr-messaging-provider-notification-test.cjs");
+const entryArg = process.argv[2] || "context/MessagingContext.notifications.test.tsx";
+const entry = path.resolve(root, entryArg);
+const output = path.join(root, "node_modules", ".cache", `zivr-${path.basename(entry, path.extname(entry))}.cjs`);
 const mocks = path.join(root, "test", "mocks");
 
 build({
-  entryPoints: [path.join(root, "context", "MessagingContext.notifications.test.tsx")],
+  entryPoints: [entry],
   outfile: output,
   bundle: true,
   platform: "node",
