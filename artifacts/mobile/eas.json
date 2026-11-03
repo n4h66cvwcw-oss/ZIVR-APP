@@ -16,11 +16,13 @@
     },
     "preview": {
       "distribution": "internal",
+      "channel": "preview",
       "ios": {
         "simulator": false
       },
       "env": {
-        "APP_ENV": "preview"
+        "APP_ENV": "preview",
+        "EXPO_PUBLIC_DOMAIN": "api.zivrapp.com"
       }
     },
     "production": {
@@ -28,33 +30,24 @@
       "distribution": "store",
       "channel": "production",
       "env": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "EXPO_PUBLIC_DOMAIN": "api.zivrapp.com"
       },
       "ios": {
         "resourceClass": "m-medium"
       },
       "android": {
         "buildType": "apk"
-      }
-    },
-    "preview": {
-      "distribution": "internal",
-      "channel": "preview",
-      "ios": {
-        "simulator": false
       },
-      "env": {
-        "APP_ENV": "preview"
-      }
+      "credentialsSource": "local"
     }
   },
   "submit": {
     "production": {
       "ios": {
         "language": "en-US",
-        "appleId": "$APPLE_ID",
-        "ascAppId": "$ASC_APP_ID",
-        "appleTeamId": "$APPLE_TEAM_ID"
+        "ascAppId": "6766365453",
+        "appleTeamId": "BXS9C2R675"
       },
       "android": {
         "serviceAccountKeyPath": "./google-play-key.json",

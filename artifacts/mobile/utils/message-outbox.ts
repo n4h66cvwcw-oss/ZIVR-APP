@@ -56,6 +56,27 @@ export function removeOutboxEntry(
   return entries.filter((item) => item.ownerUserId !== ownerUserId || item.localId !== localId);
 }
 
+/** Socket `message:send` body. Image-only sends keep an empty caption and `media`. */
+export function socketMessagePayload(entry: Pick<MessageOutboxEntry, "chatId" | "text" | "localId" | "media">) {
+  return {
+    chatId: entry.chatId,
+    text: entry.text,
+    type: entry.media ? "image" as const : "text" as const,
+    localId: entry.localId,
+    ...(entry.media ? { media: entry.media } : {}),
+  };
+}
+
+/** REST POST /chats/:id/messages body. Same media data URL as the socket payload. */
+export function restMessageBody(entry: Pick<MessageOutboxEntry, "text" | "localId" | "media">) {
+  return {
+    text: entry.text,
+    type: entry.media ? "image" as const : "text" as const,
+    clientId: entry.localId,
+    ...(entry.media ? { media: entry.media } : {}),
+  };
+}
+
 function normalizeMime(mime: string): ServerImageMedia["mimeType"] | null {
   const lowered = mime.toLowerCase() === "image/jpg" ? "image/jpeg" : mime.toLowerCase();
   if (!MIME_TYPES.has(lowered)) return null;

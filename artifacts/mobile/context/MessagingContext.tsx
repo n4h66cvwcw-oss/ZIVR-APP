@@ -22,6 +22,7 @@ import {
   generateEncryptionKey,
 } from "@/utils/crypto";
 import { Alert } from "react-native";
+import { router } from "expo-router";
 import {
   useServer,
   type MessageDelivery,
@@ -1738,7 +1739,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         const result = await sendServerMessage(chatId, serverUserId, finalText, id, serverMedia);
         if (result && result.ok === false && !result.retryable) {
           sentLocalIds.current.delete(id);
-          if (!result.suppressed) Alert.alert("Message not delivered", result.error);
+          if (!result.suppressed) {
+            if (result.code === "auth") {
+              Alert.alert("Session needs recovery", result.error, [
+                { text: "Cancel", style: "cancel" },
+                { text: "Recover", onPress: () => router.push("/onboarding?recover=1" as never) },
+              ]);
+            } else {
+              Alert.alert("Message not delivered", result.error);
+            }
+          }
           return;
         }
       }

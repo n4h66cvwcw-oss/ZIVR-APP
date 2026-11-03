@@ -8,6 +8,8 @@ import {
 import {
   imageMediaFromParts,
   removeOutboxEntry,
+  restMessageBody,
+  socketMessagePayload,
   upsertOutboxEntry,
   type MessageOutboxEntry,
 } from "./message-outbox.ts";
@@ -52,6 +54,26 @@ test("outbox entries keep image media with the text fields", () => {
   assert.equal(queued[0]?.media?.kind, "image");
   assert.equal(queued[0]?.media?.dataUrl.startsWith("data:image/png;base64,"), true);
   assert.deepEqual(removeOutboxEntry(queued, "user-1", "local-1"), []);
+});
+
+test("image-only and image+caption use the same media data URL on socket and REST", () => {
+  const prepared = imageMediaFromParts({ base64: TINY_PNG, mimeType: "image/png", security: "none" });
+  assert.equal(prepared.ok, true);
+  if (!prepared.ok) return;
+  const imageOnly = socketMessagePayload({ chatId: "chat-1", text: "", localId: "local-1", media: prepared.media });
+  assert.equal(imageOnly.type, "image");
+  assert.equal(imageOnly.text, "");
+  assert.equal(imageOnly.media?.dataUrl, prepared.media.dataUrl);
+  const captioned = restMessageBody({ text: "look", localId: "local-2", media: prepared.media });
+  assert.equal(captioned.type, "image");
+  assert.equal(captioned.text, "look");
+  assert.equal(captioned.clientId, "local-2");
+  assert.equal(captioned.media?.dataUrl, prepared.media.dataUrl);
+  assert.deepEqual(restMessageBody({ text: "hello", localId: "local-3" }), {
+    text: "hello",
+    type: "text",
+    clientId: "local-3",
+  });
 });
 
 test("inbound server media becomes the bubble imageAttachment", () => {
