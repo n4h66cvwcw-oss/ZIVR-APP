@@ -2,6 +2,8 @@
 
 A small Node library and CLI that makes one ZIVR **agent** sub-profile the twin of a Perplexity Agent API session. It holds that agent's `zivr_agent_…` key, exchanges it for the one-hour JWT, and calls Perplexity with an API key.
 
+Signup, keys, and the HTTP API are in the [Agent API guide](../../docs/agent-api/README.md). Owner calls below send the app session in `X-Auth-Token`.
+
 It does not use OAuth. The Perplexity website cannot import an OpenAPI action or a ZIVR plugin, and Perplexity does not call ZIVR.
 
 The HTTP surface is the agent API already on this branch:
@@ -35,13 +37,13 @@ The key is sent as `Authorization: Bearer`. It is not written into the JSON body
 
 `provider` is a label stored on the sub-profile. ZIVR does not call Perplexity because the label says `perplexity`. The bridge holds both keys.
 
-With the owner's session:
+With the owner's app session in `X-Auth-Token`:
 
 ```bash
 export ZIVR_ORIGIN="https://api.zivrapp.com"
 
 curl -sS -X POST "$ZIVR_ORIGIN/v1/sub-profiles" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{"displayName":"Perplexity twin","profileMode":"agent","provider":"perplexity"}'
 ```
@@ -50,7 +52,7 @@ Mint a one-time key. The response field is `key`. It is not shown again.
 
 ```bash
 curl -sS -X POST "$ZIVR_ORIGIN/v1/sub-profiles/$PERPLEXITY_AGENT_ID/keys" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
@@ -111,7 +113,7 @@ Register the URL with the **owner** session, on the Perplexity twin:
 
 ```bash
 curl -sS -X PUT "$ZIVR_ORIGIN/v1/sub-profiles/$PERPLEXITY_AGENT_ID/webhook" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://your-host.example/zivr/hooks"}'
 ```
