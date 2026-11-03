@@ -16,6 +16,7 @@ import { Client } from "pg";
 import type { Server as SocketServer } from "socket.io";
 import { query, queryOne } from "./db";
 import { serializedMessageFromRow, type MessageMedia } from "./message-content";
+import { PUSH_TOKENS_FOR_CHAT_SQL, foregroundUserIds, selectPushTokens } from "./presence-push";
 
 export const REALTIME_CHANNEL = "zivr_realtime";
 export const INSTANCE_ID = randomUUID();
@@ -242,13 +243,18 @@ async function connectListener(): Promise<void> {
   await notify({ o: INSTANCE_ID, k: "ping", t: Date.now() }).catch(() => {});
 }
 
-/** Mark users with a live socket on this instance as online, and expire stale rows. */
+/**
+ * Mark users with a foreground socket on this instance as online, and expire
+ * stale rows. Sockets that emitted `user:away` are skipped so a backgrounded
+ * connection cannot refresh is_online.
+ */
 export async function presenceHeartbeat(now = Date.now()): Promise<void> {
   if (!io) return;
   const sockets = await io.local.fetchSockets();
-  const userIds = [...new Set(
-    sockets.map((s) => (s.data as { userId?: string } | undefined)?.userId).filter((id): id is string => !!id),
-  )];
+  const userIds = foregroundUserIds(sockets.map((s) => {
+    const data = (s.data ?? {}) as { userId?: string; presence?: string };
+    return { userId: data.userId, presence: data.presence };
+  }));
   if (userIds.length > 0) {
     await query(
       `UPDATE vm_users SET is_online = true, last_seen = $1 WHERE id = ANY($2::uuid[])`,
@@ -256,7 +262,8 @@ export async function presenceHeartbeat(now = Date.now()): Promise<void> {
     );
   }
   // Instances that were scaled down or crashed never ran their disconnect
-  // handlers; without this their users would look online (and skip push) forever.
+  // handlers. Expire those rows so a dead process cannot leave is_online set.
+  // Boot also clears the flag; this covers a process that stays up.
   await query(
     `UPDATE vm_users SET is_online = false
       WHERE is_online = true AND COALESCE(last_seen, 0) < $1`,
@@ -265,22 +272,38 @@ export async function presenceHeartbeat(now = Date.now()): Promise<void> {
 }
 
 /**
- * Push tokens for chat members (excluding the sender) who should get a push:
- * offline, presence row stale, or - while the cross-instance bus is not proven
- * healthy - everyone, so a message can never be silently undelivered.
+ * Clear is_online for every user. Called once at process boot: a redeploy
+ * kills sockets without running their disconnect handlers, and the old rows
+ * stayed online until the stale-presence expiry (several minutes).
+ */
+export async function resetOnlinePresence(): Promise<void> {
+  await query(`UPDATE vm_users SET is_online = false WHERE is_online IS TRUE`);
+}
+
+/**
+ * Push tokens for chat members other than the sender.
+ *
+ * A live socket is not a delivery guarantee — the app often stays connected
+ * in the background — so online and fresh presence are included. An unhealthy
+ * cross-instance bus uses the same set (everyone with a token), which means a
+ * message is never dropped just because fan-out is unproven.
  */
 export async function pushTokensForChat(chatId: string, senderId: string, now = Date.now()): Promise<string[]> {
-  const includeOnline = !isBusHealthy(now);
-  const rows = await query<{ push_token: string | null }>(
-    `SELECT u.push_token FROM vm_chat_members cm
-       JOIN vm_users u ON u.id = cm.user_id
-      WHERE cm.chat_id = $1 AND cm.user_id != $2
-        AND ($3::boolean OR u.is_online = false OR COALESCE(u.last_seen, 0) < $4)`,
-    [chatId, senderId, includeOnline, now - PRESENCE_STALE_MS],
+  const rows = await query<{ push_token: string | null; is_online: boolean | null; last_seen: string | number | null }>(
+    PUSH_TOKENS_FOR_CHAT_SQL,
+    [chatId, senderId],
   );
-  return rows
-    .map((r) => r.push_token)
-    .filter((t): t is string => !!t && t.startsWith("ExponentPushToken"));
+  return selectPushTokens(rows.map((row) => ({
+    pushToken: row.push_token,
+    isOnline: row.is_online === true,
+    lastSeen: lastSeenMs(row.last_seen),
+  })), { busHealthy: isBusHealthy(now), now });
+}
+
+function lastSeenMs(value: string | number | null): number | null {
+  if (value == null) return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /**
@@ -337,7 +360,7 @@ export async function getRealtimeStatus(now = Date.now()) {
     tailFallbackActive: !isBusHealthy(now),
     tailEmitted,
     localSockets: await localSocketCount(),
-    bundle: "live-message-fanout-v2",
+    bundle: "push-presence-v3",
   };
 }
 

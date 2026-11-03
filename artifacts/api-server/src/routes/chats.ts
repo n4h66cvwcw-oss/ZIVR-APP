@@ -8,7 +8,7 @@ import {
 } from "../lib/approvals";
 import { getAuthUserId } from "../lib/auth";
 import { checkContentForChild } from "../lib/socket";
-import { sendExpoPush } from "../lib/push";
+import { messagePushData, sendExpoPush } from "../lib/push";
 import { fanoutChatEvent, fanoutMessage, pushTokensForChat } from "../lib/realtime-bus";
 import { parseReactionEmoji } from "../lib/reactions";
 import { toggleMessageReaction } from "../lib/reactions-store";
@@ -236,7 +236,13 @@ router.post("/:chatId/messages", async (req, res) => {
     try {
       const tokens = await pushTokensForChat(chatId, authUserId);
       if (tokens.length > 0) {
-        await sendExpoPush(tokens, sender?.display_name ?? "New message", messagePreview(outgoing.text, outgoing.type), "default");
+        await sendExpoPush(
+          tokens,
+          sender?.display_name ?? "New message",
+          messagePreview(outgoing.text, outgoing.type),
+          "default",
+          messagePushData(chatId, outgoing.id),
+        );
       }
     } catch { /* push delivery is retryable by reconnect/history */ }
   } catch (err) {

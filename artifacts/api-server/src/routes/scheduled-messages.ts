@@ -3,7 +3,7 @@ import pool, { query, queryOne } from "../lib/db";
 import { getAuthUserId } from "../lib/auth";
 import { checkContentForChild } from "../lib/socket";
 import { fanoutMessage, pushTokensForChat } from "../lib/realtime-bus";
-import { sendExpoPush } from "../lib/push";
+import { messagePushData, sendExpoPush } from "../lib/push";
 import {
   checkDirectContactAllowed,
   checkGroupContactsAllowed,
@@ -349,7 +349,13 @@ export async function dispatchDueMessages(options: { senderId?: string } = {}) {
       const tokens = await pushTokensForChat(item.chat_id, item.sender_id);
       if (tokens.length) {
         const preview = item.text.length > 80 ? `${item.text.slice(0, 80)}…` : item.text;
-        await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
+        await sendExpoPush(
+          tokens,
+          sender?.display_name ?? "New message",
+          preview,
+          "default",
+          messagePushData(item.chat_id, messageId),
+        );
       }
     } catch (error) {
       logger.error({ err: error, scheduledMessageId: item.id }, "Scheduled message dispatch failed");
