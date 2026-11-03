@@ -1,0 +1,27 @@
+{
+  "name": "@workspace/zivr-gpt-actions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ChatGPT Custom GPT Actions (OpenAPI and OAuth) for a ZIVR agent twin.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "zivr-gpt-actions": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "emit-spec": "tsc -p tsconfig.json && node ./dist/emit-spec.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test dist/spec.test.js dist/client.test.js dist/oauth.test.js dist/http.test.js",
+    "start": "node ./dist/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

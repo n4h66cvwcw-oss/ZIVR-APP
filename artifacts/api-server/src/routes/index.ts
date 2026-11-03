@@ -13,6 +13,7 @@ import backupRouter from "./backup";
 import checkinsRouter from "./checkins";
 import subProfilesRouter from "./sub-profiles";
 import agentRouter from "./agent";
+import gptActionsRouter from "./gpt-actions";
 import calendarProposalsRouter from "./calendar-proposals";
 
 const router: IRouter = Router();
@@ -31,6 +32,7 @@ router.use(backupRouter);
 router.use("/checkins", checkinsRouter);
 router.use("/v1/sub-profiles", subProfilesRouter);
 router.use("/v1/agent", agentRouter);
+router.use("/v1/gpt-actions", gptActionsRouter);
 router.use("/v1/calendar/proposals", calendarProposalsRouter);
 
 export default router;

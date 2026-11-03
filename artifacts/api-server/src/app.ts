@@ -4,6 +4,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import subProfilesRouter from "./routes/sub-profiles";
 import agentRouter from "./routes/agent";
+import gptActionsRouter from "./routes/gpt-actions";
 import calendarProposalsRouter from "./routes/calendar-proposals";
 import { logger } from "./lib/logger";
 import { MAX_MESSAGE_REQUEST_BYTES } from "./lib/message-content";
@@ -38,6 +39,8 @@ app.use("/api", router);
 // External agents call /v1 directly. The same routers are also mounted at /api/v1.
 app.use("/v1/sub-profiles", subProfilesRouter);
 app.use("/v1/agent", agentRouter);
+// ChatGPT Actions OAuth. Connector-owned; not part of /v1/agent.
+app.use("/v1/gpt-actions", gptActionsRouter);
 app.use("/v1/calendar/proposals", calendarProposalsRouter);
 
 app.get("/privacy", (_req: Request, res: Response) => {

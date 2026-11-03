@@ -1,0 +1,371 @@
+import {
+  ACTION_SCOPES,
+  AUTHORIZE_PATH,
+  DEFAULT_SERVER_ORIGIN,
+  GPT_ACTION_MAX_CHARS,
+  MAX_CLIENT_ID_LENGTH,
+  MAX_MESSAGE_TEXT_LENGTH,
+  MAX_PROPOSAL_NOTE_LENGTH,
+  MAX_PROPOSAL_TITLE_LENGTH,
+  TOKEN_PATH,
+} from "./limits.js";
+
+export type OpenApiDocument = {
+  openapi: string;
+  info: { title: string; version: string; description: string };
+  servers: Array<{ url: string; description?: string }>;
+  tags?: Array<{ name: string; description?: string }>;
+  paths: Record<string, unknown>;
+  components: {
+    securitySchemes: Record<string, unknown>;
+    schemas: Record<string, unknown>;
+  };
+  security: Array<Record<string, string[]>>;
+};
+
+function originOf(serverUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(serverUrl);
+  } catch {
+    throw new Error("OpenAPI server URL must be an http(s) origin");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("OpenAPI server URL must be an http(s) origin");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("OpenAPI server URL must be an origin");
+  }
+  if (url.pathname !== "/" && url.pathname !== "") {
+    throw new Error("OpenAPI server URL must be an origin");
+  }
+  return url.origin;
+}
+
+const errorResponses = {
+  "400": { description: "The body or query is invalid.", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+  "401": { description: "The agent JWT is missing, expired, or revoked.", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+  "403": { description: "Missing scope, paused agent, cold DM, or an encrypted chat.", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+  "404": { description: "The chat or peer was not found.", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+  "409": { description: "clientId was already used in another chat.", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+  "429": {
+    description: "The agent hit a send or attachment limit.",
+    headers: {
+      "Retry-After": { description: "Seconds to wait before sending again.", schema: { type: "integer", minimum: 0 } },
+    },
+    content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+  },
+};
+
+/**
+ * OpenAPI action set for a Custom GPT. The OAuth access token is the agent
+ * JWT from `POST /v1/agent/token`. That exchange is not an action: ChatGPT
+ * calls the token URL itself.
+ */
+export function buildOpenApiSpec(serverUrl = DEFAULT_SERVER_ORIGIN): OpenApiDocument {
+  const origin = originOf(serverUrl);
+  const scopes: Record<string, string> = {
+    "messages:send": "Send messages as this agent",
+    "messages:read": "Read messages and files",
+    "media:send": "Attach one image or PDF",
+    "chats:list": "List chats this agent belongs to",
+    "calendar:propose": "Propose a calendar slot",
+  };
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "ZIVR Agent Actions",
+      version: "0.1.0",
+      description: [
+        "Same-owner agent loop for a ChatGPT Custom GPT.",
+        "Send text and one image or PDF as this agent twin, then poll events because ChatGPT cannot receive webhooks.",
+        "OAuth returns the agent JWT. Do not use API key auth: ChatGPT would send that static key on every call, and these routes accept only the JWT.",
+        `Keep each body under ${GPT_ACTION_MAX_CHARS} characters.`,
+      ].join(" "),
+    },
+    servers: [{ url: origin, description: "ZIVR API origin. OAuth URLs must use this same host." }],
+    tags: [{ name: "agent", description: "One ZIVR agent twin. Poll for replies." }],
+    security: [{ zivrAgent: [...ACTION_SCOPES] }],
+    paths: {
+      "/v1/agent/chats": {
+        get: {
+          operationId: "listChats",
+          tags: ["agent"],
+          summary: "List chats this agent belongs to",
+          description: "Returns chats this twin can send in. Use an id as chatId. peerId opens a same-owner agent DM.",
+          "x-openai-isConsequential": false,
+          responses: {
+            "200": {
+              description: "Chats this agent has joined.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ChatList" } } },
+            },
+            "401": errorResponses["401"],
+            "403": errorResponses["403"],
+          },
+        },
+      },
+      "/v1/agent/events": {
+        get: {
+          operationId: "listEvents",
+          tags: ["agent"],
+          summary: "Poll replies and files",
+          description: "No webhooks. Pass since=0 first, then nextSince. Your sends are included; a reply has another senderId. Files are data URLs.",
+          "x-openai-isConsequential": false,
+          parameters: [{
+            name: "since",
+            in: "query",
+            required: false,
+            description: "Epoch millisecond cursor. Use 0 the first time, then the previous nextSince.",
+            schema: { type: "integer", minimum: 0 },
+          }],
+          responses: {
+            "200": {
+              description: "Messages newer than since, oldest first.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/EventPage" } } },
+            },
+            "400": errorResponses["400"],
+            "401": errorResponses["401"],
+            "403": errorResponses["403"],
+          },
+        },
+      },
+      "/v1/agent/messages": {
+        post: {
+          operationId: "sendMessage",
+          tags: ["agent"],
+          summary: "Send text, an image, or a PDF",
+          description: "Sends as this agent. Exactly one of chatId or peerId. peerId only opens a DM with a same-owner agent. Reuse clientId to retry.",
+          "x-openai-isConsequential": false,
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/SendMessage" },
+                example: {
+                  peerId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                  text: "The kids-book outline is ready.",
+                  clientId: "gpt-axe-outline-1",
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "The saved message. senderId is this agent.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/MessageEnvelope" } } },
+            },
+            "400": errorResponses["400"],
+            "401": errorResponses["401"],
+            "403": errorResponses["403"],
+            "404": errorResponses["404"],
+            "409": errorResponses["409"],
+            "429": errorResponses["429"],
+          },
+        },
+      },
+      "/v1/agent/calendar/proposals": {
+        post: {
+          operationId: "proposeCalendar",
+          tags: ["agent"],
+          summary: "Propose a calendar slot",
+          description: "Posts a pending slot card in a chat this agent is already in. Use chatId, not peerId. The owner or a chat admin approves it in ZIVR.",
+          "x-openai-isConsequential": false,
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: { $ref: "#/components/schemas/CalendarProposal" } } },
+          },
+          responses: {
+            "200": {
+              description: "This clientId was already proposed. Nothing new was written.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ProposalEnvelope" } } },
+            },
+            "201": {
+              description: "A pending slot card was posted.",
+              content: { "application/json": { schema: { $ref: "#/components/schemas/ProposalEnvelope" } } },
+            },
+            "400": errorResponses["400"],
+            "401": errorResponses["401"],
+            "403": errorResponses["403"],
+            "404": errorResponses["404"],
+            "409": errorResponses["409"],
+            "429": errorResponses["429"],
+          },
+        },
+      },
+    },
+    components: {
+      securitySchemes: {
+        zivrAgent: {
+          type: "oauth2",
+          description: "Authorization code. The consent page takes the agent API key. The token URL returns the agent JWT as access_token.",
+          flows: {
+            authorizationCode: {
+              authorizationUrl: `${origin}${AUTHORIZE_PATH}`,
+              tokenUrl: `${origin}${TOKEN_PATH}`,
+              scopes,
+            },
+          },
+        },
+      },
+      schemas: {
+        Error: {
+          type: "object",
+          required: ["error"],
+          properties: {
+            error: { type: "string" },
+            code: {
+              type: "string",
+              description: "auth, scope, invalid, paused, cold_dm, e2e, not_member, not_found, or feature_disabled.",
+            },
+          },
+        },
+        Chat: {
+          type: "object",
+          required: ["id"],
+          properties: {
+            id: { type: "string", format: "uuid" },
+            type: { type: "string" },
+            name: { type: ["string", "null"] },
+            isE2e: { type: "boolean", description: "Agents cannot send in end-to-end encrypted chats." },
+            joinedAt: { description: "Epoch milliseconds, as a number or a numeric string." },
+            ownerDisplayName: { type: ["string", "null"] },
+            lastMessage: { type: ["string", "null"] },
+          },
+        },
+        ChatList: {
+          type: "object",
+          required: ["chats"],
+          properties: { chats: { type: "array", items: { $ref: "#/components/schemas/Chat" } } },
+        },
+        OutboundMedia: {
+          type: "object",
+          required: ["kind", "mimeType", "dataUrl"],
+          properties: {
+            kind: { type: "string", enum: ["image", "file"] },
+            mimeType: {
+              type: "string",
+              description: "jpeg, png, webp, gif, heic, heif, or pdf, Office, rtf, csv, text, markdown. No video or audio.",
+            },
+            dataUrl: {
+              type: "string",
+              description: `data:<mime>;base64,... The whole action body must stay under ${GPT_ACTION_MAX_CHARS} characters.`,
+            },
+            fileName: { type: "string" },
+            security: { type: "string", enum: ["none", "password", "single-view", "timed"], default: "none" },
+            width: { type: "integer" },
+            height: { type: "integer" },
+            password: { type: "string" },
+            viewAfter: { type: "integer", description: "Epoch milliseconds. Required when security is timed." },
+          },
+        },
+        Media: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["image", "file", "calendar_proposal"] },
+            mimeType: { type: "string" },
+            dataUrl: { type: "string", description: "Present for image and file. Inline bytes as a data URL." },
+            fileName: { type: "string" },
+            security: { type: "string" },
+            width: { type: "integer" },
+            height: { type: "integer" },
+            proposalId: { type: "string" },
+            title: { type: "string" },
+            startsAt: { type: "integer" },
+            endsAt: { type: "integer" },
+            status: { type: "string", enum: ["pending", "approved", "declined"] },
+            approval: { type: "string" },
+            note: { type: "string" },
+          },
+        },
+        Message: {
+          type: "object",
+          required: ["id", "chatId", "senderId", "senderName", "text", "type", "createdAt"],
+          properties: {
+            id: { type: "string" },
+            chatId: { type: "string" },
+            senderId: { type: "string", description: "Matches this agent on echoes. A different id is an inbound reply." },
+            senderName: { type: "string" },
+            text: { type: "string" },
+            type: { type: "string" },
+            createdAt: { type: "integer", description: "Epoch milliseconds." },
+            localId: { type: "string", description: "clientId of this agent's send, when present." },
+            media: { $ref: "#/components/schemas/Media" },
+          },
+        },
+        MessageEnvelope: {
+          type: "object",
+          required: ["message"],
+          properties: { message: { $ref: "#/components/schemas/Message" } },
+        },
+        Event: {
+          type: "object",
+          required: ["type", "message"],
+          properties: {
+            type: { type: "string", enum: ["message.created"] },
+            message: { $ref: "#/components/schemas/Message" },
+          },
+        },
+        EventPage: {
+          type: "object",
+          required: ["events", "nextSince"],
+          properties: {
+            events: { type: "array", items: { $ref: "#/components/schemas/Event" } },
+            nextSince: { type: "integer", description: "Pass this as since on the next poll." },
+          },
+        },
+        SendMessage: {
+          type: "object",
+          required: ["clientId"],
+          properties: {
+            chatId: { type: "string", format: "uuid", description: "A chat from listChats. Omit when peerId is set." },
+            peerId: { type: "string", format: "uuid", description: "Same-owner agent user id. Omit when chatId is set." },
+            text: { type: "string", maxLength: MAX_MESSAGE_TEXT_LENGTH, description: "Caption or message. Required when media is omitted." },
+            clientId: { type: "string", minLength: 1, maxLength: MAX_CLIENT_ID_LENGTH, description: "New id per send. Reuse it only to retry that send." },
+            media: { $ref: "#/components/schemas/OutboundMedia" },
+          },
+        },
+        CalendarProposal: {
+          type: "object",
+          required: ["chatId", "title", "startsAt", "endsAt", "clientId"],
+          properties: {
+            chatId: { type: "string", format: "uuid" },
+            title: { type: "string", minLength: 1, maxLength: MAX_PROPOSAL_TITLE_LENGTH },
+            startsAt: { type: "integer", description: "Epoch milliseconds." },
+            endsAt: { type: "integer", description: "Epoch milliseconds, after startsAt." },
+            note: { type: "string", maxLength: MAX_PROPOSAL_NOTE_LENGTH },
+            clientId: { type: "string", minLength: 1, maxLength: MAX_CLIENT_ID_LENGTH, description: "New id per proposal. Reuse it only to retry." },
+          },
+        },
+        Proposal: {
+          type: "object",
+          required: ["id", "chatId", "title", "startsAt", "endsAt", "status"],
+          properties: {
+            id: { type: "string" },
+            agentUserId: { type: "string" },
+            ownerUserId: { type: "string" },
+            chatId: { type: "string" },
+            messageId: { type: ["string", "null"] },
+            title: { type: "string" },
+            startsAt: { type: "integer" },
+            endsAt: { type: "integer" },
+            note: { type: ["string", "null"] },
+            status: { type: "string", enum: ["pending", "approved", "declined"] },
+            approval: { type: "string", enum: ["owner_or_admin"] },
+            decidedBy: { type: ["string", "null"] },
+            decidedAt: { type: ["integer", "null"] },
+            calendarWrite: { type: "string" },
+            createdAt: { type: "integer" },
+          },
+        },
+        ProposalEnvelope: {
+          type: "object",
+          required: ["proposal", "message"],
+          properties: {
+            proposal: { $ref: "#/components/schemas/Proposal" },
+            message: { $ref: "#/components/schemas/Message" },
+          },
+        },
+      },
+    },
+  };
+}

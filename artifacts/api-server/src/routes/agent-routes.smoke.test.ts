@@ -45,3 +45,23 @@ test("sub-profile routes answer on /v1 and /api/v1 without a session", async () 
   assert.equal(await status("POST", `/api/v1/calendar/proposals/${proposalId}/respond`, { decision: "no" }), 401);
   assert.equal(await status("GET", "/v1/not-a-route"), 404);
 });
+
+test("gpt actions oauth is mounted and closed until configured", async () => {
+  const previousId = process.env["ZIVR_GPT_OAUTH_CLIENT_ID"];
+  const previousSecret = process.env["ZIVR_GPT_OAUTH_CLIENT_SECRET"];
+  delete process.env["ZIVR_GPT_OAUTH_CLIENT_ID"];
+  delete process.env["ZIVR_GPT_OAUTH_CLIENT_SECRET"];
+  try {
+    for (const path of ["/v1/gpt-actions/oauth/authorize", "/api/v1/gpt-actions/oauth/token"]) {
+      const response = await fetch(`${base}${path}`);
+      const body = await response.json() as { code?: string };
+      assert.equal(response.status, 404);
+      assert.equal(body.code, "gpt_oauth_disabled");
+    }
+  } finally {
+    if (previousId === undefined) delete process.env["ZIVR_GPT_OAUTH_CLIENT_ID"];
+    else process.env["ZIVR_GPT_OAUTH_CLIENT_ID"] = previousId;
+    if (previousSecret === undefined) delete process.env["ZIVR_GPT_OAUTH_CLIENT_SECRET"];
+    else process.env["ZIVR_GPT_OAUTH_CLIENT_SECRET"] = previousSecret;
+  }
+});

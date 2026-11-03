@@ -35,6 +35,12 @@ services:
       # Copy the existing echo-stream value. Do not generate a new one.
       - key: SESSION_SECRET
         sync: false
+      # ChatGPT Actions OAuth. Leave unset to keep /v1/gpt-actions closed.
+      # Codes and refresh tokens are in-process, which matches numInstances: 1.
+      - key: ZIVR_GPT_OAUTH_CLIENT_ID
+        sync: false
+      - key: ZIVR_GPT_OAUTH_CLIENT_SECRET
+        sync: false
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
