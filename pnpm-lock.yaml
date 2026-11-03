@@ -917,6 +917,19 @@ importers:
         specifier: ^0.31.9
         version: 0.31.9
 
+  packages/zivr-mcp:
+    dependencies:
+      zod:
+        specifier: 'catalog:'
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 25.3.5
+      typescript:
+        specifier: ~5.9.2
+        version: 5.9.3
+
   scripts:
     devDependencies:
       '@types/node':
