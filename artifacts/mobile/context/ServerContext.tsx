@@ -496,12 +496,23 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Re-connect and catch up when the app returns to foreground.
-  // `since` is sent on every user:join so missed_messages can recover drops.
+  // API #15: leaving active emits "user:away" with no payload. The socket
+  // stays up so rooms and the outbox survive. The server marks this
+  // connection away (another foreground socket for the same user stays
+  // online). Foreground is the existing user:join, which still sends `since`.
+  // TF build 29 ASC AHrW0N4I20KFwkP7MjR9J74.
   useEffect(() => {
+    function emitUserAway() {
+      const socket = socketRef.current;
+      if (!socket?.connected) return;
+      socket.emit("user:away");
+      updateDiagnostics({}, "user:away");
+    }
+
     function handleAppStateChange(nextState: AppStateStatus) {
       if (nextState === "background" || nextState === "inactive") {
         if (backgroundedAtRef.current === null) backgroundedAtRef.current = Date.now();
+        emitUserAway();
         return;
       }
       if (nextState !== "active") return;

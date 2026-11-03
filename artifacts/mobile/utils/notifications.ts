@@ -1,5 +1,7 @@
+import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import { resolveExpoProjectId } from "@/utils/expo-project-id";
 
 export type NotificationSoundOption = {
   id: string;
@@ -31,25 +33,42 @@ Notifications.setNotificationHandler({
   }),
 });
 
+function readExtraEasProjectId(extra: unknown): string | undefined {
+  if (!extra || typeof extra !== "object") return undefined;
+  const eas = (extra as { eas?: { projectId?: unknown } }).eas;
+  return typeof eas?.projectId === "string" ? eas.projectId : undefined;
+}
+
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
   if (Platform.OS === "web") return null;
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
-
-  if (existingStatus !== "granted") {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-
-  if (finalStatus !== "granted") return null;
+  const projectId = resolveExpoProjectId(
+    Constants.easConfig?.projectId,
+    readExtraEasProjectId(Constants.expoConfig?.extra),
+  );
 
   try {
-    const token = await Notifications.getExpoPushTokenAsync({
-      projectId: process.env["EXPO_PUBLIC_REPL_ID"],
-    });
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+
+    if (existingStatus !== "granted") {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    if (finalStatus !== "granted") {
+      console.warn("[notifications] push permission not granted:", finalStatus);
+      return null;
+    }
+
+    const token = await Notifications.getExpoPushTokenAsync({ projectId });
+    if (!token.data) {
+      console.error("[notifications] getExpoPushTokenAsync returned an empty token", { projectId });
+      return null;
+    }
     return token.data;
-  } catch {
+  } catch (error) {
+    console.error("[notifications] push registration failed", { projectId, error });
     return null;
   }
 }

@@ -51,7 +51,7 @@ const FONT_SIZE_LABELS: Record<FontSize, string> = { sm: "A", md: "A", lg: "A", 
 const FONT_SIZE_VALUES: Record<FontSize, number> = { sm: 10, md: 13, lg: 17, xl: 22 };
 const INPUT_LINE_HEIGHT = 22;
 const INPUT_MIN_HEIGHT = INPUT_LINE_HEIGHT;
-const INPUT_MAX_HEIGHT = INPUT_LINE_HEIGHT * 5;
+const COMPOSER_MAX_LINES = 5;
 
 const TEXT_COLORS = [
   "#FFFFFF",
@@ -104,6 +104,40 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
   const [fontSize, setFontSize] = useState<FontSize>("md");
   const [textColor, setTextColor] = useState<string>("");
   const [backgroundGifUrl, setBackgroundGifUrl] = useState<string>("");
+
+  // Composer grow. On RN 0.81 Fabric iOS, TextInput.onContentSizeChange fires
+  // once at mount and then stops while height is fixed, and the reported
+  // contentSize stays capped at that height (facebook/react-native#52854,
+  // #54570, #53625). TF build 29 ASC AHrW0N4I20KFwkP7MjR9J74 stayed one line.
+  // A hidden Text mirror's onLayout is the driver. minHeight / maxHeight only
+  // constrain the field (~5 lines, then it scrolls). No fixed height.
+  const lineHeight =
+    fontSize === "md" ? INPUT_LINE_HEIGHT : Math.ceil(FONT_SIZE_VALUES[fontSize] * 1.4);
+  const minInputHeight = Math.max(INPUT_MIN_HEIGHT, lineHeight);
+  const maxInputHeight = lineHeight * COMPOSER_MAX_LINES;
+  const mirrorHeightRef = useRef(0);
+  const applyMeasuredHeight = (measured: number, source: "mirror" | "content") => {
+    // contentSize is secondary. Once the mirror has laid out, ignore it so a
+    // capped iOS contentSize cannot shrink the field back to one line.
+    if (source === "content" && mirrorHeightRef.current > 0) return;
+    if (textLenRef.current === 0) {
+      mirrorHeightRef.current = 0;
+      setInputHeight((prev) => (prev === minInputHeight ? prev : minInputHeight));
+      return;
+    }
+    const rounded = Math.ceil(measured);
+    if (!Number.isFinite(rounded) || rounded <= 0) return;
+    if (source === "mirror") mirrorHeightRef.current = rounded;
+    const next = Math.min(Math.max(rounded, minInputHeight), maxInputHeight);
+    setInputHeight((prev) => (Math.abs(prev - next) < 2 ? prev : next));
+  };
+  const effectiveInputHeight = Math.min(Math.max(inputHeight, minInputHeight), maxInputHeight);
+  const textTypography = [
+    bold && { fontFamily: "Inter_700Bold" },
+    italic && { fontStyle: "italic" as const },
+    underline && { textDecorationLine: "underline" as const },
+    fontSize !== "md" && { fontSize: FONT_SIZE_VALUES[fontSize], lineHeight },
+  ];
 
   const sendScale = useRef(new Animated.Value(1)).current;
 
@@ -474,16 +508,29 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
             { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
           ]}
         >
+          <View
+            pointerEvents="none"
+            accessible={false}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            collapsable={false}
+            style={styles.inputMirror}
+            onLayout={(event) => applyMeasuredHeight(event.nativeEvent.layout.height, "mirror")}
+          >
+            <Text selectable={false} style={[styles.inputText, textTypography]}>
+              {/* A trailing newline needs a glyph after it or the line has no height. */}
+              {text.endsWith("\n") ? `${text}\u200B` : text || " "}
+            </Text>
+          </View>
           <TextInput
             style={[
+              styles.inputText,
               styles.input,
-              { color: textColor || colors.text, height: inputHeight },
-              bold && { fontFamily: "Inter_700Bold" },
-              italic && { fontStyle: "italic" },
-              underline && { textDecorationLine: "underline" },
-              fontSize !== "md" && {
-                fontSize: FONT_SIZE_VALUES[fontSize],
-                lineHeight: Math.ceil(FONT_SIZE_VALUES[fontSize] * 1.4),
+              textTypography,
+              {
+                color: textColor || colors.text,
+                minHeight: effectiveInputHeight,
+                maxHeight: maxInputHeight,
               },
             ]}
             value={text}
@@ -491,22 +538,15 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
               textLenRef.current = t.length;
               setText(t);
               onTextChange?.(t);
-              if (t.length === 0) setInputHeight(INPUT_MIN_HEIGHT);
+              if (t.length === 0) setInputHeight(minInputHeight);
             }}
             onContentSizeChange={(event) => {
-              if (textLenRef.current === 0) {
-                setInputHeight(INPUT_MIN_HEIGHT);
-                return;
-              }
-              const measured = Math.ceil(event.nativeEvent.contentSize.height);
-              if (!Number.isFinite(measured) || measured <= 0) return;
-              const next = Math.min(Math.max(measured, INPUT_MIN_HEIGHT), INPUT_MAX_HEIGHT);
-              setInputHeight((prev) => (Math.abs(prev - next) < 2 ? prev : next));
+              applyMeasuredHeight(event.nativeEvent.contentSize.height, "content");
             }}
             placeholder={placeholder}
             placeholderTextColor={colors.textTertiary}
             multiline
-            scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
+            scrollEnabled={effectiveInputHeight >= maxInputHeight}
             maxLength={2000}
             onSubmitEditing={Platform.OS === "web" ? handleSend : undefined}
             blurOnSubmit={false}
@@ -786,16 +826,27 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     justifyContent: "center",
   },
-  input: {
+  inputText: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     lineHeight: INPUT_LINE_HEIGHT,
-    maxHeight: INPUT_MAX_HEIGHT,
-    width: "100%",
     paddingHorizontal: 0,
     paddingVertical: 0,
     margin: 0,
     textAlignVertical: "top",
+  },
+  input: {
+    width: "100%",
+  },
+  // Absolute so it doesn't stretch the row. left/right match inputContainer
+  // padding so the wrap width matches the TextInput. No maxHeight: the mirror
+  // must measure past the cap; the field itself clamps to ~5 lines.
+  inputMirror: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    top: 8,
+    opacity: 0,
   },
   sendBtn: {
     width: 38,

@@ -8,7 +8,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "test:language": "node --experimental-strip-types --test utils/registration.test.ts utils/language-sync.test.ts utils/server-identity.test.ts",
-    "test:notifications": "node --experimental-strip-types --test utils/notification-policy.test.ts && node scripts/run-messaging-provider-notification-test.js",
+    "test:notifications": "node --experimental-strip-types --test utils/notification-policy.test.ts utils/expo-project-id.test.ts && node scripts/run-messaging-provider-notification-test.js",
     "test:reactions": "node --experimental-strip-types --test utils/message-reactions.test.ts && node scripts/run-messaging-provider-notification-test.js context/MessagingContext.reactions.test.tsx",
     "test:messages": "node --experimental-strip-types --test utils/message-delivery.test.ts",
     "test:recovery": "node --experimental-strip-types --test utils/recovery-email.test.ts",

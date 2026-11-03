@@ -11,7 +11,7 @@ import * as SplashScreen from "expo-splash-screen";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ActivityIndicator, Alert, AppState, AppStateStatus, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, AppState, AppStateStatus, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -54,6 +54,7 @@ function OnboardingGate() {
 
 function PushRegistrar() {
   const { serverUserId, updateServerProfile } = useServer();
+  const lastTokenRef = useRef<string | null>(null);
   useEffect(() => {
     void Notifications.setNotificationCategoryAsync("scheduled-message-approval", [
       {
@@ -69,11 +70,39 @@ function PushRegistrar() {
     ]);
   }, []);
   useEffect(() => {
-    if (!serverUserId) return;
-    registerForPushNotificationsAsync().then((token) => {
-      if (token) updateServerProfile(serverUserId, { pushToken: token });
+    if (!serverUserId || Platform.OS === "web") return;
+    let cancelled = false;
+    // A new account on this device must receive the token even when the
+    // Expo token string did not change.
+    lastTokenRef.current = null;
+
+    const publishToken = (token: string | null) => {
+      if (cancelled || !token || token === lastTokenRef.current) return;
+      lastTokenRef.current = token;
+      void updateServerProfile(serverUserId, { pushToken: token });
+    };
+
+    const register = () => {
+      void registerForPushNotificationsAsync().then(publishToken);
+    };
+
+    register();
+
+    // Native device tokens rotate without a user-id change. Fetch a fresh
+    // Expo token; do not upload the raw APNs/FCM token.
+    const tokenSub = Notifications.addPushTokenListener(() => {
+      register();
     });
-  }, [serverUserId]);
+    const appSub = AppState.addEventListener("change", (state) => {
+      if (state === "active") register();
+    });
+
+    return () => {
+      cancelled = true;
+      tokenSub.remove();
+      appSub.remove();
+    };
+  }, [serverUserId, updateServerProfile]);
   return null;
 }
 
