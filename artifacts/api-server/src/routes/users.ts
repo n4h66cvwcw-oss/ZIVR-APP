@@ -3,7 +3,7 @@ import { query, queryOne } from "../lib/db";
 import { signToken, getAuthUserId } from "../lib/auth";
 import { normalizePreferredLanguage } from "./user-language";
 import { createRecoveryCode, hashRecoveryCode } from "../lib/recovery-code";
-import { planUserFind } from "../lib/user-find";
+import { AGENT_FIND_EXCLUSION, planUserFind } from "../lib/user-find";
 
 const router = Router();
 
@@ -244,6 +244,7 @@ router.get("/find", async (req, res) => {
       users = await query(
         `SELECT ${USER_SELECT} FROM vm_users
           WHERE phone IS NOT NULL
+            AND ${AGENT_FIND_EXCLUSION}
             AND (phone = ANY($1::text[])
                  OR regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[]))
           LIMIT 20`,
@@ -251,17 +252,17 @@ router.get("/find", async (req, res) => {
       );
     } else if (plan.kind === "phone-exact") {
       users = await query(
-        `SELECT ${USER_SELECT} FROM vm_users WHERE phone = $1 LIMIT 20`,
+        `SELECT ${USER_SELECT} FROM vm_users WHERE phone = $1 AND ${AGENT_FIND_EXCLUSION} LIMIT 20`,
         [plan.phone]
       );
     } else if (plan.kind === "username") {
       users = await query(
-        `SELECT ${USER_SELECT} FROM vm_users WHERE username ILIKE $1 LIMIT 20`,
+        `SELECT ${USER_SELECT} FROM vm_users WHERE username ILIKE $1 AND ${AGENT_FIND_EXCLUSION} LIMIT 20`,
         [plan.pattern]
       );
     } else if (plan.kind === "q") {
       users = await query(
-        `SELECT ${USER_SELECT} FROM vm_users WHERE display_name ILIKE $1 OR username ILIKE $1 LIMIT 20`,
+        `SELECT ${USER_SELECT} FROM vm_users WHERE ${AGENT_FIND_EXCLUSION} AND (display_name ILIKE $1 OR username ILIKE $1) LIMIT 20`,
         [plan.pattern]
       );
     }

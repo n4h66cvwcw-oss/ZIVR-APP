@@ -90,6 +90,13 @@ function parseInput(body: unknown, partial = false) {
 }
 
 async function getChatPermission(chatId: string, senderId: string) {
+  const actor = await queryOne<{ account_type: string | null }>(
+    `SELECT account_type FROM vm_users WHERE id = $1`,
+    [senderId],
+  );
+  if (actor?.account_type === "agent") {
+    return { allowed: false as const, status: 403, error: "Agents cannot schedule messages on the member route" };
+  }
   const chat = await queryOne<{ type: "direct" | "group"; name: string | null }>(
     `SELECT c.type, c.name
        FROM vm_chats c

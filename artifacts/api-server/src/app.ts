@@ -2,6 +2,9 @@ import express, { type Express, type Request, type Response } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import subProfilesRouter from "./routes/sub-profiles";
+import agentRouter from "./routes/agent";
+import calendarProposalsRouter from "./routes/calendar-proposals";
 import { logger } from "./lib/logger";
 import { MAX_MESSAGE_REQUEST_BYTES } from "./lib/message-content";
 
@@ -32,6 +35,10 @@ app.use(express.json({ limit: MAX_MESSAGE_REQUEST_BYTES }));
 app.use(express.urlencoded({ extended: true, limit: MAX_MESSAGE_REQUEST_BYTES }));
 
 app.use("/api", router);
+// External agents call /v1 directly. The same routers are also mounted at /api/v1.
+app.use("/v1/sub-profiles", subProfilesRouter);
+app.use("/v1/agent", agentRouter);
+app.use("/v1/calendar/proposals", calendarProposalsRouter);
 
 app.get("/privacy", (_req: Request, res: Response) => {
   res.setHeader("Content-Type", "text/html");

@@ -11,6 +11,9 @@ import parentalRouter from "./parental";
 import scheduledMessagesRouter from "./scheduled-messages";
 import backupRouter from "./backup";
 import checkinsRouter from "./checkins";
+import subProfilesRouter from "./sub-profiles";
+import agentRouter from "./agent";
+import calendarProposalsRouter from "./calendar-proposals";
 
 const router: IRouter = Router();
 
@@ -26,5 +29,8 @@ router.use("/parental", parentalRouter);
 router.use("/scheduled-messages", scheduledMessagesRouter);
 router.use(backupRouter);
 router.use("/checkins", checkinsRouter);
+router.use("/v1/sub-profiles", subProfilesRouter);
+router.use("/v1/agent", agentRouter);
+router.use("/v1/calendar/proposals", calendarProposalsRouter);
 
 export default router;

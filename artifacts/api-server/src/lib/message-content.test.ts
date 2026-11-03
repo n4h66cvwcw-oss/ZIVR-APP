@@ -31,8 +31,11 @@ test("empty text is accepted when a valid image is attached", () => {
     if (result.ok) {
       assert.equal(result.message.text, "");
       assert.equal(result.message.type, "image");
-      assert.equal(result.message.media?.dataUrl, TINY_PNG);
-      assert.equal(result.message.media?.mimeType, "image/png");
+      assert.equal(result.message.media?.kind, "image");
+      if (result.message.media?.kind === "image") {
+        assert.equal(result.message.media.dataUrl, TINY_PNG);
+        assert.equal(result.message.media.mimeType, "image/png");
+      }
     }
   }
 });
