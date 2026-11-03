@@ -4,12 +4,18 @@ let chatsPromise = new Promise<string>((resolve, reject) => {
   resolveChats = resolve;
   rejectChats = reject;
 });
+let seededMessages = "{}";
 
 export function resetStorageMock() {
+  seededMessages = "{}";
   chatsPromise = new Promise<string>((resolve, reject) => {
     resolveChats = resolve;
     rejectChats = reject;
   });
+}
+
+export function seedMessages(messages: Record<string, unknown[]>) {
+  seededMessages = JSON.stringify(messages);
 }
 
 export function resolveChatHydration(chats: unknown[]) {
@@ -23,7 +29,7 @@ export function rejectChatHydration(error = new Error("AsyncStorage read failed"
 const AsyncStorage = {
   getItem(key: string): Promise<string | null> {
     if (key === "@zivr_chats") return chatsPromise;
-    if (key === "@zivr_messages") return Promise.resolve(JSON.stringify({}));
+    if (key === "@zivr_messages") return Promise.resolve(seededMessages);
     return Promise.resolve(null);
   },
   setItem(): Promise<void> {

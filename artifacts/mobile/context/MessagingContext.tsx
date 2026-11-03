@@ -25,6 +25,7 @@ import { Alert } from "react-native";
 import {
   useServer,
   type MessageDelivery,
+  type MessageReactionEvent,
   type ServerMessage,
   type ServerUser,
   type ServerCheckInBroadcast,
@@ -37,6 +38,14 @@ import {
   migrateLegacyCheckins,
   shouldMarkCheckinRepliesRead,
 } from "@/utils/checkin-state";
+import {
+  applyReactionWrites,
+  hasServerMessage,
+  localFieldsFromServerMessage,
+  reactionPostId,
+  toggleReaction,
+  type ReactionWrite,
+} from "@/utils/message-reactions";
 
 export type AudioAttachment = {
   uri: string;
@@ -101,6 +110,13 @@ export type Message = {
   musicAttachment?: MusicAttachment;
   formatting?: MessageFormatting;
   reactions?: Record<string, string[]>;
+  /**
+   * Sender's client id (`message:send` localId). Reaction fanout calls this `clientId`.
+   * On the sending phone `id` stays this value; the other phone's `id` is the server uuid.
+   */
+  localId?: string;
+  /** `vm_messages.id` learned from the send echo or a reaction payload. */
+  serverMessageId?: string;
   read?: boolean;
   deliveredAt?: number;
   deleted?: boolean;
@@ -482,6 +498,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     serverUserId,
     onNewMessage,
     sendServerMessage,
+    postMessageReaction,
+    onMessageReaction,
+    fetchMessages,
     getOrCreateDirectChat,
     onReadReceipt,
     fetchUserChats,
@@ -508,6 +527,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const [sortMode, setSortModeState] = useState<ChatSortMode>("recent");
 
   const sentLocalIds = useRef<Set<string>>(new Set());
+  // localId -> server uuid, filled when the message:new echo arrives before state does.
+  const serverIdsByLocalId = useRef<Map<string, string>>(new Map());
+  const pendingReactionWrites = useRef<ReactionWrite[]>([]);
+  const refreshServerReactionsRef = useRef<(chatId: string) => void>(() => {});
   // Synchronous guard: message IDs that have already been dispatched into state.
   // Updated atomically at the top of the onNewMessage handler so that two
   // rapid deliveries of the same server ID (e.g. socket auto-reconnect +
@@ -542,6 +565,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const activeChatIdRef = useRef<string | null>(null);
   const setActiveChatId = useCallback((id: string | null) => {
     activeChatIdRef.current = id;
+    if (id) refreshServerReactionsRef.current(id);
   }, []);
 
   useEffect(() => {
@@ -658,34 +682,77 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  function reactionWritesForKnownMessage(msg: ServerMessage): ReactionWrite[] {
+    const clientId = msg.localId ?? msg.clientId;
+    if (clientId) {
+      return [{
+        kind: "link",
+        chatId: msg.chatId,
+        localId: clientId,
+        serverId: msg.id,
+        reactions: msg.reactions,
+      }];
+    }
+    if (!msg.reactions) return [];
+    return [{ kind: "snapshot", chatId: msg.chatId, messageId: msg.id, reactions: msg.reactions }];
+  }
+
+  function commitReactionWrites(writes: ReactionWrite[]) {
+    if (!writes.length) return;
+    const next = applyReactionWrites(messagesRef.current, writes);
+    if (next === messagesRef.current) return;
+    messagesRef.current = next;
+    setMessages(next);
+    AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(next)).catch(() => {});
+  }
+
+  function queueOrCommitReactionWrites(writes: ReactionWrite[]) {
+    if (!writes.length) return;
+    if (!hydrationComplete.current) {
+      pendingReactionWrites.current.push(...writes);
+      return;
+    }
+    commitReactionWrites(writes);
+  }
+
   useEffect(() => {
     const unsub = onNewMessage((msg, delivery: MessageDelivery = "live") => {
-      if (sentLocalIds.current.has(msg.localId ?? "")) {
-        sentLocalIds.current.delete(msg.localId!);
+      const clientId = msg.localId ?? msg.clientId;
+      const isOwnEcho = Boolean(clientId && sentLocalIds.current.has(clientId));
+      if (isOwnEcho && clientId) {
+        sentLocalIds.current.delete(clientId);
+        serverIdsByLocalId.current.set(clientId, msg.id);
+      }
+      // The sender's copy keeps the localId as `id`. The echo, a later replay,
+      // and a reaction fanout all have to land on that row instead of inserting
+      // a second bubble with the server uuid.
+      if (isOwnEcho || hasServerMessage(messagesRef.current, msg.chatId, msg.id, clientId)) {
+        seenMessageIds.current.add(msg.id);
+        queueOrCommitReactionWrites(reactionWritesForKnownMessage(msg));
         return;
       }
       // If storage hydration hasn't finished yet, buffer the message so that
       // the upcoming setMessages(loadedSnapshot) call cannot silently overwrite
       // it. The buffer is drained synchronously at the end of loadData().
       if (!hydrationComplete.current) {
+        if (msg.reactions && seenMessageIds.current.has(msg.id)) {
+          queueOrCommitReactionWrites(reactionWritesForKnownMessage(msg));
+          return;
+        }
         preHydrationBuffer.current.push({ msg, delivery });
         return;
       }
       // Atomically mark this server ID as seen. If it was already in the set
       // (e.g. both socket auto-reconnect and missed_messages replay delivered it
       // before the next render), bail out immediately so neither setMessages nor
-      // setChats run a second time.
-      if (seenMessageIds.current.has(msg.id)) return;
+      // setChats run a second time. A replay that includes reactions still applies them.
+      if (seenMessageIds.current.has(msg.id)) {
+        queueOrCommitReactionWrites(reactionWritesForKnownMessage(msg));
+        return;
+      }
       seenMessageIds.current.add(msg.id);
       const chatId = msg.chatId;
-      const newMsg: Message = {
-        id: msg.id,
-        chatId,
-        text: msg.text,
-        senderId: msg.senderId,
-        timestamp: msg.createdAt,
-        read: false,
-      };
+      const newMsg: Message = localFieldsFromServerMessage(msg);
       setMessages((prev) => {
         const existing = prev[chatId] || [];
         if (existing.some((m) => m.id === msg.id)) return prev;
@@ -768,6 +835,41 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     });
     return unsub;
   }, [onNewMessage]);
+
+  useEffect(() => {
+    const unsub = onMessageReaction((event: MessageReactionEvent) => {
+      queueOrCommitReactionWrites([{
+        kind: "snapshot",
+        chatId: event.chatId,
+        messageId: event.messageId,
+        clientId: event.clientId,
+        reactions: event.reactions,
+      }]);
+    });
+    return unsub;
+  }, [onMessageReaction]);
+
+  useEffect(() => {
+    refreshServerReactionsRef.current = (chatId: string) => {
+      const chat = chatsRef.current.find((item) => item.id === chatId);
+      if (!chat?.isServerChat) return;
+      void fetchMessages(chatId).then((remote) => {
+        if (activeChatIdRef.current !== chatId || remote.length === 0) return;
+        const writes: ReactionWrite[] = [];
+        for (const msg of remote) {
+          if (!msg.reactions) continue;
+          writes.push({
+            kind: "snapshot",
+            chatId,
+            messageId: msg.id,
+            clientId: msg.clientId ?? msg.localId,
+            reactions: msg.reactions,
+          });
+        }
+        commitReactionWrites(writes);
+      }).catch(() => {});
+    };
+  }, [fetchMessages]);
 
   // Surface parental contact-approval blocks: a message the server refused to
   // deliver is removed from local state (it was added optimistically) and the
@@ -1070,18 +1172,16 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       const bufferedForChats: ServerMessage[] = [];
       const bufferedMissedNotifications: NotificationMessage[] = [];
       for (const { msg, delivery } of buffered) {
-        if (seenMessageIds.current.has(msg.id)) continue;
+        const clientId = msg.localId ?? msg.clientId;
+        if (seenMessageIds.current.has(msg.id) || hasServerMessage(finalMsgs, msg.chatId, msg.id, clientId)) {
+          seenMessageIds.current.add(msg.id);
+          finalMsgs = applyReactionWrites(finalMsgs, reactionWritesForKnownMessage(msg));
+          continue;
+        }
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
         const existing = finalMsgs[chatId] || [];
-        const newMsg: Message = {
-          id: msg.id,
-          chatId,
-          text: msg.text,
-          senderId: msg.senderId,
-          timestamp: msg.createdAt,
-          read: false,
-        };
+        const newMsg: Message = localFieldsFromServerMessage(msg);
         finalMsgs = { ...finalMsgs, [chatId]: [...existing, newMsg] };
         bufferedForChats.push(msg);
         if (delivery === "missed") {
@@ -1150,6 +1250,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
+      // Reactions and send-echo id links that arrived during hydration.
+      finalMsgs = applyReactionWrites(finalMsgs, pendingReactionWrites.current.splice(0));
+      messagesRef.current = finalMsgs;
+
       // 5. Open the gate — from now on the handler processes messages directly.
       hydrationComplete.current = true;
     } catch (e) {
@@ -1160,17 +1264,18 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       // them through the normal handler path (seenMessageIds + state updates).
       const bufferedOnError = preHydrationBuffer.current.splice(0);
       for (const { msg } of bufferedOnError) {
-        if (seenMessageIds.current.has(msg.id)) continue;
+        const clientId = msg.localId ?? msg.clientId;
+        if (seenMessageIds.current.has(msg.id)) {
+          queueOrCommitReactionWrites(reactionWritesForKnownMessage(msg));
+          continue;
+        }
         seenMessageIds.current.add(msg.id);
         const chatId = msg.chatId;
-        const newMsg: Message = {
-          id: msg.id,
-          chatId,
-          text: msg.text,
-          senderId: msg.senderId,
-          timestamp: msg.createdAt,
-          read: false,
-        };
+        const newMsg: Message = localFieldsFromServerMessage(msg);
+        if (hasServerMessage(messagesRef.current, chatId, msg.id, clientId)) {
+          queueOrCommitReactionWrites(reactionWritesForKnownMessage(msg));
+          continue;
+        }
         setMessages((prev) => {
           const existing = prev[chatId] || [];
           if (existing.some((m) => m.id === msg.id)) return prev;
@@ -1213,6 +1318,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           return updated;
         });
       }
+      commitReactionWrites(pendingReactionWrites.current.splice(0));
     }
   }
 
@@ -1222,6 +1328,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   }
 
   async function saveMessages(updated: Record<string, Message[]>) {
+    messagesRef.current = updated;
     setMessages(updated);
     await AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated));
   }
@@ -1682,6 +1789,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
       const msg: Message = {
         id,
+        localId: id,
         chatId,
         text: storedText,
         senderId: myId,
@@ -1706,8 +1814,12 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         sendServerMessage(chatId, serverUserId, finalText, id);
       }
 
-      const chatMessages = messages[chatId] || [];
-      const updatedMessages = { ...messages, [chatId]: [...chatMessages, msg] };
+      const linkedServerId = serverIdsByLocalId.current.get(id);
+      if (linkedServerId) msg.serverMessageId = linkedServerId;
+
+      const base = messagesRef.current;
+      const chatMessages = base[chatId] || [];
+      const updatedMessages = { ...base, [chatId]: [...chatMessages.filter((m) => m.id !== id), msg] };
       await saveMessages(updatedMessages);
 
       const previewText = chat?.isEncrypted
@@ -1992,21 +2104,36 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   const addReaction = useCallback(
     async (chatId: string, messageId: string, emoji: string) => {
-      const chatMessages = messages[chatId] || [];
-      const updated = chatMessages.map((m) => {
-        if (m.id !== messageId) return m;
-        const reactions = { ...(m.reactions || {}) };
-        if (!reactions[emoji]) reactions[emoji] = [];
-        if (reactions[emoji].includes(myId)) {
-          reactions[emoji] = reactions[emoji].filter((id) => id !== myId);
-        } else {
-          reactions[emoji] = [...reactions[emoji], myId];
-        }
-        return { ...m, reactions };
-      });
-      await saveMessages({ ...messages, [chatId]: updated });
+      const chatMessages = messagesRef.current[chatId] || [];
+      const target = chatMessages.find((m) => m.id === messageId);
+      if (!target) return;
+      const postId = reactionPostId(
+        {
+          id: target.id,
+          serverMessageId: target.serverMessageId ?? serverIdsByLocalId.current.get(target.id),
+        },
+        messageId,
+      );
+      const next = {
+        ...messagesRef.current,
+        [chatId]: chatMessages.map((m) =>
+          m.id === messageId ? { ...m, reactions: toggleReaction(m.reactions, myId, emoji) } : m
+        ),
+      };
+      await saveMessages(next);
+      const chat = chatsRef.current.find((item) => item.id === chatId);
+      if (!chat?.isServerChat) return;
+      const result = await postMessageReaction(chatId, postId, emoji);
+      if (!result?.reactions) return;
+      queueOrCommitReactionWrites([{
+        kind: "snapshot",
+        chatId: result.chatId || chatId,
+        messageId: result.messageId || postId,
+        clientId: result.clientId,
+        reactions: result.reactions,
+      }]);
     },
-    [messages, myId]
+    [myId, postMessageReaction]
   );
 
   const editMessage = useCallback(

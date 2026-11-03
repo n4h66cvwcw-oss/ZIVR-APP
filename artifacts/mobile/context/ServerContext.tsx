@@ -49,6 +49,20 @@ export type ServerMessage = {
   type: string;
   createdAt: number;
   localId?: string;
+  /** Sender localId when a history row includes it. Reaction fanout calls this `clientId`. */
+  clientId?: string;
+  reactions?: Record<string, string[]>;
+};
+
+/** REST response and `message:reaction` fanout. `reactions` is the full map after the toggle. */
+export type MessageReactionEvent = {
+  messageId: string;
+  clientId?: string;
+  chatId: string;
+  emoji: string;
+  userId: string;
+  action: "added" | "removed";
+  reactions: Record<string, string[]>;
 };
 
 export type ServerChat = {
@@ -140,6 +154,7 @@ export type ContactApprovedHandler = (data: {
 }) => void;
 type TimeOverrideHandler = (data: { childId: string; overrideUntil: number | null }) => void;
 type ReadReceiptHandler = (data: { chatId: string; readByUserId: string; readAt: number }) => void;
+type MessageReactionHandler = (event: MessageReactionEvent) => void;
 type CheckinBroadcastHandler = (broadcast: ServerCheckInBroadcast) => void;
 type CheckinReplyHandler = (reply: ServerCheckInReply) => void;
 type CheckinProgressHandler = (data: { broadcastId: string; total: number; replied: number }) => void;
@@ -207,6 +222,13 @@ interface ServerContextValue {
   createServerGroupChat: (myUserId: string, name: string, memberIds: string[]) => Promise<GroupChatResult>;
   fetchMessages: (chatId: string, before?: number) => Promise<ServerMessage[]>;
   sendServerMessage: (chatId: string, senderId: string, text: string, localId?: string) => void;
+  /**
+   * Toggle a reaction. `messageId` is the server uuid when this phone knows it,
+   * otherwise the local message id (the sender's `localId` / reaction `clientId`).
+   * Body is `{ emoji }` only. Response matches `MessageReactionEvent`.
+   */
+  postMessageReaction: (chatId: string, messageId: string, emoji: string) => Promise<MessageReactionEvent | null>;
+  onMessageReaction: (handler: (event: MessageReactionEvent) => void) => () => void;
   listScheduledMessages: () => Promise<ScheduledMessage[]>;
   createScheduledMessage: (input: { chatId: string; text: string; scheduledFor: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
   updateScheduledMessage: (id: string, input: { text?: string; scheduledFor?: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
@@ -292,6 +314,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const messageHandlers = useRef<Set<MessageHandler>>(new Set());
   const typingHandlers = useRef<Set<(d: { chatId: string; userId: string; name: string; typing: boolean; emoji?: string }) => void>>(new Set());
   const readReceiptHandlers = useRef<Set<ReadReceiptHandler>>(new Set());
+  const reactionHandlers = useRef<Set<MessageReactionHandler>>(new Set());
   const messageBlockedHandlers = useRef<Set<MessageBlockedHandler>>(new Set());
   const contactRequestHandlers = useRef<Set<ContactRequestHandler>>(new Set());
   const contactApprovedHandlers = useRef<Set<ContactApprovedHandler>>(new Set());
@@ -446,6 +469,11 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
     socket.on("message:read", (data: { chatId: string; readByUserId: string; readAt: number }) => {
       readReceiptHandlers.current.forEach((h) => h(data));
+    });
+
+    socket.on("message:reaction", (data: MessageReactionEvent) => {
+      if (!data || typeof data.chatId !== "string" || typeof data.messageId !== "string") return;
+      reactionHandlers.current.forEach((h) => h(data));
     });
 
     socket.on("message:blocked", (data: {
@@ -781,6 +809,34 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     },
     []
   );
+
+  const postMessageReaction = useCallback(
+    async (chatId: string, messageId: string, emoji: string): Promise<MessageReactionEvent | null> => {
+      try {
+        const res = await fetch(
+          `${getApiBase()}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/reactions`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
+            body: JSON.stringify({ emoji }),
+          },
+        );
+        if (!res.ok) return null;
+        const data = await res.json() as MessageReactionEvent;
+        if (!data || typeof data.messageId !== "string" || typeof data.chatId !== "string") return null;
+        return data;
+      } catch (error) {
+        console.warn("[ServerContext] postMessageReaction error:", error);
+        return null;
+      }
+    },
+    [],
+  );
+
+  const onMessageReaction = useCallback((handler: MessageReactionHandler) => {
+    reactionHandlers.current.add(handler);
+    return () => { reactionHandlers.current.delete(handler); };
+  }, []);
 
   const scheduledRequest = useCallback(async <T,>(
     path: string,
@@ -1221,6 +1277,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         createServerGroupChat,
         fetchMessages,
         sendServerMessage,
+        postMessageReaction,
+        onMessageReaction,
         listScheduledMessages,
         createScheduledMessage,
         updateScheduledMessage,
