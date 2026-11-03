@@ -2,6 +2,8 @@
 
 Connects Claude Desktop, Cursor, or any stdio MCP client to one ZIVR **agent** sub-profile. The server is that agent's twin: it sends as the agent, and it pulls replies and files back into the model session.
 
+Signup, keys, and the HTTP API are in the [Agent API guide](../../docs/agent-api/README.md). Owner calls below send the app session in `X-Auth-Token`.
+
 It talks only to the agent HTTP API already on this branch:
 
 | Tool | API |
@@ -115,11 +117,11 @@ Reload MCP servers in Cursor after a rebuild.
 
 ## Push webhook
 
-Claude Desktop and Cursor cannot accept an inbound HTTP POST, so this server polls with `zivr_read_new`. If you run a host that can receive HTTP, register a webhook on **this** sub-profile (the one whose replies you want pushed). Use the owner's session, not the agent key. A webhook URL must be `https`, or `http` on localhost.
+Claude Desktop and Cursor cannot accept an inbound HTTP POST, so this server polls with `zivr_read_new`. If you run a host that can receive HTTP, register a webhook on **this** sub-profile (the one whose replies you want pushed). Use the owner's app session in `X-Auth-Token`, not the agent key and not the agent JWT. A webhook URL must be `https`, or `http` on localhost.
 
 ```bash
 curl -sS -X PUT "$ZIVR_API_BASE/v1/sub-profiles/$AGENT_ID/webhook" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://your-host.example/zivr/hooks"}'
 ```

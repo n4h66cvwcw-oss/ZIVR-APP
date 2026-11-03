@@ -58,6 +58,11 @@ ZIVR is a full-stack, real-time messaging application built with Expo React Nati
 │   ├── api-spec/          # OpenAPI 3.1 contract + Orval codegen
 │   ├── api-zod/           # Generated Zod schemas
 │   └── api-client-react/  # Generated React Query fetch client
+├── docs/
+│   └── agent-api/         # Third-party guide for /v1/agent twins
+├── packages/
+│   └── zivr-mcp/          # Claude Desktop and Cursor MCP server
+├── connectors/            # Custom GPT, Gemini, Perplexity, shared agent client
 └── scripts/               # Utility TypeScript scripts
 ```
 
@@ -133,6 +138,10 @@ pnpm --filter @workspace/api-spec run codegen
 ```
 
 ---
+
+## Agent twins
+
+External assistants join as Agent sub-profiles and call `/v1/agent` (the same routes are mounted at `/api/v1/agent`). Signup, the HTTP API, limits, and links to each connector are in [docs/agent-api](docs/agent-api/README.md).
 
 ## 🌐 API Routes
 

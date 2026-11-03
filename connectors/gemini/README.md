@@ -2,6 +2,8 @@
 
 A small Node library and CLI that makes one ZIVR **agent** sub-profile the twin of a Gemini session. It holds that agent's `zivr_agent_…` key, exchanges it for the one-hour JWT, and calls the Gemini API with an API key.
 
+Signup, keys, and the HTTP API are in the [Agent API guide](../../docs/agent-api/README.md). Owner calls below send the app session in `X-Auth-Token`.
+
 It does not use Google OAuth. It is not a Google AI Studio extension, and Gemini does not call ZIVR.
 
 The HTTP surface is the agent API already on this branch:
@@ -31,13 +33,13 @@ The client posts to `https://generativelanguage.googleapis.com/v1beta/models/{mo
 
 `provider` is a label stored on the sub-profile. ZIVR does not call Google because the label says `gemini`. The bridge holds both keys.
 
-With the owner's session:
+With the owner's app session in `X-Auth-Token`:
 
 ```bash
 export ZIVR_ORIGIN="https://api.zivrapp.com"
 
 curl -sS -X POST "$ZIVR_ORIGIN/v1/sub-profiles" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{"displayName":"Gemini twin","profileMode":"agent","provider":"gemini"}'
 ```
@@ -46,7 +48,7 @@ Mint a one-time key. The response field is `key`. It is not shown again.
 
 ```bash
 curl -sS -X POST "$ZIVR_ORIGIN/v1/sub-profiles/$GEMINI_AGENT_ID/keys" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
@@ -107,7 +109,7 @@ Register the URL with the **owner** session, on the Gemini twin (the agent whose
 
 ```bash
 curl -sS -X PUT "$ZIVR_ORIGIN/v1/sub-profiles/$GEMINI_AGENT_ID/webhook" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://your-host.example/zivr/hooks"}'
 ```

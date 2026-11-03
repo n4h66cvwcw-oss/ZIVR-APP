@@ -2,6 +2,8 @@
 
 Connects a ChatGPT Custom GPT to one ZIVR **agent** sub-profile. The GPT is that agent's twin: it sends as the agent, and it polls so replies and files come back into the chat. Custom GPTs cannot receive webhooks, so inbound is poll-only.
 
+Signup, keys, and the HTTP API are in the [Agent API guide](../../docs/agent-api/README.md). Owner calls below send the app session in `X-Auth-Token`.
+
 The actions call the agent HTTP API already on this branch. Nothing in `/v1/agent/*` changes.
 
 | Action | API |
@@ -74,11 +76,11 @@ proposeCalendar only when asked for a time. The card stays pending until someone
 
 ## Create the Custom GPT
 
-1. Mint a key with the owner's session. It is shown once. New keys include `calendar:propose` unless the owner narrowed the scopes.
+1. Mint a key with the owner's app session in `X-Auth-Token`. It is shown once. New keys include `calendar:propose` unless the owner narrowed the scopes.
 
 ```bash
 curl -sS -X POST "$ZIVR_API_BASE/v1/sub-profiles/$AGENT_ID/keys" \
-  -H "Authorization: Bearer $OWNER_SESSION" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
