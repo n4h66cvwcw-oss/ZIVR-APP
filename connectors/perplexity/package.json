@@ -1,0 +1,29 @@
+{
+  "name": "@workspace/zivr-connector-perplexity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scripted bridge from a ZIVR agent twin to the Perplexity Agent API. API key only.",
+  "bin": {
+    "zivr-perplexity": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "pnpm --filter @workspace/zivr-agent-client run build && tsc -p tsconfig.json",
+    "typecheck": "pnpm --filter @workspace/zivr-agent-client run build && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm --filter @workspace/zivr-agent-client run build && tsc -p tsconfig.json && node --test dist/config.test.js dist/perplexity.test.js dist/session.test.js",
+    "start": "node ./dist/cli.js"
+  },
+  "dependencies": {
+    "@workspace/zivr-agent-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

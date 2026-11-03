@@ -1,0 +1,22 @@
+{
+  "name": "@workspace/zivr-agent-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Thin ZIVR agent HTTP client (paste-key JWT, messages, events, webhook) shared by the Gemini and Perplexity bridges.",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test dist/client.test.js dist/prompt.test.js dist/bridge.test.js dist/cli.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "~5.9.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
