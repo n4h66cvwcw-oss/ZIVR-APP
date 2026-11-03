@@ -89,6 +89,17 @@ export async function migrate(): Promise<void> {
     ADD COLUMN IF NOT EXISTS media JSONB
   `);
 
+  // Emoji reactions: { "👍": ["user-uuid", ...] }. Empty object when nobody has reacted.
+  await query(`
+    ALTER TABLE vm_messages
+    ADD COLUMN IF NOT EXISTS reactions JSONB NOT NULL DEFAULT '{}'::jsonb
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS vm_messages_chat_client_id
+      ON vm_messages (chat_id, client_id)
+      WHERE client_id IS NOT NULL
+  `);
+
   await query(`
     CREATE TABLE IF NOT EXISTS vm_scheduled_messages (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -115,3 +115,26 @@ test("history JSON always emits numeric createdAt", () => {
   assert.equal(Number.isNaN(new Date(String(json.messages[0]?.createdAt)).getTime()), true);
   assert.equal(Number.isNaN(new Date(json.messages[0]?.createdAt as number).getTime()), false);
 });
+
+test("history includes reactions only when someone has reacted", () => {
+  const withReactions = serializeHistoryMessage({
+    id: "m1",
+    chatId: "c1",
+    senderId: "u1",
+    text: "hi",
+    type: "text",
+    createdAt: 10,
+    reactions: { "👍": ["u2"], "🎉": [] },
+  });
+  assert.deepEqual(withReactions.reactions, { "👍": ["u2"] });
+  const plain = serializeHistoryMessage({
+    id: "m2",
+    chatId: "c1",
+    senderId: "u1",
+    text: "hi",
+    type: "text",
+    createdAt: 11,
+    reactions: {},
+  });
+  assert.equal("reactions" in plain, false);
+});

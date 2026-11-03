@@ -125,10 +125,11 @@ async function emitMessageLocally(msg: FanoutMessage): Promise<void> {
 async function hydrateMessage(id: string): Promise<FanoutMessage | null> {
   const row = await queryOne<{
     id: string; chat_id: string; sender_id: string; client_id: string | null;
-    sender_name: string | null; text: string; type: string; media: unknown; created_at: string | number;
+    sender_name: string | null; text: string; type: string; media: unknown; reactions: unknown;
+    created_at: string | number;
   }>(
     `SELECT m.id, m.chat_id, m.sender_id, m.client_id, u.display_name AS sender_name,
-            m.text, m.type, m.media, m.created_at
+            m.text, m.type, m.media, m.reactions, m.created_at
        FROM vm_messages m JOIN vm_users u ON u.id = m.sender_id
       WHERE m.id = $1`,
     [id],
@@ -168,6 +169,16 @@ export async function fanoutEvent(rooms: string[], event: string, payload: unkno
   try { io?.to(rooms).emit(event, payload); } catch { /* best effort */ }
   try { await notify({ o: INSTANCE_ID, k: "evt", rooms, event, payload }); } catch (err) {
     console.error("[realtime-bus] event relay failed", err);
+  }
+}
+
+/** Deliver a small chat event (reaction, and the same rooms as a new message) to every member. */
+export async function fanoutChatEvent(chatId: string, event: string, payload: unknown): Promise<void> {
+  try {
+    const rooms = await memberRooms(chatId);
+    await fanoutEvent(rooms, event, payload);
+  } catch (err) {
+    console.error("[realtime-bus] chat event fanout failed", err);
   }
 }
 

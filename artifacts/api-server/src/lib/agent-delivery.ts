@@ -885,9 +885,10 @@ export async function listAgentChats(agentUserId: string): Promise<Array<Record<
 export async function listAgentEvents(agentUserId: string, since: number): Promise<SerializedMessage[]> {
   const rows = await query<{
     id: string; chatId: string; senderId: string; text: string; type: string;
-    createdAt: string | number; senderName: string | null; media: unknown; localId: string | null;
+    createdAt: string | number; senderName: string | null; media: unknown; reactions: unknown;
+    localId: string | null;
   }>(
-    `SELECT m.id, m.chat_id AS "chatId", m.sender_id AS "senderId", m.text, m.type, m.media,
+    `SELECT m.id, m.chat_id AS "chatId", m.sender_id AS "senderId", m.text, m.type, m.media, m.reactions,
             m.created_at AS "createdAt", m.client_id AS "localId", u.display_name AS "senderName"
        FROM vm_messages m
        JOIN vm_chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = $1
@@ -898,7 +899,15 @@ export async function listAgentEvents(agentUserId: string, since: number): Promi
     [agentUserId, since],
   );
   return rows.map((row) => serializedMessageFromRow(
-    { id: row.id, chat_id: row.chatId, text: row.text, type: row.type, media: row.media, created_at: row.createdAt },
+    {
+      id: row.id,
+      chat_id: row.chatId,
+      text: row.text,
+      type: row.type,
+      media: row.media,
+      reactions: row.reactions,
+      created_at: row.createdAt,
+    },
     { senderId: row.senderId, senderName: row.senderName ?? "Unknown", localId: row.localId },
   ));
 }

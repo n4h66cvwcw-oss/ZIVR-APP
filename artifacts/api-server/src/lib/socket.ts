@@ -409,11 +409,12 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
             text: string;
             type: string;
             media: unknown;
+            reactions: unknown;
             created_at: string | number;
           }>(
             `SELECT m.id, m.chat_id, m.sender_id, m.client_id,
                     u.display_name AS sender_name,
-                    m.text, m.type, m.media, m.created_at
+                    m.text, m.type, m.media, m.reactions, m.created_at
              FROM vm_messages m
              JOIN vm_users u ON u.id = m.sender_id
              WHERE m.created_at > $1
