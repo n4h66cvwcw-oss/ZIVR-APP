@@ -13,6 +13,8 @@
     "test:time-lock": "node --experimental-strip-types --test utils/time-lock-gate.test.ts",
     "test:checkins": "node --experimental-strip-types --test utils/checkin-state.test.ts",
     "test:messages": "node --experimental-strip-types --test utils/message-delivery.test.ts",
+    "test:recovery": "node --experimental-strip-types --test utils/recovery-email.test.ts",
+    "test:socket": "node --experimental-strip-types --test utils/socket-session.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/patch-expo-cli.js"
   },

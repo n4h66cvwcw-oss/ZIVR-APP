@@ -8,7 +8,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { AppState, AppStateStatus } from "react-native";
+import { AppState, AppStateStatus, Platform } from "react-native";
 import { io, Socket } from "socket.io-client";
 import {
   buildRecoveredAccountUpdate,
@@ -16,24 +16,44 @@ import {
 } from "@/utils/registration";
 import { useProfile } from "@/context/ProfileContext";
 import { clearCachedLanguageForIdentitySwitch } from "@/utils/language-sync";
+import { mapRecoveryEmailResponse, parseRetryAfterSeconds, type RecoveryEmailOutcome } from "@/utils/recovery-email";
 import {
+  SESSION_INVALID_MESSAGE,
+  pickRehydratedAuthToken,
   resolveServerIdentity,
   serializeServerIdentity,
 } from "@/utils/server-identity";
 import {
   outboxStorageKey,
   removeOutboxEntry,
+  restMessageBody,
+  socketMessagePayload,
   upsertOutboxEntry,
   type MessageOutboxEntry,
   type ServerImageMedia,
 } from "@/utils/message-outbox";
 import { coerceEpochMillis } from "@/utils/message-time";
+import {
+  JOIN_ACK_TIMEOUT_MS,
+  MAX_JOIN_ATTEMPTS,
+  advanceLastSeen,
+  computeJoinSince,
+  emptyDiagnostics,
+  isJoinAuthError,
+  joinPayload,
+  lastCaughtUpStorageKey,
+  lastSeenStorageKey,
+  shouldForceReconnect,
+  type SocketDiagnostics,
+} from "@/utils/socket-session";
 
 export type ServerUser = {
   id: string;
   displayName: string;
   username?: string;
   phone?: string;
+  /** Optional recovery email (vm_users.email); absent for phone-only accounts. */
+  email?: string | null;
   avatar?: string;
   statusMessage?: string;
   preferredLanguage?: string;
@@ -191,6 +211,12 @@ interface ServerContextValue {
   replaceRecoveryCode: () => Promise<boolean>;
   registerOnServer: (opts: RegistrationOptions) => Promise<RegistrationResult | null>;
   recoverServerAccount: (recoveryCode: string) => Promise<ServerUser | null>;
+  /** Public, unauthenticated: ask the server to email a recovery code (never returned to the client). */
+  requestRecoveryEmail: (target: { email?: string; phone?: string }) => Promise<RecoveryEmailOutcome>;
+  /** Authenticated: GET /users/:id/email — the signed-in user's recovery email, or null. */
+  fetchRecoveryEmail: () => Promise<string | null>;
+  /** Authenticated: PUT /users/:id/email (PATCH /users/:id fallback) to set/update the recovery email. */
+  updateRecoveryEmail: (email: string) => Promise<boolean>;
   updateServerProfile: (userId: string, updates: {
     displayName?: string;
     username?: string;
@@ -221,7 +247,7 @@ interface ServerContextValue {
     text: string,
     localId?: string,
     media?: ServerImageMedia,
-  ) => Promise<{ ok: true } | { ok: false; error: string; retryable: boolean; suppressed?: boolean }>;
+  ) => Promise<{ ok: true } | { ok: false; error: string; retryable: boolean; suppressed?: boolean; code?: string }>;
   listScheduledMessages: () => Promise<ScheduledMessage[]>;
   createScheduledMessage: (input: { chatId: string; text: string; scheduledFor: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
   updateScheduledMessage: (id: string, input: { text?: string; scheduledFor?: number; approvalReminderMinutes?: number | null }) => Promise<ScheduledMessage>;
@@ -275,6 +301,17 @@ const SECURE_SERVER_IDENTITY_KEY = "@zivr_server_identity";
 // The identity that was active before the last account switch (parent handoff)
 const PREVIOUS_IDENTITY_KEY = "@zivr_previous_identity";
 const PRODUCTION_API = "https://echo-stream.replit.app/api";
+const REGISTRATION_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REGISTRATION_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function getApiBase(): string {
   const override = process.env["EXPO_PUBLIC_API_URL"];
@@ -289,6 +326,29 @@ function getSocketUrl(): string {
   if (domain) return `https://${domain}`;
   return "https://echo-stream.replit.app";
 }
+
+const SOCKET_DIAGNOSTICS_ENABLED =
+  (typeof __DEV__ !== "undefined" && __DEV__) ||
+  process.env["EXPO_PUBLIC_E2E_DIAGNOSTICS"] === "1";
+
+/** While active and joined, re-run user:join with `since` so a dropped fan-out can be recovered. */
+const FOREGROUND_CATCH_UP_INTERVAL_MS = 90 * 1000;
+
+let socketDiagnostics: SocketDiagnostics = emptyDiagnostics("");
+
+function updateDiagnostics(patch: Partial<SocketDiagnostics>, event?: string) {
+  socketDiagnostics = { ...socketDiagnostics, ...patch };
+  if (SOCKET_DIAGNOSTICS_ENABLED && event) {
+    console.log(`[ServerContext][socket] ${event}`, JSON.stringify(patch));
+  }
+}
+
+/** Snapshot for a diagnostics screen. Transport-open is not the same as joined. */
+export function getSocketDiagnostics(): SocketDiagnostics {
+  return { ...socketDiagnostics };
+}
+
+export type { RecoveryEmailOutcome } from "@/utils/recovery-email";
 
 
 export function ServerProvider({ children }: { children: React.ReactNode }) {
@@ -316,17 +376,35 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const checkinProgressHandlers = useRef<Set<CheckinProgressHandler>>(new Set());
   const authTokenRef = useRef<string | null>(null);
   const outboxRef = useRef<MessageOutboxEntry[]>([]);
+  const outboxInFlightRef = useRef<Set<string>>(new Set());
   const flushOutboxRef = useRef<() => Promise<void>>(async () => {});
   // Tracks when the socket last disconnected so we can request missed messages on rejoin
   const disconnectTimeRef = useRef<number | null>(null);
   const serverUserIdRef = useRef<string | null>(null);
+  // Newest server createdAt this device has received (server clock).
+  const lastSeenMessageAtRef = useRef<number | null>(null);
+  const lastSeenLoadedForRef = useRef<string | null>(null);
+  // Device time of the last user:join the server acknowledged.
+  const lastCaughtUpAtRef = useRef<number | null>(null);
+  const pendingCatchUpAtRef = useRef<number | null>(null);
+  const candidateCatchUpAtRef = useRef<number | null>(null);
+  const socketUserIdRef = useRef<string | null>(null);
+  const backgroundedAtRef = useRef<number | null>(null);
+  // True only after the server acknowledged user:join with user:joined.
+  const userJoinedRef = useRef(false);
+  const joinAttemptsRef = useRef(0);
+  const joinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingChatJoinsRef = useRef<Set<string>>(new Set());
 
   async function persistServerIdentity(userId: string, authToken: string): Promise<void> {
+    authTokenRef.current = authToken;
+    cachedAuthToken = authToken;
     await AsyncStorage.multiSet([
       [SERVER_USER_KEY, userId],
       [SERVER_TOKEN_KEY, authToken],
     ]);
     try {
+      if (Platform.OS === "web") return;
       await SecureStore.setItemAsync(
         SECURE_SERVER_IDENTITY_KEY,
         serializeServerIdentity({ userId, authToken }),
@@ -364,7 +442,9 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       AsyncStorage.getItem(SERVER_USER_KEY),
       AsyncStorage.getItem(SERVER_TOKEN_KEY),
       AsyncStorage.getItem(PREVIOUS_IDENTITY_KEY),
-      SecureStore.getItemAsync(SECURE_SERVER_IDENTITY_KEY).catch(() => null),
+      Platform.OS === "web"
+        ? Promise.resolve(null)
+        : SecureStore.getItemAsync(SECURE_SERVER_IDENTITY_KEY).catch(() => null),
     ]).then(async ([localId, localToken, prevRaw, secureIdentity]) => {
       if (prevRaw) {
         try { setPreviousUserId((JSON.parse(prevRaw) as { userId: string }).userId); } catch { /* ignore */ }
@@ -393,36 +473,196 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Re-connect and catch up on missed messages when the app returns to foreground
+  // Re-connect and catch up when the app returns to foreground.
+  // `since` is sent on every user:join so missed_messages can recover drops.
   useEffect(() => {
     function handleAppStateChange(nextState: AppStateStatus) {
-      if (nextState === "active") {
-        const userId = serverUserIdRef.current;
-        if (!userId) return;
-        if (!socketRef.current) {
-          connectSocket(userId);
-          return;
-        }
-        if (!socketRef.current.connected) {
-          // Socket.io auto-reconnects, but if it hasn't yet we nudge it manually
-          socketRef.current.connect();
-        } else {
-          // Already connected — re-emit user:join so the server rejoins us to
-          // all chat rooms and sends any messages we missed while backgrounded.
-          const since = disconnectTimeRef.current ?? undefined;
-          socketRef.current.emit("user:join", since ? { userId, since } : userId);
-        }
+      if (nextState === "background" || nextState === "inactive") {
+        if (backgroundedAtRef.current === null) backgroundedAtRef.current = Date.now();
+        return;
       }
+      if (nextState !== "active") return;
+      const userId = serverUserIdRef.current;
+      if (!userId) return;
+      const socket = socketRef.current;
+      if (!socket) {
+        connectSocket(userId);
+        return;
+      }
+      if (!socket.connected) {
+        // Socket.io auto-reconnects; nudge it. "connect" will send user:join.
+        socket.connect();
+        return;
+      }
+      if (shouldForceReconnect(backgroundedAtRef.current, Date.now())) {
+        // After a long background the OS may have frozen the websocket while
+        // socket.connected still reads true. Force a fresh transport.
+        updateDiagnostics({}, "foreground: forcing reconnect");
+        if (disconnectTimeRef.current === null) disconnectTimeRef.current = backgroundedAtRef.current;
+        socket.disconnect();
+        socket.connect();
+        return;
+      }
+      sendUserJoin(socket, userId, "foreground");
     }
 
     const sub = AppState.addEventListener("change", handleAppStateChange);
-    return () => sub.remove();
+    const interval = setInterval(() => {
+      const socket = socketRef.current;
+      const userId = serverUserIdRef.current;
+      if (!socket?.connected || !userId || !userJoinedRef.current) return;
+      if (AppState.currentState !== "active") return;
+      sendUserJoin(socket, userId, "periodic catch-up");
+    }, FOREGROUND_CATCH_UP_INTERVAL_MS);
+    return () => {
+      sub.remove();
+      clearInterval(interval);
+    };
   }, []);
 
-  function connectSocket(userId: string) {
-    if (socketRef.current?.connected) return;
+  async function loadLastSeen(userId: string): Promise<void> {
+    if (lastSeenLoadedForRef.current === userId) return;
+    lastSeenLoadedForRef.current = userId;
+    try {
+      const [[, rawSeen], [, rawCaughtUp]] = await AsyncStorage.multiGet([
+        lastSeenStorageKey(userId),
+        lastCaughtUpStorageKey(userId),
+      ]);
+      if (serverUserIdRef.current !== userId) return;
+      const seen = rawSeen ? Number(rawSeen) : NaN;
+      if (Number.isFinite(seen)) {
+        lastSeenMessageAtRef.current = advanceLastSeen(lastSeenMessageAtRef.current, seen);
+      }
+      const caughtUp = rawCaughtUp ? Number(rawCaughtUp) : NaN;
+      if (Number.isFinite(caughtUp) && lastCaughtUpAtRef.current === null) {
+        lastCaughtUpAtRef.current = caughtUp;
+      }
+    } catch { /* catch-up falls back to device gap markers */ }
+  }
 
-    const socket = io(getSocketUrl(), {
+  function noteMessageSeen(createdAt: unknown) {
+    const prev = lastSeenMessageAtRef.current;
+    const next = advanceLastSeen(prev, createdAt);
+    if (next === prev || next === null) return;
+    lastSeenMessageAtRef.current = next;
+    updateDiagnostics({ lastSeenMessageAt: next });
+    const userId = serverUserIdRef.current;
+    if (userId) AsyncStorage.setItem(lastSeenStorageKey(userId), String(next)).catch(() => {});
+  }
+
+  function commitCatchUpCandidate(userId: string) {
+    const candidate = candidateCatchUpAtRef.current;
+    candidateCatchUpAtRef.current = null;
+    if (candidate === null) return;
+    if (lastCaughtUpAtRef.current !== null && candidate <= lastCaughtUpAtRef.current) return;
+    lastCaughtUpAtRef.current = candidate;
+    updateDiagnostics({ lastCaughtUpAt: candidate });
+    AsyncStorage.setItem(lastCaughtUpStorageKey(userId), String(candidate)).catch(() => {});
+  }
+
+  function clearJoinTimer() {
+    if (joinTimerRef.current) {
+      clearTimeout(joinTimerRef.current);
+      joinTimerRef.current = null;
+    }
+  }
+
+  function markNotJoined(reason: string | null) {
+    clearJoinTimer();
+    pendingCatchUpAtRef.current = null;
+    candidateCatchUpAtRef.current = null;
+    userJoinedRef.current = false;
+    setIsConnected(false);
+    updateDiagnostics(
+      reason ? { userJoined: false, lastError: reason, lastErrorAt: Date.now() } : { userJoined: false },
+      reason ? "not joined" : undefined,
+    );
+  }
+
+  function resetRealtimeAnchors() {
+    lastSeenMessageAtRef.current = null;
+    lastSeenLoadedForRef.current = null;
+    lastCaughtUpAtRef.current = null;
+    pendingCatchUpAtRef.current = null;
+    candidateCatchUpAtRef.current = null;
+    pendingChatJoinsRef.current.clear();
+    disconnectTimeRef.current = null;
+    backgroundedAtRef.current = null;
+  }
+
+  /**
+   * Send user:join with a catch-up `since`, and re-send if the server never
+   * acknowledges. Connected stays false until `user:joined`.
+   */
+  function sendUserJoin(socket: Socket, userId: string, reason: string) {
+    if (!socket.connected || socketRef.current !== socket) return;
+    clearJoinTimer();
+    const since = computeJoinSince({
+      lastCaughtUpAt: lastCaughtUpAtRef.current,
+      lastSeenMessageAt: lastSeenMessageAtRef.current,
+      lastDisconnectAt: disconnectTimeRef.current,
+      lastBackgroundAt: backgroundedAtRef.current,
+      now: Date.now(),
+    });
+    joinAttemptsRef.current += 1;
+    if (pendingCatchUpAtRef.current === null) pendingCatchUpAtRef.current = Date.now();
+    socket.emit("user:join", joinPayload(userId, since));
+    updateDiagnostics({
+      joinAttempts: joinAttemptsRef.current,
+      lastJoinSentAt: Date.now(),
+      lastJoinSince: since ?? null,
+    }, `user:join (${reason})`);
+    joinTimerRef.current = setTimeout(() => {
+      joinTimerRef.current = null;
+      if (userJoinedRef.current || socketRef.current !== socket || !socket.connected) return;
+      if (joinAttemptsRef.current >= MAX_JOIN_ATTEMPTS) {
+        markNotJoined("user:join not acknowledged");
+        return;
+      }
+      sendUserJoin(socket, userId, "retry");
+    }, JOIN_ACK_TIMEOUT_MS * Math.min(joinAttemptsRef.current, 3));
+  }
+
+  function joinChatRoom(chatId: string) {
+    const socket = socketRef.current;
+    if (socket?.connected && userJoinedRef.current) {
+      socket.emit("chat:join", chatId);
+    } else {
+      pendingChatJoinsRef.current.add(chatId);
+    }
+  }
+
+  function teardownSocket() {
+    clearJoinTimer();
+    const old = socketRef.current;
+    socketRef.current = null;
+    if (old) {
+      old.removeAllListeners();
+      old.disconnect();
+    }
+    socketUserIdRef.current = null;
+    pendingCatchUpAtRef.current = null;
+    candidateCatchUpAtRef.current = null;
+    userJoinedRef.current = false;
+    setIsConnected(false);
+  }
+
+  function connectSocket(userId: string) {
+    const existing = socketRef.current;
+    if (existing && socketUserIdRef.current !== userId) {
+      teardownSocket();
+    } else if (existing && (existing.connected || existing.active)) {
+      if (!existing.connected) existing.connect();
+      return;
+    }
+    if (socketRef.current) teardownSocket();
+
+    const serverUrl = getSocketUrl();
+    socketDiagnostics = emptyDiagnostics(serverUrl);
+    updateDiagnostics({ userId, lastSeenMessageAt: lastSeenMessageAtRef.current }, "connectSocket");
+    void loadLastSeen(userId);
+
+    const socket = io(serverUrl, {
       path: "/api/socket.io",
       transports: ["websocket", "polling"],
       reconnection: true,
@@ -430,30 +670,85 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       timeout: 10000,
       auth: (cb) => cb({ token: authTokenRef.current }),
     });
+    socketRef.current = socket;
+    socketUserIdRef.current = userId;
 
     socket.on("connect", () => {
+      // Transport is up, but we are NOT ready until user:joined arrives.
+      userJoinedRef.current = false;
+      joinAttemptsRef.current = 0;
+      setIsConnected(false);
+      updateDiagnostics({ transportConnected: true, socketId: socket.id ?? null, userJoined: false }, "connect");
+      void loadLastSeen(userId).finally(() => {
+        if (socketRef.current === socket) sendUserJoin(socket, userId, "connect");
+      });
+    });
+
+    socket.on("user:joined", (data: { userId?: string; chatRooms?: string[] }) => {
+      if (socketRef.current !== socket) return;
+      if (data?.userId && data.userId !== userId) {
+        markNotJoined(`user:joined for unexpected user ${data.userId}`);
+        return;
+      }
+      clearJoinTimer();
+      userJoinedRef.current = true;
       setIsConnected(true);
-      // Pass `since` so the server can deliver messages missed during the gap
-      const since = disconnectTimeRef.current ?? undefined;
-      socket.emit("user:join", since ? { userId, since } : userId);
+      joinAttemptsRef.current = 0;
+      commitCatchUpCandidate(userId);
+      candidateCatchUpAtRef.current = pendingCatchUpAtRef.current;
+      pendingCatchUpAtRef.current = null;
       disconnectTimeRef.current = null;
+      backgroundedAtRef.current = null;
+      updateDiagnostics({
+        userJoined: true,
+        lastJoinedAt: Date.now(),
+        joinedRoomCount: Array.isArray(data?.chatRooms) ? data.chatRooms.length : null,
+      }, "user:joined");
+      const pending = [...pendingChatJoinsRef.current];
+      pendingChatJoinsRef.current.clear();
+      pending.forEach((chatId) => socket.emit("chat:join", chatId));
       void flushOutboxRef.current();
     });
 
-    socket.on("disconnect", () => {
+    socket.on("error", (payload: unknown) => {
+      const message = typeof (payload as { message?: unknown } | null)?.message === "string"
+        ? (payload as { message: string }).message
+        : String(payload);
+      if (isJoinAuthError(payload)) {
+        markNotJoined(message);
+      } else {
+        updateDiagnostics({ lastError: message, lastErrorAt: Date.now() }, "server error");
+      }
+    });
+
+    socket.on("disconnect", (reason: string) => {
+      clearJoinTimer();
+      pendingCatchUpAtRef.current = null;
+      candidateCatchUpAtRef.current = null;
+      userJoinedRef.current = false;
       setIsConnected(false);
-      disconnectTimeRef.current = Date.now();
+      if (disconnectTimeRef.current === null) disconnectTimeRef.current = Date.now();
+      updateDiagnostics({ transportConnected: false, userJoined: false, lastError: `disconnect: ${reason}`, lastErrorAt: Date.now() }, "disconnect");
     });
 
     socket.on("message:new", (msg: ServerMessage) => {
-      messageHandlers.current.forEach((h) => h(msg, "live"));
+      noteMessageSeen(msg?.createdAt);
+      updateDiagnostics({ lastMessageNewAt: Date.now() });
+      const createdAt = coerceEpochMillis(msg?.createdAt);
+      const normalized = { ...msg, createdAt: Number.isFinite(createdAt) ? createdAt : 0 };
+      messageHandlers.current.forEach((h) => h(normalized, "live"));
     });
 
     // Deliver any messages that arrived while the socket was disconnected
     socket.on("missed_messages", (data: { messages: ServerMessage[] }) => {
       if (Array.isArray(data?.messages)) {
+        updateDiagnostics({ lastMissedBatchSize: data.messages.length }, "missed_messages");
+        queueMicrotask(() => { if (socketRef.current === socket) commitCatchUpCandidate(userId); });
         data.messages.forEach((msg) => {
-          messageHandlers.current.forEach((h) => h(msg, "missed"));
+          noteMessageSeen(msg?.createdAt);
+          const createdAt = coerceEpochMillis(msg?.createdAt);
+          const normalized = { ...msg, createdAt: Number.isFinite(createdAt) ? createdAt : 0 };
+          messageHandlers.current.forEach((h) => h(normalized, "missed"));
         });
       }
     });
@@ -505,9 +800,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
 
     socket.on("connect_error", (err) => {
       console.log("[ServerContext] socket connect_error:", err.message);
+      updateDiagnostics({ lastError: `connect_error: ${err.message}`, lastErrorAt: Date.now() }, "connect_error");
     });
-
-    socketRef.current = socket;
   }
 
   const registerOnServer = useCallback(
@@ -575,14 +869,11 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json() as { user?: ServerUser; authToken?: string };
         if (!data.user?.id || !data.authToken) return null;
 
-        authTokenRef.current = data.authToken;
-        cachedAuthToken = data.authToken;
         await persistServerIdentity(data.user.id, data.authToken);
         setServerUserId(data.user.id);
         serverUserIdRef.current = data.user.id;
-        socketRef.current?.disconnect();
-        socketRef.current = null;
-        disconnectTimeRef.current = null;
+        resetRealtimeAnchors();
+        teardownSocket();
         connectSocket(data.user.id);
         return data.user;
       } catch (error) {
@@ -592,6 +883,67 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     },
     []
   );
+
+  const requestRecoveryEmail = useCallback(
+    async (target: { email?: string; phone?: string }): Promise<RecoveryEmailOutcome> => {
+      const email = target.email?.trim() || undefined;
+      const phone = target.phone?.trim() || undefined;
+      if (!email && !phone) return { result: "missing_target" };
+      try {
+        const res = await fetchWithTimeout(`${getApiBase()}/users/recover/request-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...(email ? { email } : {}), ...(phone ? { phone } : {}) }),
+        });
+        if (res.ok) return { result: "sent" };
+        const body = await res.json().catch(() => ({})) as { error?: unknown; retryAfterSeconds?: unknown };
+        const errorCode = typeof body.error === "string" ? body.error : undefined;
+        const result = mapRecoveryEmailResponse(res.status, errorCode);
+        if (result === "rate_limited") {
+          return { result, retryAfterSeconds: parseRetryAfterSeconds(body.retryAfterSeconds, res.headers?.get?.("Retry-After")) };
+        }
+        return { result };
+      } catch (error) {
+        console.warn("[ServerContext] recovery email request failed", error);
+        return { result: "network_error" };
+      }
+    },
+    []
+  );
+
+  const fetchRecoveryEmail = useCallback(async (): Promise<string | null> => {
+    const userId = serverUserIdRef.current;
+    if (!userId) return null;
+    try {
+      const res = await fetchWithTimeout(`${getApiBase()}/users/${userId}/email`, {
+        headers: await getAuthHeaders(),
+      });
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => ({})) as { email?: unknown };
+      return typeof body.email === "string" && body.email.trim() ? body.email.trim() : null;
+    } catch (error) {
+      console.warn("[ServerContext] fetchRecoveryEmail failed", error);
+      return null;
+    }
+  }, []);
+
+  const updateRecoveryEmail = useCallback(async (email: string): Promise<boolean> => {
+    const userId = serverUserIdRef.current;
+    const clean = email.trim();
+    if (!userId || !clean) return false;
+    const headers = { "Content-Type": "application/json", ...(await getAuthHeaders()) };
+    const body = JSON.stringify({ email: clean });
+    try {
+      const res = await fetchWithTimeout(`${getApiBase()}/users/${userId}/email`, { method: "PUT", headers, body });
+      if (res.ok) return true;
+      if (res.status !== 404 && res.status !== 405) return false;
+      const fallback = await fetchWithTimeout(`${getApiBase()}/users/${userId}`, { method: "PATCH", headers, body });
+      return fallback.ok;
+    } catch (error) {
+      console.warn("[ServerContext] updateRecoveryEmail failed", error);
+      return false;
+    }
+  }, []);
 
   const acknowledgeRecoveryCode = useCallback(async (): Promise<boolean> => {
     const userId = serverUserIdRef.current;
@@ -656,7 +1008,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
           return { chatId: null, approval: err.approval, error: err.error };
         }
         const data = await res.json() as { chatId: string };
-        socketRef.current?.emit("chat:join", data.chatId);
+        joinChatRoom(data.chatId);
         return { chatId: data.chatId };
       } catch {
         return { chatId: null, error: "Network error" };
@@ -684,15 +1036,11 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     if (prevId !== userId) {
       await updateProfile(clearCachedLanguageForIdentitySwitch());
     }
-    authTokenRef.current = authToken;
-    cachedAuthToken = authToken;
     await persistServerIdentity(userId, authToken);
     setServerUserId(userId);
     serverUserIdRef.current = userId;
-    // Reconnect the socket as the new identity
-    socketRef.current?.disconnect();
-    socketRef.current = null;
-    disconnectTimeRef.current = null;
+    resetRealtimeAnchors();
+    teardownSocket();
     connectSocket(userId);
     void provisionRecoveryCode(userId, authToken);
   }, [updateProfile]);
@@ -708,14 +1056,11 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       if (serverUserIdRef.current !== prev.userId) {
         await updateProfile(clearCachedLanguageForIdentitySwitch());
       }
-      authTokenRef.current = prev.authToken;
-      cachedAuthToken = prev.authToken;
-    await persistServerIdentity(prev.userId, prev.authToken);
+      await persistServerIdentity(prev.userId, prev.authToken);
       setServerUserId(prev.userId);
       serverUserIdRef.current = prev.userId;
-      socketRef.current?.disconnect();
-      socketRef.current = null;
-      disconnectTimeRef.current = null;
+      resetRealtimeAnchors();
+      teardownSocket();
       connectSocket(prev.userId);
       void provisionRecoveryCode(prev.userId, prev.authToken);
       return true;
@@ -768,7 +1113,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
           return { chatId: null, approval: err.approval, error: err.error };
         }
         const data = await res.json() as { chatId: string };
-        socketRef.current?.emit("chat:join", data.chatId);
+        joinChatRoom(data.chatId);
         return { chatId: data.chatId };
       } catch {
         return { chatId: null, error: "Network error" };
@@ -801,66 +1146,76 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const postOutboxEntry = useCallback(async (entry: MessageOutboxEntry) => {
-    const res = await fetch(`${getApiBase()}/chats/${entry.chatId}/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(await getAuthHeaders()) },
-      body: JSON.stringify({
-        text: entry.text,
-        type: entry.media ? "image" : "text",
-        clientId: entry.localId,
-        ...(entry.media ? { media: entry.media } : {}),
-      }),
-    });
+    const send = async () => {
+      const headers = await getAuthHeaders();
+      if (headers["X-Auth-Token"] && !authTokenRef.current) {
+        authTokenRef.current = headers["X-Auth-Token"];
+      }
+      return fetch(`${getApiBase()}/chats/${entry.chatId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify(restMessageBody(entry)),
+      });
+    };
+    let res = await send();
+    if (res.status === 401) {
+      const recovered = await rehydrateAuthToken(cachedAuthToken);
+      if (recovered) authTokenRef.current = recovered;
+      res = await send();
+    }
     const data = await res.json().catch(() => ({})) as { error?: string; code?: string; approval?: string };
     if (res.ok) return { ok: true as const };
     const status = data.code || data.approval || "";
+    const authFailed = res.status === 401 || status === "auth";
     return {
       ok: false as const,
-      error: data.error ?? "Message not delivered",
+      error: authFailed ? SESSION_INVALID_MESSAGE : (data.error ?? "Message not delivered"),
       retryable: res.status >= 500,
       suppressed: status === "blocked" || status === "pending" || status === "group_limit",
+      ...(authFailed ? { code: "auth" } : status ? { code: status } : {}),
     };
   }, []);
 
   const deliverOutboxEntry = useCallback(async (entry: MessageOutboxEntry) => {
-    const payload = {
-      chatId: entry.chatId,
-      senderId: entry.ownerUserId,
-      text: entry.text,
-      type: entry.media ? "image" : "text",
-      localId: entry.localId,
-      ...(entry.media ? { media: entry.media } : {}),
-    };
-    const socket = socketRef.current;
-    if (socket?.connected) {
-      const acked = await new Promise<{ ok: boolean; error?: string; status?: string } | null>((resolve) => {
-        let settled = false;
-        const finish = (value: { ok: boolean; error?: string; status?: string } | null) => {
-          if (settled) return;
-          settled = true;
-          resolve(value);
-        };
-        socket.timeout(20000).emit("message:send", payload, (err: unknown, result?: { ok: boolean; error?: string; status?: string }) => {
-          if (err || !result) finish(null);
-          else finish(result);
-        });
-      });
-      if (acked?.ok) {
-        persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
-        return { ok: true as const };
-      }
-      const terminal = acked?.status != null && ["invalid", "auth", "not_member", "blocked", "pending", "group_limit"].includes(acked.status);
-      if (acked && acked.ok === false && terminal) {
-        persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
-        return {
-          ok: false as const,
-          error: acked.error ?? "Message not delivered",
-          retryable: false,
-          suppressed: acked.status === "blocked" || acked.status === "pending" || acked.status === "group_limit",
-        };
-      }
+    const flightKey = `${entry.ownerUserId}:${entry.localId}`;
+    if (outboxInFlightRef.current.has(flightKey)) {
+      return { ok: false as const, error: "Message not delivered", retryable: true };
     }
+    outboxInFlightRef.current.add(flightKey);
     try {
+      const payload = socketMessagePayload(entry);
+      const socket = socketRef.current;
+      // An unjoined socket rejects message:send as auth. REST uses X-Auth-Token
+      // and is the path until user:joined, including image data URLs.
+      if (socket?.connected && userJoinedRef.current) {
+        const acked = await new Promise<{ ok: boolean; error?: string; status?: string } | null>((resolve) => {
+          let settled = false;
+          const finish = (value: { ok: boolean; error?: string; status?: string } | null) => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+          };
+          socket.timeout(20000).emit("message:send", payload, (err: unknown, result?: { ok: boolean; error?: string; status?: string }) => {
+            if (err || !result) finish(null);
+            else finish(result);
+          });
+        });
+        if (acked?.ok) {
+          persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
+          return { ok: true as const };
+        }
+        const terminal = acked?.status != null && ["invalid", "not_member", "blocked", "pending", "group_limit"].includes(acked.status);
+        if (acked && acked.ok === false && terminal) {
+          persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
+          return {
+            ok: false as const,
+            error: acked.error ?? "Message not delivered",
+            retryable: false,
+            suppressed: acked.status === "blocked" || acked.status === "pending" || acked.status === "group_limit",
+            code: acked.status,
+          };
+        }
+      }
       const posted = await postOutboxEntry(entry);
       if (posted.ok || !posted.retryable) {
         persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
@@ -868,6 +1223,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       return posted;
     } catch {
       return { ok: false as const, error: "Message not delivered", retryable: true };
+    } finally {
+      outboxInFlightRef.current.delete(flightKey);
     }
   }, [persistOutbox, postOutboxEntry]);
 
@@ -890,11 +1247,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       media?: ServerImageMedia,
     ) => {
       if (!localId) {
-        if (!socketRef.current?.connected) {
-          return { ok: false as const, error: "Message not delivered", retryable: true };
-        }
-        socketRef.current.emit("message:send", { chatId, senderId, text, type: media ? "image" : "text", media });
-        return { ok: true as const };
+        return { ok: false as const, error: "Message not delivered", retryable: true };
       }
       const entry: MessageOutboxEntry = { chatId, text, localId, ownerUserId: senderId, ...(media ? { media } : {}) };
       persistOutbox(senderId, upsertOutboxEntry(outboxRef.current, entry));
@@ -1349,6 +1702,9 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         replaceRecoveryCode,
         registerOnServer,
         recoverServerAccount,
+        requestRecoveryEmail,
+        fetchRecoveryEmail,
+        updateRecoveryEmail,
         updateServerProfile,
         fetchServerUser,
         findUsers,
@@ -1407,10 +1763,30 @@ export function useServer() {
 
 let cachedAuthToken: string | null = null;
 
+/**
+ * Re-read the auth token from AsyncStorage, falling back to the SecureStore
+ * recovery identity. When `rejectedToken` is given (REST 401), a different
+ * stored copy is preferred. Restores AsyncStorage from SecureStore if missing.
+ */
+async function rehydrateAuthToken(rejectedToken: string | null = null): Promise<string | null> {
+  const localToken = await AsyncStorage.getItem(SERVER_TOKEN_KEY).catch(() => null);
+  const secureIdentity = Platform.OS === "web"
+    ? null
+    : await SecureStore.getItemAsync(SECURE_SERVER_IDENTITY_KEY).catch(() => null);
+  const token = pickRehydratedAuthToken(localToken, secureIdentity, rejectedToken);
+  if (token) {
+    cachedAuthToken = token;
+    if (token !== localToken) {
+      await AsyncStorage.setItem(SERVER_TOKEN_KEY, token).catch(() => {});
+    }
+  }
+  return token;
+}
+
 /** Auth headers for server requests that require a proven identity. */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
   if (!cachedAuthToken) {
-    cachedAuthToken = await AsyncStorage.getItem(SERVER_TOKEN_KEY);
+    await rehydrateAuthToken();
   }
   return cachedAuthToken ? { "X-Auth-Token": cachedAuthToken } : {};
 }
