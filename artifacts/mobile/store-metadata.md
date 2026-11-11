@@ -74,10 +74,10 @@ messaging,encrypted,secure,calls,music,group chat,privacy,E2E,voice call,video c
 - Unrestricted Web Access: No
 
 ## Support URL
-https://YOUR_DEPLOYED_DOMAIN/zivr-website/support
+https://zivrapp.com/support
 
 ## Privacy Policy URL
-https://YOUR_DEPLOYED_DOMAIN/zivr-website/privacy
+https://zivrapp.com/privacy
 
 ## Marketing URL (optional)
 https://YOUR_DEPLOYED_DOMAIN/zivr-website/
