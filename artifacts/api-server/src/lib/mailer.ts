@@ -1,15 +1,10 @@
-import net from "node:net";
-import tls from "node:tls";
+import nodemailer from "nodemailer";
 
 /**
- * Moderation notices.
- *
- * api-server does not import a mail library today. `nodemailer` is only named
- * in build.mjs as an esbuild external placeholder and is not installed.
- * This module sends through the process SMTP settings (SMTP_HOST / SMTP_PORT /
- * SMTP_USER / SMTP_PASS / SMTP_FROM) with Node's net/tls sockets so report
- * creation does not take a new dependency. When SMTP_HOST is unset the notice
- * is logged and not delivered — dev and tests must not send real mail.
+ * Moderation notices via nodemailer.
+ * SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM.
+ * Port 465 uses implicit TLS (`secure`). Port 587 requires STARTTLS (`requireTLS`).
+ * Credentials and AUTH payloads are never logged.
  */
 
 export type ModerationNotice = {
@@ -25,42 +20,166 @@ export type ModerationNotice = {
   createdAt: number;
 };
 
+export type MailTransportOptions = {
+  host: string;
+  port: number;
+  secure: boolean;
+  requireTLS: boolean;
+  auth?: { user: string; pass: string };
+};
+
+type OutgoingMail = { from: string; to: string; subject: string; text: string };
+
+type MailTransport = {
+  sendMail: (mail: OutgoingMail) => Promise<unknown>;
+};
+
 const DEFAULT_MODERATION_EMAIL = "support@zivrapp.com";
+const MAX_ATTEMPTS = 3;
+
+let bootWarned = false;
+let retryDelayMs = 400;
+
+export function stripHeaderBreaks(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").replace(/[ \t]{2,}/g, " ").trim();
+}
 
 export function moderationInbox(): string {
   const configured = process.env["MODERATION_EMAIL"]?.trim();
-  return configured || DEFAULT_MODERATION_EMAIL;
+  return stripHeaderBreaks(configured || DEFAULT_MODERATION_EMAIL);
 }
 
 export function formatModerationNotice(notice: ModerationNotice): { subject: string; text: string } {
-  const handle = (value: string | null) => value?.trim() || "(no handle)";
+  const handle = (value: string | null) => {
+    const clean = value ? stripHeaderBreaks(value) : "";
+    return clean || "(no handle)";
+  };
+  const details = notice.details?.replace(/\r/g, "").trim() || "(none)";
   const text = [
     "A ZIVR user submitted a content report.",
     "",
-    `Report ID: ${notice.reportId}`,
+    `Report ID: ${stripHeaderBreaks(notice.reportId)}`,
     `Created at: ${new Date(notice.createdAt).toISOString()} (${notice.createdAt})`,
-    `Reporter: ${notice.reporterId} / ${handle(notice.reporterHandle)}`,
-    `Reported user: ${notice.reportedUserId} / ${handle(notice.reportedHandle)}`,
-    `Message ID: ${notice.messageId ?? "(none)"}`,
-    `Chat ID: ${notice.chatId ?? "(none)"}`,
-    `Reason: ${notice.reason}`,
-    `Details: ${notice.details?.trim() || "(none)"}`,
+    `Reporter: ${stripHeaderBreaks(notice.reporterId)} / ${handle(notice.reporterHandle)}`,
+    `Reported user: ${stripHeaderBreaks(notice.reportedUserId)} / ${handle(notice.reportedHandle)}`,
+    `Message ID: ${notice.messageId ? stripHeaderBreaks(notice.messageId) : "(none)"}`,
+    `Chat ID: ${notice.chatId ? stripHeaderBreaks(notice.chatId) : "(none)"}`,
+    `Reason: ${stripHeaderBreaks(notice.reason)}`,
+    `Details: ${details}`,
     "",
     "Apple App Store Guideline 1.2 expects this report to be acted on within 24 hours.",
   ].join("\n");
   return {
-    subject: `ZIVR content report ${notice.reportId}`,
+    subject: stripHeaderBreaks(`ZIVR content report ${notice.reportId}`),
     text,
   };
 }
 
-type MailSender = (notice: ModerationNotice) => Promise<void>;
+export function readSmtpConfig(): MailTransportOptions | null {
+  const host = process.env["SMTP_HOST"]?.trim();
+  if (!host) return null;
+  const port = Number(process.env["SMTP_PORT"] || 587);
+  if (!Number.isFinite(port) || port <= 0) return null;
+  const user = process.env["SMTP_USER"]?.trim() ?? "";
+  const pass = process.env["SMTP_PASS"] ?? "";
+  const secure = port === 465;
+  return {
+    host: stripHeaderBreaks(host),
+    port,
+    secure,
+    requireTLS: port === 587,
+    ...(user ? { auth: { user: stripHeaderBreaks(user), pass } } : {}),
+  };
+}
 
+export function warnIfSmtpUnconfigured(): void {
+  if (bootWarned || process.env["SMTP_HOST"]?.trim()) return;
+  bootWarned = true;
+  console.warn(
+    "[moderation] WARNING: SMTP_HOST is unset. Content reports will be saved but NOT emailed to moderators. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM before production traffic.",
+  );
+}
+
+export function resetMailerStateForTests(): void {
+  bootWarned = false;
+  retryDelayMs = 0;
+  senderOverride = null;
+  transportFactory = defaultTransportFactory;
+}
+
+export function setMailRetryDelayForTests(ms: number): void {
+  retryDelayMs = ms;
+}
+
+function defaultTransportFactory(options: MailTransportOptions): MailTransport {
+  return nodemailer.createTransport(options);
+}
+
+let transportFactory = defaultTransportFactory;
+
+/** Tests supply a fake nodemailer transport. Production uses nodemailer.createTransport. */
+export function setTransportFactoryForTests(
+  factory: ((options: MailTransportOptions) => MailTransport) | null,
+): void {
+  transportFactory = factory ?? defaultTransportFactory;
+}
+
+type MailSender = (notice: ModerationNotice) => Promise<void>;
 let senderOverride: MailSender | null = null;
 
-/** Tests inject a fake sender. Production leaves this unset. */
+/** Integration tests replace the whole send. Leave unset in production. */
 export function setModerationMailerForTests(sender: MailSender | null): void {
   senderOverride = sender;
+}
+
+function mailErrorFields(err: unknown): { code?: string; responseCode?: number; message?: string } {
+  const value = err && typeof err === "object" ? err as { code?: unknown; responseCode?: unknown; message?: unknown } : {};
+  return {
+    ...(typeof value.code === "string" ? { code: value.code } : {}),
+    ...(typeof value.responseCode === "number" ? { responseCode: value.responseCode } : {}),
+    ...(typeof value.message === "string" ? { message: value.message } : {}),
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function deliverOnce(notice: ModerationNotice): Promise<void> {
+  const smtp = readSmtpConfig();
+  const to = moderationInbox();
+  const from = stripHeaderBreaks(process.env["SMTP_FROM"]?.trim() || smtp?.auth?.user || "noreply@zivrapp.com");
+  const { subject, text } = formatModerationNotice(notice);
+  if (!smtp) {
+    console.error(`[moderation] report ${notice.reportId} was not emailed because SMTP_HOST is unset`);
+    return;
+  }
+  const transport = transportFactory(smtp);
+  await transport.sendMail({ from, to, subject, text });
+}
+
+async function deliverWithRetry(notice: ModerationNotice): Promise<void> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await deliverOnce(notice);
+      return;
+    } catch (err) {
+      last = err;
+      console.error("[moderation] email attempt failed", {
+        reportId: notice.reportId,
+        attempt,
+        ...mailErrorFields(err),
+      });
+      if (attempt < MAX_ATTEMPTS) await sleep(retryDelayMs * attempt);
+    }
+  }
+  console.error("[moderation] FAILED to email content report after final attempt", {
+    reportId: notice.reportId,
+    attempts: MAX_ATTEMPTS,
+    ...mailErrorFields(last),
+  });
 }
 
 /**
@@ -68,155 +187,11 @@ export function setModerationMailerForTests(sender: MailSender | null): void {
  * email delivery fails.
  */
 export function sendModerationNotice(notice: ModerationNotice): void {
-  const send = senderOverride ?? deliverModerationNotice;
+  const send = senderOverride ?? deliverWithRetry;
   void send(notice).catch((err: unknown) => {
-    console.error("[moderation] failed to email report notice", err);
-  });
-}
-
-type SmtpConfig = {
-  host: string;
-  port: number;
-  user: string;
-  pass: string;
-  from: string;
-  implicitTls: boolean;
-};
-
-export function readSmtpConfig(): SmtpConfig | null {
-  const host = process.env["SMTP_HOST"]?.trim();
-  if (!host) return null;
-  const port = Number(process.env["SMTP_PORT"] || 587);
-  if (!Number.isFinite(port) || port <= 0) return null;
-  const user = process.env["SMTP_USER"]?.trim() ?? "";
-  const pass = process.env["SMTP_PASS"] ?? "";
-  const from = process.env["SMTP_FROM"]?.trim() || user || "noreply@zivrapp.com";
-  const implicitTls = process.env["SMTP_SECURE"] === "1" || port === 465;
-  return { host, port, user, pass, from, implicitTls };
-}
-
-async function deliverModerationNotice(notice: ModerationNotice): Promise<void> {
-  const to = moderationInbox();
-  const { subject, text } = formatModerationNotice(notice);
-  console.info("[moderation] content report", {
-    reportId: notice.reportId,
-    reporterId: notice.reporterId,
-    reportedUserId: notice.reportedUserId,
-    messageId: notice.messageId,
-    chatId: notice.chatId,
-    reason: notice.reason,
-    to,
-  });
-  const smtp = readSmtpConfig();
-  if (!smtp) {
-    console.info("[moderation] SMTP_HOST unset; report notice was not emailed");
-    return;
-  }
-  await sendSmtp(smtp, { to, subject, text });
-}
-
-type OutgoingMail = { to: string; subject: string; text: string };
-
-class SmtpReader {
-  private buffer = "";
-  private pending: Array<(code: string) => void> = [];
-  private socket: net.Socket;
-
-  constructor(socket: net.Socket) {
-    this.socket = socket;
-    socket.on("data", (chunk: Buffer | string) => {
-      this.buffer += chunk.toString("utf8");
-      this.drain();
+    console.error("[moderation] FAILED to email content report", {
+      reportId: notice.reportId,
+      ...mailErrorFields(err),
     });
-  }
-
-  private drain(): void {
-    let newline = this.buffer.indexOf("\n");
-    while (newline >= 0) {
-      const line = this.buffer.slice(0, newline).replace(/\r$/, "");
-      this.buffer = this.buffer.slice(newline + 1);
-      const continued = line.length >= 4 && line[3] === "-";
-      if (!continued) {
-        const waiter = this.pending.shift();
-        waiter?.(line.slice(0, 3));
-      }
-      newline = this.buffer.indexOf("\n");
-    }
-  }
-
-  command(line: string | null, expectedPrefix: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`SMTP timeout${line ? ` after ${line.split(" ")[0]}` : ""}`)), 10_000);
-      this.pending.push((code) => {
-        clearTimeout(timer);
-        if (code.startsWith(expectedPrefix)) resolve();
-        else reject(new Error(`SMTP ${line ? line.split(" ")[0] : "greeting"} returned ${code}`));
-      });
-      if (line !== null) this.socket.write(`${line}\r\n`);
-    });
-  }
-}
-
-function connectPlain(host: string, port: number): Promise<net.Socket> {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect({ host, port }, () => resolve(socket));
-    socket.setTimeout(10_000, () => {
-      socket.destroy();
-      reject(new Error("SMTP connection timed out"));
-    });
-    socket.once("error", reject);
   });
-}
-
-function connectTls(host: string, port: number, socket?: net.Socket): Promise<tls.TLSSocket> {
-  return new Promise((resolve, reject) => {
-    const secure = tls.connect({ host, port, servername: host, socket }, () => resolve(secure));
-    secure.setTimeout(10_000, () => {
-      secure.destroy();
-      reject(new Error("SMTP TLS timed out"));
-    });
-    secure.once("error", reject);
-  });
-}
-
-async function sendSmtp(cfg: SmtpConfig, mail: OutgoingMail): Promise<void> {
-  const plain = cfg.implicitTls ? null : await connectPlain(cfg.host, cfg.port);
-  let socket: net.Socket = plain ?? await connectTls(cfg.host, cfg.port);
-  let reader = new SmtpReader(socket);
-  const close = () => {
-    socket.destroy();
-  };
-  try {
-    await reader.command(null, "220");
-    await reader.command("EHLO zivr.local", "250");
-    if (!cfg.implicitTls) {
-      await reader.command("STARTTLS", "220");
-      socket.removeAllListeners("data");
-      socket = await connectTls(cfg.host, cfg.port, plain ?? undefined);
-      reader = new SmtpReader(socket);
-      await reader.command("EHLO zivr.local", "250");
-    }
-    if (cfg.user) {
-      await reader.command("AUTH LOGIN", "334");
-      await reader.command(Buffer.from(cfg.user).toString("base64"), "334");
-      await reader.command(Buffer.from(cfg.pass).toString("base64"), "235");
-    }
-    await reader.command(`MAIL FROM:<${cfg.from}>`, "250");
-    await reader.command(`RCPT TO:<${mail.to}>`, "250");
-    await reader.command("DATA", "354");
-    const body = [
-      `From: ${cfg.from}`,
-      `To: ${mail.to}`,
-      `Subject: ${mail.subject}`,
-      "MIME-Version: 1.0",
-      "Content-Type: text/plain; charset=utf-8",
-      "",
-      mail.text.replace(/^\./gm, ".."),
-      ".",
-    ].join("\r\n");
-    await reader.command(body, "250");
-    await reader.command("QUIT", "221");
-  } finally {
-    close();
-  }
 }

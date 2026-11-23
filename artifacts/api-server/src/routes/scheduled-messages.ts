@@ -10,6 +10,7 @@ import {
   MAX_GROUP_MEMBERS,
 } from "../lib/approvals";
 import { logger } from "../lib/logger";
+import { blockerIdsAmong, CANT_MESSAGE_THIS_USER, eitherUserBlocked } from "../lib/blocks";
 
 const router = Router();
 const MIN_LEAD_MS = 30_000;
@@ -112,6 +113,9 @@ async function getChatPermission(chatId: string, senderId: string) {
           ? "This contact has been blocked by a parent."
           : "Waiting for parent approval before scheduling messages to this contact." };
       }
+      if (await eitherUserBlocked(senderId, other.user_id)) {
+        return { allowed: false as const, status: 403, error: CANT_MESSAGE_THIS_USER };
+      }
     }
   } else {
     if (members.length > MAX_GROUP_MEMBERS) {
@@ -125,7 +129,7 @@ async function getChatPermission(chatId: string, senderId: string) {
         : "Waiting for parent approval before scheduling messages in this group." };
     }
   }
-  return { allowed: true as const, chatName: chat.name };
+  return { allowed: true as const, chatName: chat.name, type: chat.type };
 }
 
 router.get("/", async (req, res) => {
@@ -335,13 +339,39 @@ export async function dispatchDueMessages(options: { senderId?: string } = {}) {
         type: "text",
         createdAt,
       };
-      getIO()?.to(`chat:${item.chat_id}`).emit("message:new", outgoing);
+      const members = await query<{ user_id: string }>(
+        `SELECT user_id FROM vm_chat_members WHERE chat_id = $1`,
+        [item.chat_id],
+      );
+      const blockedFrom = permission.type === "group"
+        ? await blockerIdsAmong(item.sender_id, members.map((member) => member.user_id))
+        : new Set<string>();
+      const io = getIO();
+      if (blockedFrom.size === 0) {
+        io?.to(`chat:${item.chat_id}`).emit("message:new", outgoing);
+      } else {
+        for (const member of members) {
+          if (blockedFrom.has(member.user_id)) {
+            io?.to(`user:${member.user_id}`).emit("message:hidden", {
+              chatId: item.chat_id,
+              messageId,
+              senderId: item.sender_id,
+            });
+            continue;
+          }
+          io?.to(`user:${member.user_id}`).emit("message:new", outgoing);
+        }
+      }
       void checkContentForChild(messageId, item.chat_id, item.sender_id, item.text);
 
       const offline = await query<{ push_token: string | null }>(
         `SELECT u.push_token FROM vm_chat_members cm
           JOIN vm_users u ON u.id = cm.user_id
-         WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false`,
+         WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks b
+              WHERE b.blocker_id = u.id AND b.blocked_id = $2
+           )`,
         [item.chat_id, item.sender_id],
       );
       const tokens = offline.map((member) => member.push_token)

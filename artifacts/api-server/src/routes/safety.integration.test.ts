@@ -32,6 +32,7 @@ let query: typeof import("../lib/db.ts").query;
 let queryOne: typeof import("../lib/db.ts").queryOne;
 let signToken: typeof import("../lib/auth.ts").signToken;
 let setModerationMailerForTests: typeof import("../lib/mailer.ts").setModerationMailerForTests;
+let dispatchDueMessages: typeof import("./scheduled-messages.ts").dispatchDueMessages;
 const notices: Array<{ reportId: string; reason: string; reporterId: string; reportedUserId: string }> = [];
 let mailerShouldThrow = false;
 const userIds: string[] = [];
@@ -92,19 +93,21 @@ test.before(async () => {
   isolatedUrl.searchParams.set("options", `-c search_path=${schemaName}`);
   process.env["DATABASE_URL"] = isolatedUrl.toString();
 
-  const [appModule, dbModule, authModule, migrateModule, socketModule, mailerModule] = await Promise.all([
+  const [appModule, dbModule, authModule, migrateModule, socketModule, mailerModule, scheduledModule] = await Promise.all([
     import("../app.ts"),
     import("../lib/db.ts"),
     import("../lib/auth.ts"),
     import("../lib/migrate.ts"),
     import("../lib/socket.ts"),
     import("../lib/mailer.ts"),
+    import("./scheduled-messages.ts"),
   ]);
   dbPool = dbModule.default;
   query = dbModule.query;
   queryOne = dbModule.queryOne;
   signToken = authModule.signToken;
   setModerationMailerForTests = mailerModule.setModerationMailerForTests;
+  dispatchDueMessages = scheduledModule.dispatchDueMessages;
   setModerationMailerForTests(async (notice) => {
     notices.push({
       reportId: notice.reportId,
@@ -256,8 +259,9 @@ test("report, block, and admin moderation", async (t) => {
 
     const sender = await connectAs(reported.id);
     const blocker = await connectAs(reporter.id);
+    const outsiderSocket = await connectAs(outsider.id);
     const hiddenEvent = once<{ messageId: string; senderId: string }>(blocker, "message:hidden");
-    const delivered = once<{ text: string }>(await connectAs(outsider.id), "message:new");
+    const delivered = once<{ text: string }>(outsiderSocket, "message:new");
     sender.emit("message:send", {
       chatId: group.id,
       senderId: reported.id,
@@ -282,6 +286,49 @@ test("report, block, and admin moderation", async (t) => {
       [direct.id],
     );
     assert.equal(stored, null);
+
+    const scheduledFor = Date.now() + 60_000;
+    const refusedSchedule = await api("POST", "/api/scheduled-messages", reported.id, {
+      chatId: direct.id,
+      text: "send later",
+      scheduledFor,
+    });
+    assert.equal(refusedSchedule.status, 403);
+    assert.equal(((await refusedSchedule.json()) as { error: string }).error, "can't message this user");
+
+    const due = await queryOne<{ id: string }>(
+      `INSERT INTO vm_scheduled_messages
+         (sender_id, chat_id, text, scheduled_for, status, created_at, updated_at)
+       VALUES ($1, $2, 'overdue', $3, 'pending', $3, $3)
+       RETURNING id`,
+      [reported.id, direct.id, Date.now() - 1000],
+    );
+    assert.ok(due);
+    await dispatchDueMessages({ senderId: reported.id });
+    const failed = await queryOne<{ status: string; failure_reason: string | null }>(
+      `SELECT status, failure_reason FROM vm_scheduled_messages WHERE id = $1`,
+      [due.id],
+    );
+    assert.equal(failed?.status, "failed");
+    assert.equal(failed?.failure_reason, "can't message this user");
+    assert.equal((await queryOne(
+      `SELECT id FROM vm_messages WHERE chat_id = $1 AND text = 'overdue'`,
+      [direct.id],
+    )), null);
+
+    const groupDue = await queryOne<{ id: string }>(
+      `INSERT INTO vm_scheduled_messages
+         (sender_id, chat_id, text, scheduled_for, status, created_at, updated_at)
+       VALUES ($1, $2, 'group overdue', $3, 'pending', $3, $3)
+       RETURNING id`,
+      [reported.id, group.id, Date.now() - 1000],
+    );
+    assert.ok(groupDue);
+    const scheduledHidden = once<{ senderId: string }>(blocker, "message:hidden");
+    const scheduledDelivered = once<{ text: string }>(outsiderSocket, "message:new");
+    await dispatchDueMessages({ senderId: reported.id });
+    assert.equal((await scheduledHidden).senderId, reported.id);
+    assert.equal((await scheduledDelivered).text, "group overdue");
 
     assert.equal((await api("DELETE", `/api/blocks/${reported.id}`, reporter.id)).status, 204);
   });
