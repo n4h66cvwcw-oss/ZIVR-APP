@@ -48,6 +48,34 @@ export function upsertOutboxEntry(entries: MessageOutboxEntry[], entry: MessageO
   ];
 }
 
+/** One in-flight image upload. A second tap while `busy` is rejected. */
+export function tryBeginMediaSend(gate: { busy: boolean }): boolean {
+  if (gate.busy) return false;
+  gate.busy = true;
+  return true;
+}
+
+export function endMediaSend(gate: { busy: boolean }): void {
+  gate.busy = false;
+}
+
+/**
+ * What to do with the local bubble after `sendServerMessage` returns.
+ * Image failures stay on screen with a retry affordance. Terminal text
+ * failures and suppressed (blocked/pending) sends are not inserted.
+ * Retryable text stays queued in the outbox and is saved as a normal bubble.
+ */
+export function serverSendDisposition(
+  result: { ok: true } | { ok: false; retryable: boolean; suppressed?: boolean },
+  hasImage: boolean,
+): "save" | "failed" | "drop" {
+  if (result.ok) return "save";
+  if (result.suppressed) return "drop";
+  if (hasImage) return "failed";
+  if (!result.retryable) return "drop";
+  return "save";
+}
+
 export function removeOutboxEntry(
   entries: MessageOutboxEntry[],
   ownerUserId: string,

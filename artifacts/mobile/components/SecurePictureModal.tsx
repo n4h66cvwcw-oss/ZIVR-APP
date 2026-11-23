@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   Image,
   KeyboardAvoidingView,
@@ -85,9 +85,14 @@ export function SecurePictureModal({
   const [mode, setMode] = useState<SecurityMode>("none");
   const [password, setPassword] = useState("");
   const [timerSecs, setTimerSecs] = useState(3600);
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
 
   const handleSend = () => {
+    if (sendingRef.current) return;
     if (mode === "password" && !password.trim()) return;
+    sendingRef.current = true;
+    setSending(true);
     const attachment: ImageAttachment = {
       uri: imageUri,
       width: imageWidth,
@@ -100,7 +105,7 @@ export function SecurePictureModal({
     onSend(attachment);
   };
 
-  const canSend = mode !== "password" || password.trim().length >= 1;
+  const canSend = !sending && (mode !== "password" || password.trim().length >= 1);
 
   return (
     <Modal transparent animationType="slide" onRequestClose={onCancel}>
@@ -214,7 +219,7 @@ export function SecurePictureModal({
               <Text
                 style={[styles.actionBtnText, { color: canSend ? "#FFF" : colors.textTertiary }]}
               >
-                Send
+                {sending ? "Sending…" : "Send"}
               </Text>
             </Pressable>
           </View>

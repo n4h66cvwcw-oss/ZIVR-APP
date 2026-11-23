@@ -27,12 +27,18 @@ let reactionHandler: ((event: MessageReactionEvent) => void) | undefined;
 let fetchedMessages: MockServerMessage[] = [];
 
 export const reactionPosts: Array<{ chatId: string; messageId: string; emoji: string }> = [];
+let failReactionPosts = 0;
 
 export function resetServerMock() {
   newMessageHandler = undefined;
   reactionHandler = undefined;
   fetchedMessages = [];
   reactionPosts.length = 0;
+  failReactionPosts = 0;
+}
+
+export function failNextReactionPosts(count = 1) {
+  failReactionPosts = count;
 }
 
 export function setFetchedMessages(messages: MockServerMessage[]) {
@@ -62,6 +68,10 @@ const serverMock = {
   fetchMessages: async () => fetchedMessages,
   postMessageReaction: async (chatId: string, messageId: string, emoji: string) => {
     reactionPosts.push({ chatId, messageId, emoji });
+    if (failReactionPosts > 0) {
+      failReactionPosts -= 1;
+      return null;
+    }
     const postedLocalId = messageId.startsWith("local-");
     return {
       messageId: postedLocalId ? `srv-for-${messageId}` : messageId,

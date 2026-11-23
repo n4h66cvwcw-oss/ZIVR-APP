@@ -44,10 +44,18 @@ import {
   hasServerMessage,
   localFieldsFromServerMessage,
   reactionPostId,
+  reactionsAfterFailedToggle,
+  sameReactions,
   toggleReaction,
   type ReactionWrite,
 } from "@/utils/message-reactions";
-import { imageMediaFromParts, type ServerImageMedia } from "@/utils/message-outbox";
+import {
+  endMediaSend,
+  imageMediaFromParts,
+  serverSendDisposition,
+  tryBeginMediaSend,
+  type ServerImageMedia,
+} from "@/utils/message-outbox";
 import {
   imageAttachmentFromServerMedia,
   messagePreviewText,
@@ -138,6 +146,8 @@ export type Message = {
   translatedTo?: string;
   /** The original text before auto-translation */
   originalText?: string;
+  /** Image upload failed. The bubble stays so the sender can retry. */
+  sendFailed?: boolean;
 };
 
 export type ChatSortMode =
@@ -421,7 +431,9 @@ interface MessagingContextValue {
   setSortMode: (mode: ChatSortMode) => Promise<void>;
   /** Register the chat currently on screen so incoming messages skip the unread increment. */
   setActiveChatId: (id: string | null) => void;
-  sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => Promise<void>;
+  sendMessage: (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => Promise<boolean>;
+  /** Resend a photo whose upload failed. Ignored while another upload is in flight. */
+  retryMessage: (chatId: string, messageId: string) => Promise<void>;
   markImageViewed: (chatId: string, messageId: string) => Promise<void>;
   /** Pull durable server history, including images, into the open chat. */
   syncServerChat: (chatId: string) => Promise<void>;
@@ -575,6 +587,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const sentLocalIds = useRef<Set<string>>(new Set());
   // localId -> server uuid, filled when the message:new echo arrives before state does.
   const serverIdsByLocalId = useRef<Map<string, string>>(new Map());
+  // Blocks a second photo send until the in-flight upload settles.
+  const imageUploadGate = useRef({ busy: false });
+  // Bytes for a failed photo, kept off the message cache so retry can resubmit.
+  const failedMediaRef = useRef<Map<string, ServerImageMedia>>(new Map());
   const pendingReactionWrites = useRef<ReactionWrite[]>([]);
   const refreshServerReactionsRef = useRef<(chatId: string) => void>(() => {});
   // Synchronous guard: message IDs that have already been dispatched into state.
@@ -761,6 +777,24 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     commitReactionWrites(writes);
   }
 
+  function clearSendFailure(chatId: string, localId: string) {
+    const list = messagesRef.current[chatId];
+    if (!list) return;
+    let changed = false;
+    const updatedList = list.map((message) => {
+      const matches = message.id === localId || message.localId === localId;
+      if (!matches || !message.sendFailed) return message;
+      changed = true;
+      failedMediaRef.current.delete(message.id);
+      return { ...message, sendFailed: undefined };
+    });
+    if (!changed) return;
+    const updated = { ...messagesRef.current, [chatId]: updatedList };
+    messagesRef.current = updated;
+    setMessages(updated);
+    AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+  }
+
   useEffect(() => {
     const unsub = onNewMessage((msg, delivery: MessageDelivery = "live") => {
       const clientId = msg.localId ?? msg.clientId;
@@ -768,6 +802,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       if (isOwnEcho && clientId) {
         sentLocalIds.current.delete(clientId);
         serverIdsByLocalId.current.set(clientId, msg.id);
+        clearSendFailure(msg.chatId, clientId);
       }
       // The sender's copy keeps the localId as `id`. The echo, a later replay,
       // and a reaction fanout all have to land on that row instead of inserting
@@ -1814,6 +1849,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
 
   const sendMessage = useCallback(
     async (chatId: string, text: string, audio?: AudioAttachment, image?: ImageAttachment, formatting?: MessageFormatting, music?: MusicAttachment, selfDestruct?: SelfDestructConfig) => {
+      const uploadingImage = Boolean(image);
+      if (uploadingImage && !tryBeginMediaSend(imageUploadGate.current)) return false;
+      try {
       const id = genId();
       const chat = chats.find((c) => c.id === chatId);
 
@@ -1844,7 +1882,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       if (chat?.isServerChat && serverUserId && image) {
         if (!image.base64 && !image.uri.startsWith("data:image/")) {
           Alert.alert("Message not delivered", "Could not read that photo. Try choosing it again.");
-          return;
+          return false;
         }
         const prepared = imageMediaFromParts({
           dataUrl: image.uri.startsWith("data:image/") ? image.uri : undefined,
@@ -1858,7 +1896,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         });
         if (!prepared.ok) {
           Alert.alert("Message not delivered", prepared.error);
-          return;
+          return false;
         }
         serverMedia = prepared.media;
       }
@@ -1889,19 +1927,22 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       if (chat?.isServerChat && serverUserId && (finalText.trim() || serverMedia)) {
         sentLocalIds.current.add(id);
         const result = await sendServerMessage(chatId, serverUserId, finalText, id, serverMedia);
-        if (result && result.ok === false && !result.retryable) {
+        const disposition = serverSendDisposition(result, Boolean(serverMedia));
+        if (result.ok === false && result.code === "auth") {
+          Alert.alert("Session needs recovery", result.error, [
+            { text: "Cancel", style: "cancel" },
+            { text: "Recover", onPress: () => router.push("/onboarding?recover=1" as never) },
+          ]);
+        } else if (disposition === "drop" && result.ok === false && !result.suppressed) {
+          Alert.alert("Message not delivered", result.error);
+        }
+        if (disposition === "drop") {
           sentLocalIds.current.delete(id);
-          if (!result.suppressed) {
-            if (result.code === "auth") {
-              Alert.alert("Session needs recovery", result.error, [
-                { text: "Cancel", style: "cancel" },
-                { text: "Recover", onPress: () => router.push("/onboarding?recover=1" as never) },
-              ]);
-            } else {
-              Alert.alert("Message not delivered", result.error);
-            }
-          }
-          return;
+          return false;
+        }
+        if (disposition === "failed" && serverMedia) {
+          failedMediaRef.current.set(id, serverMedia);
+          msg.sendFailed = true;
         }
       }
 
@@ -1927,9 +1968,47 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         const senderName = contacts.find((c) => c.id === myId)?.name ?? "Beta Tester";
         queueFeedbackSubmission(text, senderName, msg.timestamp).catch(() => {});
       }
-
+      return true;
+      } finally {
+        if (uploadingImage) endMediaSend(imageUploadGate.current);
+      }
     },
     [chats, messages, myId, contacts, profile.primaryLanguage, translateMessage, sendServerMessage, serverUserId]
+  );
+
+  const retryMessage = useCallback(
+    async (chatId: string, messageId: string) => {
+      if (!tryBeginMediaSend(imageUploadGate.current)) return;
+      try {
+        const target = messagesRef.current[chatId]?.find((message) => message.id === messageId);
+        const media = failedMediaRef.current.get(messageId);
+        if (!target?.sendFailed || !target.imageAttachment) return;
+        if (!media) {
+          Alert.alert("Couldn't retry", "That photo isn't on this device anymore. Choose it again.");
+          return;
+        }
+        const chat = chatsRef.current.find((item) => item.id === chatId);
+        if (!chat?.isServerChat || !serverUserId) return;
+        const plain = chat.isEncrypted && chat.encryptionKey
+          ? decryptMessage(target.text, chat.encryptionKey)
+          : target.text;
+        const localId = target.localId ?? target.id;
+        sentLocalIds.current.add(localId);
+        const result = await sendServerMessage(chatId, serverUserId, plain, localId, media);
+        if (serverSendDisposition(result, true) !== "save") return;
+        failedMediaRef.current.delete(messageId);
+        const list = messagesRef.current[chatId] ?? [];
+        await saveMessages({
+          ...messagesRef.current,
+          [chatId]: list.map((message) =>
+            message.id === messageId ? { ...message, sendFailed: undefined } : message
+          ),
+        });
+      } finally {
+        endMediaSend(imageUploadGate.current);
+      }
+    },
+    [serverUserId, sendServerMessage]
   );
 
   const syncServerChat = useCallback(async (chatId: string) => {
@@ -1967,14 +2046,17 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       if (additionMatch) continue;
       additions.push(incoming);
     }
-    if (!additions.length && !changed) return;
     const merged = additions.length
       ? [...nextList, ...additions].sort((a, b) => a.timestamp - b.timestamp)
       : nextList;
-    const updated = { ...prev, [chatId]: merged };
+    const base = merged === existing ? prev : { ...prev, [chatId]: merged };
+    const writes = rows.flatMap((row) => reactionWritesForKnownMessage(row));
+    const updated = applyReactionWrites(base, writes);
+    if (updated === prev) return;
     messagesRef.current = updated;
     setMessages(updated);
     AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+    if (!additions.length && !changed) return;
     const newest = merged[merged.length - 1];
     if (!newest) return;
     setChats((prevChats) => {
@@ -2258,6 +2340,8 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       const chatMessages = messagesRef.current[chatId] || [];
       const target = chatMessages.find((m) => m.id === messageId);
       if (!target) return;
+      const previous = target.reactions;
+      const optimistic = toggleReaction(previous, myId, emoji);
       const postId = reactionPostId(
         {
           id: target.id,
@@ -2268,14 +2352,35 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       const next = {
         ...messagesRef.current,
         [chatId]: chatMessages.map((m) =>
-          m.id === messageId ? { ...m, reactions: toggleReaction(m.reactions, myId, emoji) } : m
+          m.id === messageId ? { ...m, reactions: optimistic } : m
         ),
       };
       await saveMessages(next);
       const chat = chatsRef.current.find((item) => item.id === chatId);
       if (!chat?.isServerChat) return;
-      const result = await postMessageReaction(chatId, postId, emoji);
-      if (!result?.reactions) return;
+      let result: MessageReactionEvent | null = null;
+      try {
+        result = await postMessageReaction(chatId, postId, emoji);
+      } catch {
+        result = null;
+      }
+      if (!result?.reactions) {
+        const current = messagesRef.current[chatId]?.find((m) => m.id === messageId)?.reactions;
+        const restored = reactionsAfterFailedToggle(current, optimistic, previous);
+        if (sameReactions(restored, current)) return;
+        await saveMessages({
+          ...messagesRef.current,
+          [chatId]: (messagesRef.current[chatId] ?? []).map((m) => {
+            if (m.id !== messageId) return m;
+            if (!restored) {
+              const { reactions: _removed, ...rest } = m;
+              return rest;
+            }
+            return { ...m, reactions: restored };
+          }),
+        });
+        return;
+      }
       queueOrCommitReactionWrites([{
         kind: "snapshot",
         chatId: result.chatId || chatId,
@@ -2514,6 +2619,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setSortMode,
       setActiveChatId,
       sendMessage,
+      retryMessage,
       markImageViewed,
       syncServerChat,
       createDirectChat,
@@ -2564,6 +2670,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       setSortMode,
       setActiveChatId,
       sendMessage,
+      retryMessage,
       markImageViewed,
       syncServerChat,
       createDirectChat,

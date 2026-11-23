@@ -27,6 +27,7 @@ import { SecurePictureModal } from "@/components/SecurePictureModal";
 import { MusicalMessageModal } from "@/components/MusicalMessageModal";
 import { SelfDestructPicker } from "@/components/SelfDestructPicker";
 import type { SelfDestructConfig } from "@/context/MessagingContext";
+import { composerMirrorText, nextComposerHeight } from "@/utils/composer-height";
 
 interface ChatInputProps {
   onSend: (
@@ -74,6 +75,7 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
   const [text, setText] = useState("");
   const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
   const textLenRef = useRef(0);
+  const inputRef = useRef<TextInput>(null);
 
   // Populate input when a suggestion is injected from the parent
   React.useEffect(() => {
@@ -109,8 +111,8 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
   // once at mount and then stops while height is fixed, and the reported
   // contentSize stays capped at that height (facebook/react-native#52854,
   // #54570, #53625). TF build 29 ASC AHrW0N4I20KFwkP7MjR9J74 stayed one line.
-  // A hidden Text mirror's onLayout is the driver. minHeight / maxHeight only
-  // constrain the field (~5 lines, then it scrolls). No fixed height.
+  // A hidden Text mirror's onLayout is the driver. The field's height is that
+  // measurement clamped to min/max (~5 lines, then it scrolls).
   const lineHeight =
     fontSize === "md" ? INPUT_LINE_HEIGHT : Math.ceil(FONT_SIZE_VALUES[fontSize] * 1.4);
   const minInputHeight = Math.max(INPUT_MIN_HEIGHT, lineHeight);
@@ -126,10 +128,25 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
       return;
     }
     const rounded = Math.ceil(measured);
-    if (!Number.isFinite(rounded) || rounded <= 0) return;
-    if (source === "mirror") mirrorHeightRef.current = rounded;
-    const next = Math.min(Math.max(rounded, minInputHeight), maxInputHeight);
-    setInputHeight((prev) => (Math.abs(prev - next) < 2 ? prev : next));
+    if (source === "mirror" && Number.isFinite(rounded) && rounded > 0) {
+      mirrorHeightRef.current = rounded;
+    }
+    setInputHeight((prev) => nextComposerHeight({
+      textLength: textLenRef.current,
+      measured,
+      min: minInputHeight,
+      max: maxInputHeight,
+      previous: prev,
+    }));
+  };
+  const resetComposerField = () => {
+    textLenRef.current = 0;
+    mirrorHeightRef.current = 0;
+    setText("");
+    setInputHeight(minInputHeight);
+    onTextChange?.("");
+    // The send control blurs the field. Put the caret back on the next frame.
+    requestAnimationFrame(() => inputRef.current?.focus());
   };
   const effectiveInputHeight = Math.min(Math.max(inputHeight, minInputHeight), maxInputHeight);
   const textTypography = [
@@ -163,9 +180,7 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
       Animated.spring(sendScale, { toValue: 1, useNativeDriver: true, tension: 200, friction: 8 }),
     ]).start();
     onSend(text.trim(), attachedAudio || undefined, undefined, buildFormatting(), attachedMusic || undefined, selfDestructConfig || undefined);
-    textLenRef.current = 0;
-    setText("");
-    setInputHeight(INPUT_MIN_HEIGHT);
+    resetComposerField();
     setAttachedAudio(null);
     setAttachedMusic(null);
     setSelfDestructConfig(null);
@@ -518,18 +533,19 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
             onLayout={(event) => applyMeasuredHeight(event.nativeEvent.layout.height, "mirror")}
           >
             <Text selectable={false} style={[styles.inputText, textTypography]}>
-              {/* A trailing newline needs a glyph after it or the line has no height. */}
-              {text.endsWith("\n") ? `${text}\u200B` : text || " "}
+              {composerMirrorText(text)}
             </Text>
           </View>
           <TextInput
+            ref={inputRef}
             style={[
               styles.inputText,
               styles.input,
               textTypography,
               {
                 color: textColor || colors.text,
-                minHeight: effectiveInputHeight,
+                height: effectiveInputHeight,
+                minHeight: minInputHeight,
                 maxHeight: maxInputHeight,
               },
             ]}
@@ -538,7 +554,10 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
               textLenRef.current = t.length;
               setText(t);
               onTextChange?.(t);
-              if (t.length === 0) setInputHeight(minInputHeight);
+              if (t.length === 0) {
+                mirrorHeightRef.current = 0;
+                setInputHeight(minInputHeight);
+              }
             }}
             onContentSizeChange={(event) => {
               applyMeasuredHeight(event.nativeEvent.contentSize.height, "content");
@@ -556,6 +575,7 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
         <Animated.View style={{ transform: [{ scale: sendScale }] }}>
           <Pressable
             onPress={handleSend}
+            onPressIn={() => inputRef.current?.focus()}
             disabled={!canSend}
             style={[
               styles.sendBtn,
@@ -589,10 +609,7 @@ export function ChatInput({ onSend, placeholder = "Message...", onTextChange, su
               ...attachment,
               ...(pendingImageBase64 ? { base64: pendingImageBase64, mimeType: pendingImageMime } : {}),
             }, buildFormatting());
-            textLenRef.current = 0;
-            setText("");
-            setInputHeight(INPUT_MIN_HEIGHT);
-            onTextChange?.("");
+            resetComposerField();
             setPendingImageUri(null);
             setPendingImageBase64(null);
             setShowSecurePicture(false);
