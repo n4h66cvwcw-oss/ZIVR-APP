@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import test from "node:test";
 import { ACTION_SCOPES } from "./limits.js";
-import { handleOAuthRequest, readOAuthConfig, type OAuthConfig, type OAuthDeps, type OAuthIncoming } from "./oauth.js";
+import { handleOAuthRequest, oauthConfigDenial, readOAuthConfig, type OAuthConfig, type OAuthDeps, type OAuthIncoming } from "./oauth.js";
 import { createMemoryAuthStore } from "./store.js";
 import type { TokenExchanger } from "./client.js";
 
@@ -328,8 +328,15 @@ test("redirect policy can pin one callback or allow localhost", async () => {
 });
 
 test("oauth env is disabled until both secrets are set", () => {
-  assert.equal(readOAuthConfig({}).state, "disabled");
-  assert.equal(readOAuthConfig({ ZIVR_GPT_OAUTH_CLIENT_ID: "gpt-client-id" }).state, "invalid");
+  const absent = readOAuthConfig({});
+  assert.equal(absent.state, "disabled");
+  const blank = readOAuthConfig({
+    ZIVR_GPT_OAUTH_CLIENT_ID: "   ",
+    ZIVR_GPT_OAUTH_CLIENT_SECRET: "\n",
+  });
+  assert.equal(blank.state, "disabled");
+  const half = readOAuthConfig({ ZIVR_GPT_OAUTH_CLIENT_ID: "gpt-client-id" });
+  assert.equal(half.state, "invalid");
   const ready = readOAuthConfig({
     ZIVR_GPT_OAUTH_CLIENT_ID: "gpt-client-id",
     ZIVR_GPT_OAUTH_CLIENT_SECRET: "gpt-client-secret-value",
@@ -337,4 +344,15 @@ test("oauth env is disabled until both secrets are set", () => {
   });
   assert.equal(ready.state, "ready");
   if (ready.state === "ready") assert.equal(ready.config.allowLocalRedirects, true);
+
+  const closed = oauthConfigDenial(absent);
+  assert.deepEqual(closed, {
+    status: 404,
+    body: { error: "GPT Actions OAuth is not configured", code: "gpt_oauth_disabled" },
+  });
+  assert.equal(oauthConfigDenial(blank)?.body.code, "gpt_oauth_disabled");
+  const invalid = oauthConfigDenial(half);
+  assert.equal(invalid?.status, 500);
+  assert.equal(invalid?.body.code, "gpt_oauth_invalid");
+  assert.equal(oauthConfigDenial(ready), null);
 });

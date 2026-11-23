@@ -145,3 +145,24 @@ export function generateWebhookSecret(): { secret: string; sealed: string } {
 export function signWebhookBody(secret: string, body: string): string {
   return `sha256=${crypto.createHmac("sha256", secret).update(body).digest("hex")}`;
 }
+
+/** `x-zivr-signature-v2` over `${timestamp}.${deliveryId}.` plus the raw body. */
+export function signWebhookReplay(secret: string, timestamp: string, deliveryId: string, body: string): string {
+  return `sha256=${crypto.createHmac("sha256", secret).update(`${timestamp}.${deliveryId}.`).update(body).digest("hex")}`;
+}
+
+/**
+ * Body signature stays `x-zivr-signature` so a receiver that only checks that header
+ * keeps working. `x-zivr-timestamp` is unix seconds and is covered by `x-zivr-signature-v2`.
+ */
+export function webhookRequestHeaders(secret: string, body: string, nowMs = Date.now()): Record<string, string> {
+  const timestamp = String(Math.floor(nowMs / 1000));
+  const deliveryId = crypto.randomUUID();
+  return {
+    "content-type": "application/json",
+    "x-zivr-signature": signWebhookBody(secret, body),
+    "x-zivr-timestamp": timestamp,
+    "x-zivr-delivery": deliveryId,
+    "x-zivr-signature-v2": signWebhookReplay(secret, timestamp, deliveryId, body),
+  };
+}

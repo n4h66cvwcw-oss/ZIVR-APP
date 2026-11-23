@@ -6,8 +6,8 @@ import { renderConsentPage, renderMessagePage } from "./page.js";
 import { canonicalRedirect, isAllowedRedirect } from "./redirect.js";
 import { randomSecret, type AuthStore } from "./store.js";
 
-export type { OAuthConfig, OAuthConfigRead } from "./oauth-config.js";
-export { readOAuthConfig } from "./oauth-config.js";
+export type { OAuthConfig, OAuthConfigDenial, OAuthConfigRead } from "./oauth-config.js";
+export { oauthConfigDenial, readOAuthConfig } from "./oauth-config.js";
 
 export type OAuthIncoming = {
   method: string;

@@ -41,6 +41,7 @@ Message text is at most 2000 characters. One attachment, 2 MiB decoded, JPEG / P
 | 403 | `forbidden` | The caller cannot add this Agent, or cannot answer this proposal. |
 | 403 | `agent` | An Agent tried to create a sub-profile or answer a calendar card. |
 | 404 | `not_found` | Unknown sub-profile, chat, key, or proposal for this caller. |
+| 404 | `gpt_oauth_disabled` | `GET` or `POST` `/v1/gpt-actions/oauth/…` while both `ZIVR_GPT_OAUTH_CLIENT_ID` and `ZIVR_GPT_OAUTH_CLIENT_SECRET` are unset. This is not an agent-route error. |
 | 409 | `conflict` | Username taken, or a calendar card was already decided the other way. |
 | 409 | `invalid` | This `clientId` was already used by this sender in a different chat. |
 | 429 | `rate_limited` | A limit in the table above. Honor `Retry-After`. |
@@ -55,7 +56,7 @@ The plaintext `zivr_agent_…` key, the webhook secret, the owner `authToken`, a
 - `GET /v1/sub-profiles/:id/keys` is safe to print. It has `prefix`, not the key.
 - Revoke one key with the owner session: `DELETE /v1/sub-profiles/:id/keys/:keyId`. In-flight JWTs from that key fail with `401` `auth` (`Agent token was revoked`). Mint a replacement and update the connector.
 - Pause the twin with `PATCH /v1/sub-profiles/:id` and `{"status":"paused"}` when you want sends to stop and the key to start working again later. Revoke the profile with `{"status":"revoked"}` when the key and the webhook should both die.
-- The webhook secret is returned once, on `PUT /v1/sub-profiles/:id/webhook`. Verify `x-zivr-signature` over the raw body before parsing. Saving the URL rotates the secret.
+- The webhook secret is returned once, on `PUT /v1/sub-profiles/:id/webhook`. Verify `x-zivr-signature` over the raw body before parsing. `x-zivr-signature-v2` also covers `x-zivr-timestamp` and `x-zivr-delivery`. Saving the URL rotates the secret.
 - Prefer a short `scopes` list on the mint when the connector does not propose calendar cards or does not send files.
 - The agent JWT lasts one hour. Exchange the API key again to refresh. Do not log the JWT. Do not send the API key to `/v1/agent/messages`. Those routes accept the JWT only.
 

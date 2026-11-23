@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { MAX_IMAGE_BYTES, MAX_MESSAGE_REQUEST_BYTES } from "./limits.js";
 import { decodedBase64Bytes } from "./media.js";
 import { parseCalendarProposeArgs, parseReadNewArgs, parseSendMessageArgs } from "./validate.js";
-import { verifyWebhookSignature, webhookSignature } from "./webhook.js";
+import { WebhookDeliveryCache, signWebhookDelivery, verifyWebhookSignature, webhookSignature } from "./webhook.js";
 
 const CHAT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PEER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -169,4 +169,53 @@ test("webhook signature is sha256 over the raw body", () => {
   assert.equal(verifyWebhookSignature(secret, `${body} `, expected), false);
   assert.equal(verifyWebhookSignature(secret, body, undefined), false);
   assert.equal(verifyWebhookSignature(secret, body, "sha256=abc"), false);
+  assert.equal(verifyWebhookSignature(secret, Buffer.from(body), expected), true);
+  assert.equal(verifyWebhookSignature("other-secret", body, expected), false);
+
+  const stamped = JSON.stringify({ type: "message.created", chatId: CHAT, createdAt: 1_730_000_000_000 });
+  const signed = webhookSignature(secret, stamped);
+  assert.equal(verifyWebhookSignature(secret, stamped, signed), true);
+  assert.equal(verifyWebhookSignature(secret, stamped, signed), true);
+  const stale = stamped.replace("1730000000000", "1000");
+  assert.equal(verifyWebhookSignature(secret, stale, signed), false);
+  const resigned = webhookSignature(secret, stale);
+  assert.equal(verifyWebhookSignature(secret, stale, resigned), true);
+});
+
+test("webhook replay protection accepts a fresh delivery and rejects stale, future, and replayed ids", () => {
+  const secret = "test-secret";
+  const body = JSON.stringify({ type: "message.created", chatId: CHAT });
+  const nowSec = 1_700_000_000;
+  const nowMs = nowSec * 1000;
+  const seen = new WebhookDeliveryCache();
+  const fresh = signWebhookDelivery(secret, body, { timestamp: String(nowSec), deliveryId: "delivery-1", now: nowMs });
+  const options = {
+    timestamp: fresh.timestamp,
+    deliveryId: fresh.deliveryId,
+    replaySignature: fresh.replaySignature,
+    now: nowMs,
+    seen,
+  };
+  assert.equal(verifyWebhookSignature(secret, body, fresh.signature, options), true);
+  assert.equal(verifyWebhookSignature(secret, body, fresh.signature, options), false);
+
+  const stale = signWebhookDelivery(secret, body, { timestamp: String(nowSec - 301), deliveryId: "delivery-stale", now: nowMs });
+  assert.equal(verifyWebhookSignature(secret, body, stale.signature, {
+    timestamp: stale.timestamp,
+    deliveryId: stale.deliveryId,
+    replaySignature: stale.replaySignature,
+    now: nowMs,
+    seen,
+  }), false);
+
+  const future = signWebhookDelivery(secret, body, { timestamp: String(nowSec + 301), deliveryId: "delivery-future", now: nowMs });
+  assert.equal(verifyWebhookSignature(secret, body, future.signature, {
+    timestamp: future.timestamp,
+    deliveryId: future.deliveryId,
+    replaySignature: future.replaySignature,
+    now: nowMs,
+    seen,
+  }), false);
+
+  assert.equal(verifyWebhookSignature(secret, body, fresh.signature, { ...options, legacy: true }), true);
 });

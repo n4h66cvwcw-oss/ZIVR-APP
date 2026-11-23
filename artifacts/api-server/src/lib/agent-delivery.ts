@@ -49,7 +49,7 @@ import {
   looksLikeApiKey,
   openSecret,
   signAgentToken,
-  signWebhookBody,
+  webhookRequestHeaders,
   verifyAgentToken,
   type AgentTokenClaims,
 } from "./agent-crypto";
@@ -677,10 +677,7 @@ export async function notifyChatAgents(chatId: string, message: SerializedMessag
       try {
         const response = await fetch(hook.webhook_url, {
           method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-zivr-signature": signWebhookBody(secret, body),
-          },
+          headers: webhookRequestHeaders(secret, body),
           body,
           signal: AbortSignal.timeout(3000),
         });

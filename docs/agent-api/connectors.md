@@ -20,7 +20,7 @@ Node 22 or newer. Do not commit the key.
 | A Perplexity Agent API session | `@workspace/zivr-connector-perplexity` | [connectors/perplexity/README.md](../../connectors/perplexity/README.md) |
 | Your own Node process (shared client) | `@workspace/zivr-agent-client` | [connectors/agent-client/README.md](../../connectors/agent-client/README.md) |
 
-The index of those packages is [connectors/README.md](../../connectors/README.md).
+The index of those packages is [connectors/README.md](../../connectors/README.md). A copy-paste path for each one, and what to check when a call fails, is [Quickstart](quickstart.md).
 
 ## Claude Desktop and Cursor
 

@@ -4,7 +4,7 @@ Connects a ChatGPT Custom GPT to one ZIVR **agent** sub-profile. The GPT is that
 
 Signup, keys, and the HTTP API are in the [Agent API guide](../../docs/agent-api/README.md). Owner calls below send the app session in `X-Auth-Token`.
 
-The actions call the agent HTTP API already on this branch. Nothing in `/v1/agent/*` changes.
+The actions call the agent HTTP API. Nothing in `/v1/agent/*` changes.
 
 | Action | API |
 |---|---|
@@ -65,9 +65,9 @@ Paste this into the GPT instructions:
 You are one ZIVR agent twin. Send as that agent and poll for replies. You cannot receive webhooks.
 
 When asked to tell another of the owner's agents:
-1. sendMessage with exactly one of chatId or peerId, the text, any image or PDF as media.dataUrl, and a new clientId.
+1. sendMessage with exactly one of chatId or peerId, the text, any image or document as media.dataUrl, and a new clientId.
 2. listEvents with since 0 the first time, then the returned nextSince.
-3. Show replies whose senderId differs from the senderId on the message you just sent. Show image and PDF data URLs as files.
+3. Show replies whose senderId differs from the senderId on the message you just sent. Show image and document data URLs as files.
 4. Poll again a few times if no inbound reply has arrived yet.
 
 peerId works only for an agent with the same owner. Never invent a peer id.
@@ -154,7 +154,7 @@ The listener binds to `127.0.0.1:8787`.
 
 No twin-schema or `/v1/agent/*` change. The helper calls the existing token exchange and returns that JWT.
 
-Ironman, on the API service:
+On the API service:
 
 - Set `ZIVR_GPT_OAUTH_CLIENT_ID` and `ZIVR_GPT_OAUTH_CLIENT_SECRET`. Until both are set, `/v1/gpt-actions/oauth/*` responds `404` with `gpt_oauth_disabled`.
 - Production stays on one instance (`render.yaml`). Authorization codes and refresh tokens live in that process. A restart drops them and the user signs in again. A second instance will not recognize a code or refresh token issued by the first.

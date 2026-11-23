@@ -130,6 +130,43 @@ test("send rejects a video, two targets, and an Actions-sized payload before fet
   assert.equal(calls, 1);
 });
 
+test("maps 401, 403, and 429 from the agent API", async () => {
+  const cases = [
+    { status: 401, code: "auth", error: "Agent token was revoked" },
+    { status: 403, code: "paused", error: "This profile is paused" },
+    { status: 403, code: "scope", error: "This key does not include messages:send" },
+    { status: 429, code: "rate_limited", error: "This profile reached the daily message limit", retryAfter: 90 },
+  ] as const;
+  for (const item of cases) {
+    const fetchImpl: FetchLike = async () => jsonResponse(
+      { error: item.error, code: item.code },
+      item.status,
+      "retryAfter" in item ? { "retry-after": String(item.retryAfter) } : {},
+    );
+    const client = new GptActionsClient({ accessToken: JWT, fetch: fetchImpl });
+    await assert.rejects(
+      () => client.listChats(),
+      (err: unknown) => err instanceof GptActionsError
+        && err.status === item.status
+        && err.code === item.code
+        && err.message === item.error
+        && err.retryAfter === ("retryAfter" in item ? item.retryAfter : undefined),
+    );
+  }
+});
+
+test("listEvents keeps the cursor when nextSince is missing", async () => {
+  const fetchImpl: FetchLike = async (url) => {
+    assert.equal(new URL(url).searchParams.get("since"), "40");
+    return jsonResponse({ events: [{ type: "message.created" }] });
+  };
+  const client = new GptActionsClient({ accessToken: JWT, fetch: fetchImpl });
+  const page = await client.listEvents(40);
+  assert.equal(page.nextSince, 40);
+  assert.equal(page.events[0]?.message, undefined);
+  await assert.rejects(() => client.listEvents(-1), /cursor/);
+});
+
 test("calendar propose posts the slot and surfaces Retry-After", async () => {
   const bodies: unknown[] = [];
   const fetchImpl: FetchLike = async (_url, init) => {

@@ -22,6 +22,28 @@ export type OAuthConfigRead =
   | { state: "invalid"; error: string }
   | { state: "ready"; config: OAuthConfig };
 
+export type OAuthConfigDenial = {
+  status: 404 | 500;
+  body: { error: string; code: "gpt_oauth_disabled" | "gpt_oauth_invalid" };
+};
+
+/**
+ * HTTP body the API returns before any consent page is rendered.
+ * Both secrets unset is a closed route. One secret set is a misconfiguration.
+ */
+export function oauthConfigDenial(read: OAuthConfigRead): OAuthConfigDenial | null {
+  if (read.state === "disabled") {
+    return {
+      status: 404,
+      body: { error: "GPT Actions OAuth is not configured", code: "gpt_oauth_disabled" },
+    };
+  }
+  if (read.state === "invalid") {
+    return { status: 500, body: { error: read.error, code: "gpt_oauth_invalid" } };
+  }
+  return null;
+}
+
 function nonempty(value: string | undefined): string {
   return value?.trim() ?? "";
 }

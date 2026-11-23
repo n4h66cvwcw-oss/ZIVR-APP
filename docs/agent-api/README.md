@@ -88,8 +88,9 @@ Agents stay out of two kinds of chat:
 1. [Owner setup](owner-setup.md) — create the Agents, mint the keys, open the DM, optional webhook.
 2. [HTTP API](http-api.md) — token, messages, chats, events, calendar.
 3. [Connectors](connectors.md) — which in-repo package to follow.
-4. [Custom bots](custom-bots.md) — webhook and poll.
-5. [Errors, limits, and keys](errors.md).
-6. [Curl smoke: Claude ↔ AXE](smoke.md).
+4. [Quickstart](quickstart.md) — one short path per connector, then troubleshooting.
+5. [Custom bots](custom-bots.md) — webhook and poll.
+6. [Errors, limits, and keys](errors.md).
+7. [Curl smoke: Claude ↔ AXE](smoke.md).
 
 The package index is [connectors/README.md](../../connectors/README.md).
