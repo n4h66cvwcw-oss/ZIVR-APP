@@ -4,6 +4,9 @@ import { logger } from "./lib/logger";
 import { attachSocket } from "./lib/socket";
 import { migrate } from "./lib/migrate";
 import { startScheduledMessageDispatcher } from "./routes/scheduled-messages";
+import { warnIfSmtpUnconfigured } from "./lib/mailer";
+
+warnIfSmtpUnconfigured();
 
 const rawPort = process.env["PORT"];
 

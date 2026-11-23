@@ -10,6 +10,8 @@ import {
   requestApprovalAndNotifyParents,
 } from "./approvals";
 import { shouldNotifyForSeverity } from "./content-alert-preferences";
+import { blockerIdsAmong, CANT_MESSAGE_THIS_USER, eitherUserBlocked } from "./blocks";
+import { isUserBanned } from "./moderation";
 import Anthropic from "@anthropic-ai/sdk";
 
 let ioInstance: SocketServer | null = null;
@@ -338,6 +340,13 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
         return;
       }
 
+      if (await isUserBanned(userId)) {
+        currentUserId = null;
+        socket.emit("error", { message: "This account is suspended." });
+        socket.disconnect(true);
+        return;
+      }
+
       currentUserId = userId;
       onlineUsers.set(userId, socket.id);
 
@@ -392,30 +401,44 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
             text: string;
             type: string;
             created_at: number;
+            chat_type: string;
+            viewer_blocked: boolean;
           }>(
             `SELECT m.id, m.chat_id, m.sender_id,
                     u.display_name AS sender_name,
-                    m.text, m.type, m.created_at
+                    m.text, m.type, m.created_at,
+                    c.type AS chat_type,
+                    EXISTS (
+                      SELECT 1 FROM user_blocks b
+                       WHERE b.blocker_id = $1 AND b.blocked_id = m.sender_id
+                    ) AS viewer_blocked
              FROM vm_messages m
              JOIN vm_users u ON u.id = m.sender_id
-             WHERE m.created_at > $1
+             JOIN vm_chats c ON c.id = m.chat_id
+             WHERE m.created_at > $${chatIds.length + 2}
+               AND m.deleted_at IS NULL
                AND m.chat_id IN (${placeholders})
              ORDER BY m.created_at ASC`,
-            [since, ...chatIds]
+            [userId, ...chatIds, since]
           );
 
-          if (missed.length > 0) {
-            socket.emit("missed_messages", {
-              messages: missed.map((m) => ({
-                id: m.id,
-                chatId: m.chat_id,
-                senderId: m.sender_id,
-                senderName: m.sender_name,
-                text: m.text,
-                type: m.type,
-                createdAt: m.created_at,
-              })),
-            });
+          const visible = missed.flatMap((m) => {
+            if (m.viewer_blocked && m.chat_type === "direct") return [];
+            const hidden = m.viewer_blocked && m.chat_type === "group";
+            return [{
+              id: m.id,
+              chatId: m.chat_id,
+              senderId: m.sender_id,
+              senderName: m.sender_name,
+              text: hidden ? "" : m.text,
+              type: m.type,
+              createdAt: m.created_at,
+              ...(hidden ? { hidden: true } : {}),
+            }];
+          });
+
+          if (visible.length > 0) {
+            socket.emit("missed_messages", { messages: visible });
           }
         } catch (err) {
           console.error("[socket] missed_messages query error:", err);
@@ -637,7 +660,7 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
       text: string;
       type?: string;
       localId?: string;
-    }) => {
+    }, acknowledge?: (result: { ok: boolean; error?: string; status?: string }) => void) => {
       try {
         const { chatId, senderId, text, type = "text", localId } = payload;
 
@@ -718,6 +741,32 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
           }
         }
 
+        let blockedFrom = new Set<string>();
+        if (chatInfo?.type === "direct") {
+          const otherMember = await queryOne<{ user_id: string }>(
+            `SELECT user_id FROM vm_chat_members WHERE chat_id = $1 AND user_id != $2 LIMIT 1`,
+            [chatId, senderId],
+          );
+          if (otherMember && await eitherUserBlocked(senderId, otherMember.user_id)) {
+            const refusal = {
+              chatId,
+              localId,
+              status: "user_block" as const,
+              message: CANT_MESSAGE_THIS_USER,
+            };
+            acknowledge?.({ ok: false, status: "user_block", error: CANT_MESSAGE_THIS_USER });
+            socket.emit("error", { message: CANT_MESSAGE_THIS_USER });
+            socket.emit("message:blocked", refusal);
+            return;
+          }
+        } else if (chatInfo?.type === "group") {
+          const members = await query<{ user_id: string }>(
+            `SELECT user_id FROM vm_chat_members WHERE chat_id = $1`,
+            [chatId],
+          );
+          blockedFrom = await blockerIdsAmong(senderId, members.map((member) => member.user_id));
+        }
+
         const sender = await queryOne<{ display_name: string; avatar: string }>(
           `SELECT display_name, avatar FROM vm_users WHERE id = $1`,
           [senderId]
@@ -745,7 +794,25 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
           createdAt: now,
         };
 
-        io.to(`chat:${chatId}`).emit("message:new", { ...outgoing, localId });
+        if (blockedFrom.size === 0) {
+          io.to(`chat:${chatId}`).emit("message:new", { ...outgoing, localId });
+        } else {
+          const members = await query<{ user_id: string }>(
+            `SELECT user_id FROM vm_chat_members WHERE chat_id = $1`,
+            [chatId],
+          );
+          for (const member of members) {
+            if (blockedFrom.has(member.user_id)) {
+              io.to(`user:${member.user_id}`).emit("message:hidden", {
+                chatId,
+                messageId: outgoing.id,
+                senderId,
+              });
+              continue;
+            }
+            io.to(`user:${member.user_id}`).emit("message:new", { ...outgoing, localId });
+          }
+        }
 
         // AI content check for child accounts — fire-and-forget, never blocks delivery
         if (type === "text") {
@@ -756,7 +823,11 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
           `SELECT u.id, u.push_token
            FROM vm_chat_members cm
            JOIN vm_users u ON u.id = cm.user_id
-           WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false`,
+           WHERE cm.chat_id = $1 AND cm.user_id != $2 AND u.is_online = false
+             AND NOT EXISTS (
+               SELECT 1 FROM user_blocks b
+                WHERE b.blocker_id = u.id AND b.blocked_id = $2
+             )`,
           [chatId, senderId]
         );
 

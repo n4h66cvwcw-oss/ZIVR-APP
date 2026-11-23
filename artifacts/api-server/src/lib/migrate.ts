@@ -263,4 +263,36 @@ export async function migrate(): Promise<void> {
       ON vm_checkin_replies (broadcast_id, member_id, client_id) WHERE client_id IS NOT NULL
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_checkin_replies_broadcast_created ON vm_checkin_replies (broadcast_id, created_at ASC)`);
+
+  // App Store Guideline 1.2: user-level block, distinct from parental contact approval.
+  await query(`
+    CREATE TABLE IF NOT EXISTS user_blocks (
+      blocker_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      blocked_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT,
+      PRIMARY KEY (blocker_id, blocked_id),
+      CHECK (blocker_id <> blocked_id)
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_user_blocks_blocked ON user_blocks (blocked_id)`);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS content_reports (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      reporter_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      reported_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      message_id UUID REFERENCES vm_messages(id) ON DELETE SET NULL,
+      chat_id UUID REFERENCES vm_chats(id) ON DELETE SET NULL,
+      reason TEXT NOT NULL CHECK (reason IN ('spam', 'harassment', 'inappropriate', 'other')),
+      details TEXT,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'actioned')),
+      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_content_reports_status ON content_reports (status, created_at DESC)`);
+
+  await query(`ALTER TABLE vm_users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT false`);
+  await query(`ALTER TABLE vm_users ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT false`);
+  await query(`ALTER TABLE vm_users ADD COLUMN IF NOT EXISTS banned_at BIGINT`);
+  await query(`ALTER TABLE vm_messages ADD COLUMN IF NOT EXISTS deleted_at BIGINT`);
 }

@@ -12,6 +12,7 @@
     "test:scheduled-messages": "node ./test-build.mjs src/routes/scheduled-messages.integration.test.ts && node --test --test-concurrency=1 dist/scheduled-messages.integration.test.cjs",
     "test:checkins": "node ./test-build.mjs src/routes/checkins.integration.test.ts && node --test --test-concurrency=1 dist/checkins.integration.test.cjs",
     "test:checkins-socket": "node ./test-build.mjs src/lib/checkins.socket.integration.test.ts && node --test --test-concurrency=1 dist/checkins.socket.integration.test.cjs",
+    "test:safety": "node --experimental-strip-types --test src/lib/mailer.test.ts && node ./test-build.mjs src/routes/safety.integration.test.ts && node --test --test-concurrency=1 dist/safety.integration.test.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
+    "nodemailer": "6.10.1",
     "pg": "^8.20.0",
     "pino": "^9",
     "pino-http": "^10",
@@ -33,6 +35,7 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "catalog:",
+    "@types/nodemailer": "6.4.17",
     "@types/pg": "^8.18.0",
     "esbuild": "^0.27.3",
     "esbuild-plugin-pino": "^2.3.3",
