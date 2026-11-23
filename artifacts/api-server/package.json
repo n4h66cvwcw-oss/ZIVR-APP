@@ -12,6 +12,7 @@
     "test:scheduled-messages": "node ./test-build.mjs src/routes/scheduled-messages.integration.test.ts && node --test --test-concurrency=1 dist/scheduled-messages.integration.test.cjs",
     "test:checkins": "node ./test-build.mjs src/routes/checkins.integration.test.ts && node --test --test-concurrency=1 dist/checkins.integration.test.cjs",
     "test:checkins-socket": "node ./test-build.mjs src/lib/checkins.socket.integration.test.ts && node --test --test-concurrency=1 dist/checkins.socket.integration.test.cjs",
+    "test:safety": "node --experimental-strip-types --test src/lib/mailer.test.ts && node ./test-build.mjs src/routes/safety.integration.test.ts && node --test --test-concurrency=1 dist/safety.integration.test.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

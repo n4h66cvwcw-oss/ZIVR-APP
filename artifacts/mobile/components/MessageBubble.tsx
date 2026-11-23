@@ -40,6 +40,7 @@ interface MessageBubbleProps {
   onVoiceCall?: () => void;
   onVideoCall?: () => void;
   onImageViewed?: (messageId: string) => void;
+  onReport?: () => void;
   myId?: string;
   activeSkin?: SkinTheme;
 }
@@ -791,6 +792,7 @@ export function MessageBubble({
   onVoiceCall,
   onVideoCall,
   onImageViewed,
+  onReport,
   myId,
   activeSkin,
 }: MessageBubbleProps) {
@@ -1436,6 +1438,19 @@ export function MessageBubble({
             >
               <Ionicons name="trash-outline" size={16} color="#FF3B30" />
               <Text style={[styles.editActionText, { color: "#FF3B30" }]}>Unsend</Text>
+            </Pressable>
+          )}
+          {!isMine && onReport && (
+            <Pressable
+              onPress={() => {
+                setShowReactions(false);
+                scaleAnim.setValue(0);
+                onReport();
+              }}
+              style={[styles.reactionOption, styles.editActionBtn, { borderTopColor: colors.border }]}
+            >
+              <Ionicons name="flag-outline" size={16} color="#FF3B30" />
+              <Text style={[styles.editActionText, { color: "#FF3B30" }]}>Report message</Text>
             </Pressable>
           )}
         </Animated.View>

@@ -7,6 +7,7 @@ import {
   requestApprovalAndNotifyParents,
 } from "../lib/approvals";
 import { getAuthUserId } from "../lib/auth";
+import { CANT_MESSAGE_THIS_USER, eitherUserBlocked } from "../lib/blocks";
 
 const router = Router();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -39,6 +40,11 @@ router.post("/direct", async (req, res) => {
         error: "Waiting for parent approval before you can chat with this contact.",
         approval: "pending",
       });
+      return;
+    }
+
+    if (await eitherUserBlocked(myUserId, theirUserId)) {
+      res.status(403).json({ error: CANT_MESSAGE_THIS_USER });
       return;
     }
 
@@ -169,12 +175,34 @@ router.get("/user/:userId", async (req, res) => {
     }
     const chats = await query(
       `SELECT c.id, c.type, c.name, c.description, c.last_message_at,
-         (SELECT m.text FROM vm_messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) as last_message,
-         (SELECT m.created_at FROM vm_messages m WHERE m.chat_id = c.id ORDER BY m.created_at DESC LIMIT 1) as last_message_time,
+         (SELECT m.text FROM vm_messages m
+           WHERE m.chat_id = c.id AND m.deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM user_blocks b
+                WHERE b.blocker_id = $1 AND b.blocked_id = m.sender_id
+             )
+           ORDER BY m.created_at DESC LIMIT 1) as last_message,
+         (SELECT m.created_at FROM vm_messages m
+           WHERE m.chat_id = c.id AND m.deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM user_blocks b
+                WHERE b.blocker_id = $1 AND b.blocked_id = m.sender_id
+             )
+           ORDER BY m.created_at DESC LIMIT 1) as last_message_time,
          (SELECT json_agg(json_build_object('id', u.id, 'displayName', u.display_name, 'avatar', u.avatar, 'isOnline', u.is_online))
           FROM vm_chat_members cm2 JOIN vm_users u ON u.id = cm2.user_id WHERE cm2.chat_id = c.id) as members
        FROM vm_chats c
        JOIN vm_chat_members cm ON cm.chat_id = c.id AND cm.user_id = $1
+       WHERE NOT (
+         c.type = 'direct'
+         AND EXISTS (
+           SELECT 1
+             FROM user_blocks b
+             JOIN vm_chat_members other
+               ON other.chat_id = c.id AND other.user_id <> $1
+            WHERE b.blocker_id = $1 AND b.blocked_id = other.user_id
+         )
+       )
        ORDER BY COALESCE(c.last_message_at, c.created_at) DESC`,
       [userId]
     );
@@ -197,26 +225,52 @@ router.get("/:chatId/messages", async (req, res) => {
     if (!member) { res.status(403).json({ error: "Not a member of this chat" }); return; }
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const before = req.query.before ? Number(req.query.before) : Date.now() + 1000;
+    const chat = await queryOne<{ type: string }>(`SELECT type FROM vm_chats WHERE id = $1`, [chatId]);
 
     const messages = await query(
       `SELECT
          m.id,
          m.chat_id      AS "chatId",
          m.sender_id    AS "senderId",
-         m.text,
+         CASE
+           WHEN $4 = 'group' AND EXISTS (
+             SELECT 1 FROM user_blocks b
+              WHERE b.blocker_id = $5 AND b.blocked_id = m.sender_id
+           ) THEN ''
+           ELSE m.text
+         END AS text,
          m.type,
          m.is_encrypted AS "isEncrypted",
          m.created_at   AS "createdAt",
          u.display_name AS "senderName",
-         u.avatar       AS "senderAvatar"
+         u.avatar       AS "senderAvatar",
+         (
+           $4 = 'group' AND EXISTS (
+             SELECT 1 FROM user_blocks b
+              WHERE b.blocker_id = $5 AND b.blocked_id = m.sender_id
+           )
+         ) AS hidden
        FROM vm_messages m
        LEFT JOIN vm_users u ON u.id = m.sender_id
-       WHERE m.chat_id = $1 AND m.created_at < $2
+       WHERE m.chat_id = $1
+         AND m.created_at < $2
+         AND m.deleted_at IS NULL
+         AND NOT (
+           $4 = 'direct' AND EXISTS (
+             SELECT 1 FROM user_blocks b
+              WHERE b.blocker_id = $5 AND b.blocked_id = m.sender_id
+           )
+         )
        ORDER BY m.created_at DESC LIMIT $3`,
-      [chatId, before, limit]
+      [chatId, before, limit, chat?.type ?? "direct", authUserId]
     );
 
-    res.json({ messages: messages.reverse() });
+    res.json({
+      messages: messages.reverse().map((row) => {
+        const message = row as { hidden?: boolean };
+        return { ...message, hidden: message.hidden === true ? true : undefined };
+      }),
+    });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });
   }

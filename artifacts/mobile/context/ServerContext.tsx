@@ -34,6 +34,14 @@ import {
 } from "@/utils/message-outbox";
 import { coerceEpochMillis } from "@/utils/message-time";
 import {
+  createBlock,
+  createReport,
+  fetchBlocks,
+  removeBlock,
+  type BlockedUser,
+  type ReportInput,
+} from "@/utils/safety";
+import {
   JOIN_ACK_TIMEOUT_MS,
   MAX_JOIN_ATTEMPTS,
   advanceLastSeen,
@@ -81,6 +89,8 @@ export type ServerMessage = {
   clientId?: string;
   reactions?: Record<string, string[]>;
   media?: ServerImageMedia | null;
+  /** Group history: viewer blocked this sender, so the body is withheld. */
+  hidden?: boolean;
 };
 
 /** REST response and `message:reaction` fanout. `reactions` is the full map after the toggle. */
@@ -157,7 +167,7 @@ type MessageHandler = (msg: ServerMessage, delivery: MessageDelivery) => void;
 type MessageBlockedHandler = (data: {
   chatId: string;
   localId?: string;
-  status: "pending" | "blocked" | "group_limit";
+  status: "pending" | "blocked" | "group_limit" | "user_block";
   message: string;
 }) => void;
 
@@ -310,6 +320,12 @@ interface ServerContextValue {
   listBackups: () => Promise<ChatBackupMeta[]>;
   restoreBackup: (localChatId: string) => Promise<string | null>;
   deleteBackup: (localChatId: string) => Promise<void>;
+  reportContent: (input: ReportInput) => Promise<{ ok: true } | { ok: false; error: string }>;
+  blockUser: (userId: string) => Promise<boolean>;
+  unblockUser: (userId: string) => Promise<boolean>;
+  listBlockedUsers: () => Promise<BlockedUser[] | null>;
+  onMessageHidden: (handler: (data: { chatId: string; messageId: string; senderId: string }) => void) => () => void;
+  onMessageRemoved: (handler: (data: { chatId: string; messageId: string }) => void) => () => void;
 }
 
 const ServerContext = createContext<ServerContextValue | null>(null);
@@ -391,6 +407,8 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
   const readReceiptHandlers = useRef<Set<ReadReceiptHandler>>(new Set());
   const reactionHandlers = useRef<Set<MessageReactionHandler>>(new Set());
   const messageBlockedHandlers = useRef<Set<MessageBlockedHandler>>(new Set());
+  const messageHiddenHandlers = useRef<Set<(data: { chatId: string; messageId: string; senderId: string }) => void>>(new Set());
+  const messageRemovedHandlers = useRef<Set<(data: { chatId: string; messageId: string }) => void>>(new Set());
   const contactRequestHandlers = useRef<Set<ContactRequestHandler>>(new Set());
   const contactApprovedHandlers = useRef<Set<ContactApprovedHandler>>(new Set());
   const timeOverrideHandlers = useRef<Set<TimeOverrideHandler>>(new Set());
@@ -803,10 +821,20 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     socket.on("message:blocked", (data: {
       chatId: string;
       localId?: string;
-      status: "pending" | "blocked" | "group_limit";
+      status: "pending" | "blocked" | "group_limit" | "user_block";
       message: string;
     }) => {
       messageBlockedHandlers.current.forEach((h) => h(data));
+    });
+
+    socket.on("message:hidden", (data: { chatId: string; messageId: string; senderId: string }) => {
+      if (!data?.chatId || !data.messageId) return;
+      messageHiddenHandlers.current.forEach((h) => h(data));
+    });
+
+    socket.on("message:removed", (data: { chatId: string; messageId: string }) => {
+      if (!data?.chatId || !data.messageId) return;
+      messageRemovedHandlers.current.forEach((h) => h(data));
     });
 
     // In-app parent notification: child attempted to contact someone new
@@ -1210,7 +1238,7 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
       ok: false as const,
       error: authFailed ? SESSION_INVALID_MESSAGE : (data.error ?? "Message not delivered"),
       retryable: res.status >= 500,
-      suppressed: status === "blocked" || status === "pending" || status === "group_limit",
+      suppressed: status === "blocked" || status === "pending" || status === "group_limit" || status === "user_block",
       ...(authFailed ? { code: "auth" } : status ? { code: status } : {}),
     };
   }, []);
@@ -1243,14 +1271,14 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
           persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
           return { ok: true as const };
         }
-        const terminal = acked?.status != null && ["invalid", "not_member", "blocked", "pending", "group_limit"].includes(acked.status);
+        const terminal = acked?.status != null && ["invalid", "not_member", "blocked", "pending", "group_limit", "user_block"].includes(acked.status);
         if (acked && acked.ok === false && terminal) {
           persistOutbox(entry.ownerUserId, removeOutboxEntry(outboxRef.current, entry.ownerUserId, entry.localId));
           return {
             ok: false as const,
             error: acked.error ?? "Message not delivered",
             retryable: false,
-            suppressed: acked.status === "blocked" || acked.status === "pending" || acked.status === "group_limit",
+            suppressed: acked.status === "blocked" || acked.status === "pending" || acked.status === "group_limit" || acked.status === "user_block",
             code: acked.status,
           };
         }
@@ -1719,6 +1747,50 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const reportContent = useCallback(async (input: ReportInput) => {
+    try {
+      return await createReport(getApiBase(), await getAuthHeaders(), input);
+    } catch {
+      return { ok: false as const, error: "Network error" };
+    }
+  }, []);
+
+  const blockUser = useCallback(async (userId: string): Promise<boolean> => {
+    try {
+      const result = await createBlock(getApiBase(), await getAuthHeaders(), userId);
+      return result.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const unblockUser = useCallback(async (userId: string): Promise<boolean> => {
+    try {
+      const result = await removeBlock(getApiBase(), await getAuthHeaders(), userId);
+      return result.ok;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const listBlockedUsers = useCallback(async (): Promise<BlockedUser[] | null> => {
+    try {
+      return await fetchBlocks(getApiBase(), await getAuthHeaders());
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const onMessageHidden = useCallback((handler: (data: { chatId: string; messageId: string; senderId: string }) => void) => {
+    messageHiddenHandlers.current.add(handler);
+    return () => { messageHiddenHandlers.current.delete(handler); };
+  }, []);
+
+  const onMessageRemoved = useCallback((handler: (data: { chatId: string; messageId: string }) => void) => {
+    messageRemovedHandlers.current.add(handler);
+    return () => { messageRemovedHandlers.current.delete(handler); };
+  }, []);
+
   const deleteBackup = useCallback(async (localChatId: string): Promise<void> => {
     const uid = serverUserIdRef.current;
     if (!uid) return;
@@ -1817,6 +1889,12 @@ export function ServerProvider({ children }: { children: React.ReactNode }) {
         listBackups,
         restoreBackup,
         deleteBackup,
+        reportContent,
+        blockUser,
+        unblockUser,
+        listBlockedUsers,
+        onMessageHidden,
+        onMessageRemoved,
       }}
     >
       {children}

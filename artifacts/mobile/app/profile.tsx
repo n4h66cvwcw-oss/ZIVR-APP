@@ -239,6 +239,17 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        <Pressable
+          onPress={() => router.push("/blocked-users")}
+          style={[styles.section, { backgroundColor: colors.surface }]}
+        >
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>SAFETY</Text>
+          <Text style={{ color: colors.text, fontFamily: "Inter_600SemiBold", fontSize: 16, marginTop: 8 }}>Blocked users</Text>
+          <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+            Review people you've blocked and unblock them. Blocking hides their messages and stops them from messaging you.
+          </Text>
+        </Pressable>
+
         <View style={[styles.section, { backgroundColor: colors.surface }]}>
           <View style={styles.sectionHeaderRow}>
             <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>

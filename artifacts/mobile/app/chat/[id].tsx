@@ -7,6 +7,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   FlatList,
   Modal,
@@ -31,6 +32,8 @@ import { Avatar } from "@/components/Avatar";
 import { ChatInput } from "@/components/ChatInput";
 import { MessageBubble } from "@/components/MessageBubble";
 import { TypingBubble } from "@/components/TypingBubble";
+import { leaveDirectChatAfterBlock, useUserSafety } from "@/hooks/useUserSafety";
+import { isServerUuid } from "@/utils/safety";
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -66,6 +69,7 @@ export default function ChatScreen() {
   const isTypingRef = useRef(false);
 
   const { startCall } = useCall();
+  const { promptReport, promptBlock, isBlocked, reportSheet } = useUserSafety();
 
   const [shieldVisible, setShieldVisible] = useState(false);
   const shieldOpacity = useRef(new Animated.Value(0)).current;
@@ -309,6 +313,14 @@ export default function ChatScreen() {
         onVoiceCall={!isMine ? () => handleCallFromMessage(item.senderId, "voice") : undefined}
         onVideoCall={!isMine ? () => handleCallFromMessage(item.senderId, "video") : undefined}
         onImageViewed={handleImageViewed}
+        onReport={!isMine && isServerUuid(item.senderId) ? () => {
+          promptReport({
+            reportedUserId: item.senderId,
+            name: sender?.name ?? "this user",
+            messageId: item.serverMessageId ?? item.id,
+            chatId: id,
+          });
+        } : undefined}
         selectionMode={selectionMode}
         isSelected={selectedMessageIds.includes(item.id)}
         onLongPress={selectionMode ? () => toggleMessageSelection(item.id) : undefined}
@@ -421,6 +433,26 @@ export default function ChatScreen() {
           >
             <Feather name="more-horizontal" size={20} color={colors.primary} />
           </Pressable>
+          {!isGroup && otherId && isServerUuid(otherId) && (
+            <Pressable
+              hitSlop={10}
+              style={styles.headerActionBtn}
+              onPress={() => {
+                const name = otherContact?.name ?? chat.name;
+                Alert.alert(name, undefined, [
+                  { text: "Report user", onPress: () => promptReport({ reportedUserId: otherId, name, chatId: id }) },
+                  {
+                    text: isBlocked(otherId) ? "Unblock user" : "Block user",
+                    style: "destructive",
+                    onPress: () => promptBlock(otherId, name, { onBlocked: leaveDirectChatAfterBlock }),
+                  },
+                  { text: "Cancel", style: "cancel" },
+                ]);
+              }}
+            >
+              <Feather name="flag" size={18} color={colors.primary} />
+            </Pressable>
+          )}
         </View>
       </View>
 
@@ -648,6 +680,7 @@ export default function ChatScreen() {
           )}
         </Animated.View>
       )}
+      {reportSheet}
     </View>
   );
 }

@@ -5,6 +5,7 @@ import {
   buildMissedMessageNotifications,
   type NotificationMessage,
 } from "@/utils/notification-policy";
+import { directChatHiddenByBlock } from "@/utils/safety";
 import { BETA_CHAT_ID, queueFeedbackSubmission } from "@/utils/betaFeedback";
 import React, {
   createContext,
@@ -270,6 +271,7 @@ const STORAGE_KEYS = {
   ME: "@zivr_me",
   SORT_MODE: "@zivr_sort_mode",
   PENDING_CHECKINS: "@zivr_pending_checkins",
+  BLOCKED: "@zivr_blocked_user_ids",
 };
 const scopedStorageKey = (key: string, userId: string | null) => userId ? `${key}:${userId}` : key;
 
@@ -463,6 +465,9 @@ interface MessagingContextValue {
   getDecryptedMessages: (chatId: string) => Message[];
   searchMessages: (filter: SearchFilter) => Array<Message & { chatName: string }>;
   generateChatPdfHtml: (chatId: string, options?: PdfExportOptions) => string;
+  blockedUserIds: string[];
+  rememberBlockedUser: (userId: string) => void;
+  forgetBlockedUser: (userId: string) => void;
 }
 
 const MessagingContext = createContext<MessagingContextValue | null>(null);
@@ -553,6 +558,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     translateMessage,
     onMessageBlocked,
     onContactRequest,
+    onMessageHidden,
+    onMessageRemoved,
+    listBlockedUsers,
     fetchCheckInGroups,
     fetchCheckInBroadcasts,
     markCheckInBroadcastsRead,
@@ -590,6 +598,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const preHydrationBuffer = useRef<Array<{ msg: ServerMessage; delivery: MessageDelivery }>>([]);
   const chatsRef = useRef(chats);
   const messagesRef = useRef(messages);
+  const [blockedIds, setBlockedIds] = useState<ReadonlySet<string>>(new Set());
+  const blockedIdsRef = useRef(blockedIds);
+  blockedIdsRef.current = blockedIds;
   const broadcastsRef = useRef(broadcasts);
   const readInFlightRef = useRef<Set<string>>(new Set());
   const missedNotificationMessages = useRef<NotificationMessage[]>([]);
@@ -597,6 +608,49 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { chatsRef.current = chats; }, [chats]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
   useEffect(() => { broadcastsRef.current = broadcasts; }, [broadcasts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void AsyncStorage.getItem(scopedStorageKey(STORAGE_KEYS.BLOCKED, serverUserId)).then((raw) => {
+      if (cancelled || !raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      setBlockedIds(new Set(parsed.filter((id): id is string => typeof id === "string")));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverUserId]);
+
+  useEffect(() => {
+    if (!serverUserId) return;
+    let cancelled = false;
+    void listBlockedUsers().then((rows) => {
+      if (cancelled || !rows) return;
+      const next = new Set(rows.map((row) => row.userId));
+      setBlockedIds(next);
+      AsyncStorage.setItem(scopedStorageKey(STORAGE_KEYS.BLOCKED, serverUserId), JSON.stringify([...next])).catch(() => {});
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverUserId, listBlockedUsers]);
+
+  const rememberBlockedUser = useCallback((userId: string) => {
+    setBlockedIds((prev) => {
+      if (prev.has(userId)) return prev;
+      const next = new Set(prev);
+      next.add(userId);
+      AsyncStorage.setItem(scopedStorageKey(STORAGE_KEYS.BLOCKED, serverUserId), JSON.stringify([...next])).catch(() => {});
+      return next;
+    });
+  }, [serverUserId]);
+
+  const forgetBlockedUser = useCallback((userId: string) => {
+    setBlockedIds((prev) => {
+      if (!prev.has(userId)) return prev;
+      const next = new Set(prev);
+      next.delete(userId);
+      AsyncStorage.setItem(scopedStorageKey(STORAGE_KEYS.BLOCKED, serverUserId), JSON.stringify([...next])).catch(() => {});
+      return next;
+    });
+  }, [serverUserId]);
 
   // Always-current server user id without stale closure captures.
   const serverUserIdRef = useRef(serverUserId);
@@ -765,6 +819,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     const unsub = onNewMessage((msg, delivery: MessageDelivery = "live") => {
       const clientId = msg.localId ?? msg.clientId;
       const isOwnEcho = Boolean(clientId && sentLocalIds.current.has(clientId));
+      if (!isOwnEcho && (msg.hidden || blockedIdsRef.current.has(msg.senderId))) {
+        seenMessageIds.current.add(msg.id);
+        return;
+      }
       if (isOwnEcho && clientId) {
         sentLocalIds.current.delete(clientId);
         serverIdsByLocalId.current.set(clientId, msg.id);
@@ -947,7 +1005,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         });
       }
       Alert.alert(
-        data.status === "blocked"
+        data.status === "user_block"
+          ? "Can't message this user"
+          : data.status === "blocked"
           ? "Contact blocked"
           : data.status === "group_limit"
             ? "Group unavailable"
@@ -957,6 +1017,26 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     });
     return unsub;
   }, [onMessageBlocked]);
+
+  useEffect(() => {
+    const drop = (chatId: string, messageId: string) => {
+      const prev = messagesRef.current;
+      const list = prev[chatId];
+      if (!list) return;
+      const nextList = list.filter((message) => message.id !== messageId && message.serverMessageId !== messageId);
+      if (nextList.length === list.length) return;
+      const updated = { ...prev, [chatId]: nextList };
+      messagesRef.current = updated;
+      setMessages(updated);
+      AsyncStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(updated)).catch(() => {});
+    };
+    const unsubHidden = onMessageHidden((data) => drop(data.chatId, data.messageId));
+    const unsubRemoved = onMessageRemoved((data) => drop(data.chatId, data.messageId));
+    return () => {
+      unsubHidden();
+      unsubRemoved();
+    };
+  }, [onMessageHidden, onMessageRemoved]);
 
   // In-app parent notification: a child tried to chat with someone new
   useEffect(() => {
@@ -984,6 +1064,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             sc.type === "direct"
               ? (otherMembers[0]?.displayName ?? sc.name ?? "Chat")
               : (sc.name ?? "Group");
+          if (sc.type === "direct" && otherMembers.some((member) => blockedIdsRef.current.has(member.id))) {
+            continue;
+          }
           merged.push({
             id: sc.id,
             type: sc.type,
@@ -1447,7 +1530,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const getDecryptedMessages = useCallback(
     (chatId: string): Message[] => {
       const chat = chats.find((c) => c.id === chatId);
-      const msgs = messages[chatId] || [];
+      const msgs = (messages[chatId] || []).filter((message) => !blockedIds.has(message.senderId));
       if (!chat?.isEncrypted || !chat.encryptionKey) return msgs;
       return msgs.map((m) => ({
         ...m,
@@ -1457,7 +1540,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
           : undefined,
       }));
     },
-    [chats, messages]
+    [chats, messages, blockedIds]
   );
 
   const getBroadcastsForGroup = useCallback(
@@ -1474,7 +1557,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         if (filter.chatId && filter.chatId !== chatId) continue;
 
         for (const msg of msgs) {
-          if (msg.deleted) continue;
+          if (msg.deleted || blockedIds.has(msg.senderId)) continue;
 
           const decryptedText =
             chat.isEncrypted && chat.encryptionKey
@@ -1509,7 +1592,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       }
       return results.sort((a, b) => b.timestamp - a.timestamp);
     },
-    [messages, chats]
+    [messages, chats, blockedIds]
   );
 
   const generateChatPdfHtml = useCallback(
@@ -1943,6 +2026,10 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     const additions: Message[] = [];
     let changed = false;
     for (const row of rows) {
+      if (row.hidden || blockedIdsRef.current.has(row.senderId)) {
+        seenMessageIds.current.add(row.id);
+        continue;
+      }
       const clientId = row.localId ?? row.clientId;
       const incoming = inboundMessageFromServer(row);
       const matchIndex = nextList.findIndex((message) =>
@@ -2506,7 +2593,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
     () => ({
       myId,
       contacts,
-      chats,
+      chats: chats.filter((chat) => !directChatHiddenByBlock(chat.type, chat.participantIds, myId, blockedIds)),
       messages,
       checkInGroups,
       broadcasts,
@@ -2553,6 +2640,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       getDecryptedMessages,
       searchMessages,
       generateChatPdfHtml,
+      blockedUserIds: [...blockedIds],
+      rememberBlockedUser,
+      forgetBlockedUser,
     }),
     [
       contacts,
@@ -2603,6 +2693,9 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       getDecryptedMessages,
       searchMessages,
       generateChatPdfHtml,
+      blockedIds,
+      rememberBlockedUser,
+      forgetBlockedUser,
     ]
   );
 

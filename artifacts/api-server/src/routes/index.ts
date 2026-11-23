@@ -10,6 +10,8 @@ import parentalRouter from "./parental";
 import scheduledMessagesRouter from "./scheduled-messages";
 import backupRouter from "./backup";
 import checkinsRouter from "./checkins";
+import safetyRouter from "./safety";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -24,5 +26,7 @@ router.use("/parental", parentalRouter);
 router.use("/scheduled-messages", scheduledMessagesRouter);
 router.use(backupRouter);
 router.use("/checkins", checkinsRouter);
+router.use(safetyRouter);
+router.use("/admin", adminRouter);
 
 export default router;

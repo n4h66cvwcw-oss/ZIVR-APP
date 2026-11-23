@@ -29,6 +29,8 @@ import { PasscodeModal } from "@/components/PasscodeModal";
 import { EmojiPickerModal } from "@/components/EmojiPickerModal";
 import { NOTIFICATION_SOUNDS, getSoundLabel } from "@/utils/notifications";
 import { LANGUAGES, getLanguageByCode } from "@/utils/languages";
+import { leaveDirectChatAfterBlock, useUserSafety } from "@/hooks/useUserSafety";
+import { isServerUuid } from "@/utils/safety";
 
 export default function ChatSettingsScreen() {
   const { id, selectedIds } = useLocalSearchParams<{ id: string; selectedIds?: string }>();
@@ -50,6 +52,7 @@ export default function ChatSettingsScreen() {
     replaceChatMessages,
     deleteChat,
     pinChat,
+    myId,
     muteChat,
     setNotificationSound,
     setReadReceiptsEnabled,
@@ -58,6 +61,7 @@ export default function ChatSettingsScreen() {
   } = useMessaging();
 
   const { profile } = useProfile();
+  const { promptReport, promptBlock, isBlocked, reportSheet } = useUserSafety();
   const {
     serverUserId,
     exportServerChatAsText,
@@ -680,6 +684,42 @@ export default function ChatSettingsScreen() {
           />
         )}
 
+        <SectionHeader title="Safety" colors={colors} />
+
+        {chat.type === "direct" && (() => {
+          const otherId = chat.participantIds.find((participantId) => participantId !== myId);
+          if (!otherId || !isServerUuid(otherId)) return null;
+          const name = getContactById(otherId)?.name ?? chat.name;
+          return (
+            <>
+              <SettingRow
+                icon="flag-outline"
+                label="Report user"
+                subtitle="Send a report to ZIVR moderators"
+                colors={colors}
+                onPress={() => promptReport({ reportedUserId: otherId, name, chatId: id })}
+              />
+              <SettingRow
+                icon={isBlocked(otherId) ? "lock-open-outline" : "ban-outline"}
+                label={isBlocked(otherId) ? "Unblock user" : "Block user"}
+                subtitle={isBlocked(otherId) ? "Allow messages from this person again" : "Hide their messages and stop this chat"}
+                colors={colors}
+                onPress={() => promptBlock(otherId, name, { onBlocked: leaveDirectChatAfterBlock })}
+                danger={!isBlocked(otherId)}
+              />
+            </>
+          );
+        })()}
+
+        {chat.type === "group" && (
+          <SettingRow
+            icon="flag-outline"
+            label="Report a message"
+            subtitle="Long-press a message in the chat to report it"
+            colors={colors}
+          />
+        )}
+
         <SectionHeader title="Danger Zone" colors={colors} />
 
         <SettingRow
@@ -691,6 +731,7 @@ export default function ChatSettingsScreen() {
           danger
         />
       </ScrollView>
+      {reportSheet}
 
       <EmojiPickerModal
         visible={showTypingEmojiPicker}
