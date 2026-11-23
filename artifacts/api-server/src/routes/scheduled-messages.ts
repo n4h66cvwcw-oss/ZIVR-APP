@@ -2,7 +2,7 @@ import { Router } from "express";
 import pool, { query, queryOne } from "../lib/db";
 import { getAuthUserId } from "../lib/auth";
 import { getIO, checkContentForChild } from "../lib/socket";
-import { sendExpoPush } from "../lib/push";
+import { chatMessagePushData, sendExpoPush } from "../lib/push";
 import {
   checkDirectContactAllowed,
   checkGroupContactsAllowed,
@@ -348,7 +348,13 @@ export async function dispatchDueMessages(options: { senderId?: string } = {}) {
         .filter((token): token is string => !!token && token.startsWith("ExponentPushToken"));
       if (tokens.length) {
         const preview = item.text.length > 80 ? `${item.text.slice(0, 80)}…` : item.text;
-        await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
+        await sendExpoPush(
+          tokens,
+          sender?.display_name ?? "New message",
+          preview,
+          "default",
+          chatMessagePushData(item.chat_id, messageId),
+        );
       }
     } catch (error) {
       logger.error({ err: error, scheduledMessageId: item.id }, "Scheduled message dispatch failed");

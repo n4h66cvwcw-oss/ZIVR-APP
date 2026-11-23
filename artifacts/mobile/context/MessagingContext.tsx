@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { scheduleLocalNotification } from "@/utils/notifications";
+import { clearPresentedNotificationsForChat, loadDeliveredMessageIds, scheduleLocalNotification } from "@/utils/notifications";
 import {
   buildLiveMessageNotification,
   buildMissedMessageNotifications,
@@ -611,8 +611,25 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
   const activeChatIdRef = useRef<string | null>(null);
   const setActiveChatId = useCallback((id: string | null) => {
     activeChatIdRef.current = id;
-    if (id) refreshServerReactionsRef.current(id);
+    if (!id) return;
+    refreshServerReactionsRef.current(id);
+    void clearPresentedNotificationsForChat(id);
   }, []);
+
+  function publishMissedNotifications(pending: NotificationMessage[], chatSettings: Chat[]) {
+    if (pending.length === 0) return;
+    void loadDeliveredMessageIds()
+      .then((deliveredMessageIds) => {
+        const requests = buildMissedMessageNotifications(pending, chatSettings, {
+          activeChatId: activeChatIdRef.current,
+          deliveredMessageIds,
+        });
+        requests.forEach((request) => {
+          scheduleLocalNotification(request.title, request.body, request.sound, request.data).catch(() => {});
+        });
+      })
+      .catch(() => {});
+  }
 
   useEffect(() => {
     loadData();
@@ -811,6 +828,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       if (delivery === "missed") {
         missedNotificationMessages.current.push({
           chatId,
+          messageId: msg.id,
           senderId: msg.senderId,
           senderName: msg.senderName,
           text: preview,
@@ -822,25 +840,23 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
             missedNotificationFlushScheduled.current = false;
             const pending = missedNotificationMessages.current;
             missedNotificationMessages.current = [];
-            const requests = buildMissedMessageNotifications(pending, chatsRef.current);
-            requests.forEach((request) => {
-              scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
-            });
+            publishMissedNotifications(pending, chatsRef.current);
           });
         }
       }
 
       setChats((prev) => {
         const chat = prev.find((c) => c.id === chatId);
-        if (delivery === "live") {
+        if (delivery === "live" && activeChatIdRef.current !== chatId) {
           const request = buildLiveMessageNotification({
             chatId,
+            messageId: msg.id,
             senderId: msg.senderId,
             senderName: msg.senderName,
             text: preview,
           }, chat);
           if (request) {
-            scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
+            scheduleLocalNotification(request.title, request.body, request.sound, request.data).catch(() => {});
           }
         }
         // Messages the current user sent, and messages in the currently open
@@ -1237,6 +1253,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
         if (delivery === "missed") {
           bufferedMissedNotifications.push({
             chatId,
+            messageId: msg.id,
             senderId: msg.senderId,
             senderName: msg.senderName,
             text: inboundPreview(msg, newMsg).preview,
@@ -1247,10 +1264,7 @@ export function MessagingProvider({ children }: { children: React.ReactNode }) {
       // Use the just-hydrated snapshot directly. React refs still contain the
       // pre-hydration state until the next render, which could otherwise turn
       // muted or silent replay notifications into default notifications.
-      buildMissedMessageNotifications(bufferedMissedNotifications, hydratedChats)
-        .forEach((request) => {
-          scheduleLocalNotification(request.title, request.body, request.sound).catch(() => {});
-        });
+      publishMissedNotifications(bufferedMissedNotifications, hydratedChats);
 
       // 3. Commit messages state (single call covers both persisted + buffered).
       setMessages(finalMsgs);
