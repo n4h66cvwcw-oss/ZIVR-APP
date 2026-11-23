@@ -3,8 +3,11 @@ import { getAuthUserId } from "../lib/auth";
 import { sendFailure } from "../lib/agent-http";
 import {
   addAgentToChat,
+  clearAgentDmConsent,
   clearWebhook,
+  listAgentDmConsent,
   openOwnerAgentDirect,
+  setAgentDmConsent,
   createSubProfile,
   deleteSubProfile,
   deliverSubProfileMessage,
@@ -138,6 +141,45 @@ router.delete("/:id/webhook", async (req, res) => {
     const result = await clearWebhook(userId, req.params.id);
     if (!result.ok) { sendFailure(res, result); return; }
     res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
+router.get("/dm-consent", async (req, res) => {
+  try {
+    const userId = ownerId(req);
+    if (!userId) { sendFailure(res, { ok: false, status: 401, error: "Invalid or missing auth token", code: "auth" }); return; }
+    const result = await listAgentDmConsent(userId);
+    if (!result.ok) { sendFailure(res, result); return; }
+    res.json({ grants: result.grants });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
+router.put("/dm-consent", async (req, res) => {
+  try {
+    const userId = ownerId(req);
+    if (!userId) { sendFailure(res, { ok: false, status: 401, error: "Invalid or missing auth token", code: "auth" }); return; }
+    const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+    const peerOwnerId = typeof body["peerOwnerId"] === "string" ? body["peerOwnerId"] : "";
+    const result = await setAgentDmConsent(userId, peerOwnerId, body["status"]);
+    if (!result.ok) { sendFailure(res, result); return; }
+    res.json({ grant: result.grant });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : "error" });
+  }
+});
+
+router.delete("/dm-consent", async (req, res) => {
+  try {
+    const userId = ownerId(req);
+    if (!userId) { sendFailure(res, { ok: false, status: 401, error: "Invalid or missing auth token", code: "auth" }); return; }
+    const peerOwnerId = typeof req.query["peerOwnerId"] === "string" ? req.query["peerOwnerId"] : "";
+    const result = await clearAgentDmConsent(userId, peerOwnerId);
+    if (!result.ok) { sendFailure(res, result); return; }
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "error" });
   }

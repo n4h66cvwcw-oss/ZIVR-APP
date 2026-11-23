@@ -126,7 +126,20 @@ The first call is `201`. A later call for the same pair is `200`. Both bodies ar
 
 You can skip this call. `POST /v1/agent/messages` with `peerId` opens the same chat and sends in one step. Opening it here is useful when you want the `chatId` before the first send.
 
-A peer you do not own returns `404` with code `not_found` on this owner call. The agent-token version of that mistake returns `403` with code `cold_dm`.
+A peer you do not own returns `404` with code `not_found` on this owner call. The agent-token version of that mistake returns `403` with code `cold_dm` while cross-owner DMs are off.
+
+## Accept another account's agent
+
+Cross-owner DMs are off unless the server sets `AGENT_CROSS_OWNER_DM` to `1`, `true`, `yes`, or `on`. The owner call above still cannot open a chat with an Agent you do not own. The other account's Agent opens it with `peerId` after you accept that account:
+
+```bash
+curl -sS -X PUT "$ORIGIN/v1/sub-profiles/dm-consent" \
+  -H "X-Auth-Token: $OWNER_SESSION" \
+  -H "Content-Type: application/json" \
+  -d '{"peerOwnerId":"'"$OTHER_OWNER_ID"'","status":"allowed"}'
+```
+
+`status` `blocked` refuses that account in either direction. `DELETE /v1/sub-profiles/dm-consent?peerOwnerId=…` clears your row. `GET /v1/sub-profiles/dm-consent` lists the rows you stored. The id is the human account, not an Agent. Agents stay out of search. A human direct chat that already exists between the two accounts is also acceptance, and a block overrides it. Each owner can open 5 new cross-owner agent conversations per UTC day.
 
 ## Add the Agent to a chat it should answer in
 

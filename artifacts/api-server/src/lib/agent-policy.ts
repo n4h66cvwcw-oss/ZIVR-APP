@@ -22,6 +22,12 @@ export const AGENT_MESSAGES_PER_MINUTE = 30;
 export const AGENT_MESSAGES_PER_DAY = 500;
 export const AGENT_MEDIA_PER_DAY = 50;
 export const AGENT_TOKEN_TTL_SECONDS = 60 * 60;
+/**
+ * New cross-owner agent DMs one owner can open per UTC day, across all of
+ * that owner's twins. Same-owner DMs do not count. Replies in an existing
+ * chat do not count.
+ */
+export const CROSS_OWNER_DM_OPENS_PER_DAY = 5;
 
 /** CryptoJS OpenSSL salted ciphertext, which is how the mobile app stores E2E text. */
 export const DEVICE_E2E_PREFIX = "U2FsdGVkX1";
@@ -50,6 +56,18 @@ export function calendarProposeEnabled(env: NodeJS.ProcessEnv = process.env): bo
   const value = raw.trim().toLowerCase();
   if (value === "0" || value === "false" || value === "no" || value === "off") return false;
   return true;
+}
+
+/**
+ * Cross-owner agent DMs stay off unless AGENT_CROSS_OWNER_DM is explicitly
+ * enabled (1, true, yes, on). Unset means off, so today's cold_dm behavior
+ * is the default.
+ */
+export function crossOwnerAgentDmEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env["AGENT_CROSS_OWNER_DM"];
+  if (raw == null || raw.trim() === "") return false;
+  const value = raw.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 export function looksLikeDeviceCiphertext(text: string): boolean {
@@ -151,10 +169,13 @@ export function ownerMayCreateSubProfile(owner: {
 }
 
 /**
- * Agent-to-agent rule: two Agent-mode profiles may DM or share a thread when
- * they have the same owner_user_id, or when an owner/admin already added them
- * to a chat. A different owner's agent is a cold DM and stays blocked.
- * Persona profiles, paused profiles, kids, and E2E chats stay blocked.
+ * Agent-to-agent rule. Same-owner agents may DM each other with no extra
+ * consent. A different owner's agent is a cold DM unless cross-owner is
+ * enabled and `facts` says the receiver accepted the sender (or the two
+ * owners already share a human direct chat) and neither side has blocked
+ * the other. Persona profiles, paused profiles, kids, and E2E stay blocked.
+ * Omitting `facts` preserves the cold_dm denial, which is also what a
+ * disabled flag produces.
  */
 export type AgentPeerIdentity = {
   id: string;
@@ -164,7 +185,21 @@ export type AgentPeerIdentity = {
   agentStatus: "active" | "paused" | "revoked" | null;
 };
 
-export function agentMayMessagePeer(self: AgentPeerIdentity, peer: AgentPeerIdentity): Gate | { ok: true } {
+/**
+ * Facts the delivery layer loads. The policy does not touch the database.
+ * Allowlist is directional: the receiving owner has accepted the sending owner.
+ * A block on either side wins over allowlist and over a human direct chat.
+ */
+export type CrossOwnerFacts = {
+  enabled: boolean;
+  receiverAllowlisted: boolean;
+  blocked: boolean;
+  ownersShareDirectChat: boolean;
+  senderOwnerKids: boolean;
+  receiverOwnerKids: boolean;
+};
+
+export function agentPeerIdentity(self: AgentPeerIdentity, peer: AgentPeerIdentity): Gate | { ok: true } {
   if (self.id === peer.id) return deny(400, "Choose a different agent", "invalid");
   if (self.accountType !== "agent" || peer.accountType !== "agent") {
     return deny(403, "Only agent profiles can open an agent-to-agent chat", "forbidden");
@@ -175,10 +210,57 @@ export function agentMayMessagePeer(self: AgentPeerIdentity, peer: AgentPeerIden
   if (self.agentStatus !== "active" || peer.agentStatus !== "active") {
     return deny(403, "Both agents must be active", "paused");
   }
-  if (!self.ownerUserId || self.ownerUserId !== peer.ownerUserId) {
+  return { ok: true };
+}
+
+/**
+ * `open` needs acceptance. `reply` is an existing direct chat: acceptance is
+ * not required again, but the flag, kids, and block still apply.
+ */
+export function crossOwnerDmDecision(
+  facts: CrossOwnerFacts | undefined,
+  intent: "open" | "reply",
+): Gate | { ok: true } {
+  if (!facts?.enabled) {
     return deny(403, "Agents cannot start a chat with another owner's agent", "cold_dm");
   }
+  if (facts.senderOwnerKids || facts.receiverOwnerKids) {
+    return deny(403, "Supervised accounts cannot message agents", "kids");
+  }
+  if (facts.blocked) {
+    return deny(403, "Agent messages between these accounts are blocked", "blocked");
+  }
+  if (intent === "reply") return { ok: true };
+  if (facts.receiverAllowlisted || facts.ownersShareDirectChat) return { ok: true };
+  return deny(403, "The other owner has not accepted agent messages from this account", "consent_required");
+}
+
+export function agentMayMessagePeer(
+  self: AgentPeerIdentity,
+  peer: AgentPeerIdentity,
+  facts?: CrossOwnerFacts,
+): Gate | { ok: true } {
+  const identity = agentPeerIdentity(self, peer);
+  if (!identity.ok) return identity;
+  if (self.ownerUserId && self.ownerUserId === peer.ownerUserId) return { ok: true };
+  return crossOwnerDmDecision(facts, "open");
+}
+
+export function crossOwnerOpenRateLimit(opensToday: number, now: number): Gate | { ok: true } {
+  if (opensToday >= CROSS_OWNER_DM_OPENS_PER_DAY) {
+    return deny(
+      429,
+      "This account reached the daily limit for new agent conversations",
+      "rate_limited",
+      secondsUntilNextUtcDay(now),
+    );
+  }
   return { ok: true };
+}
+
+export function parseDmConsentStatus(value: unknown): "allowed" | "blocked" | null {
+  if (value === "allowed" || value === "blocked") return value;
+  return null;
 }
 
 export function ownerMayIncludeOwnAgents(

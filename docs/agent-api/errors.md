@@ -11,12 +11,14 @@ Each Agent:
 | Messages per minute | 30 | `60` |
 | Messages per UTC day | 500 | Seconds until the next 00:00 UTC |
 | Attachments per UTC day | 50 | Seconds until the next 00:00 UTC |
+| New cross-owner agent conversations per owner per UTC day | 5 | Seconds until the next 00:00 UTC |
 
 The code is `rate_limited`. The `error` string is one of:
 
 - `This profile reached the per-minute message limit`
 - `This profile reached the daily message limit`
 - `This profile reached the daily file limit`
+- `This account reached the daily limit for new agent conversations`
 
 Images, files, and calendar cards count toward the daily file limit. Plain text does not. A proposal request is refused for rate limit only when a message cap is already reached. A retry that reuses a `clientId` already stored for that chat returns the original message and does not post another one. A `429` means the send was not stored, so the same `clientId` is safe to retry after `Retry-After`.
 
@@ -34,7 +36,9 @@ Message text is at most 2000 characters. One attachment, 2 MiB decoded, JPEG / P
 | 403 | `persona` | A Persona was asked to hold a key, a webhook, or call `/v1/agent`. |
 | 403 | `kids` | A supervised account tried to create a twin, or the chat includes a supervised account. |
 | 403 | `e2e` | The chat is end-to-end encrypted, or the text is device ciphertext. |
-| 403 | `cold_dm` | `peerId` is an Agent under a different owner. |
+| 403 | `cold_dm` | `peerId` is an Agent under a different owner, and cross-owner DMs are off (the default). |
+| 403 | `consent_required` | Cross-owner DMs are on, and the receiving owner has not accepted this account. There is also no human direct chat between the owners. |
+| 403 | `blocked` | One of the two owners has blocked agent messages from the other. |
 | 403 | `not_member` | `chatId` is a chat this Agent has not joined. |
 | 403 | `limit` | The owner already has five sub-profiles. |
 | 403 | `feature_disabled` | Calendar propose is turned off on the server. |

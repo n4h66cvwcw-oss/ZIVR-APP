@@ -34,6 +34,8 @@ test.after(async () => {
 
 test("sub-profile routes answer on /v1 and /api/v1 without a session", async () => {
   assert.equal(await status("POST", "/v1/sub-profiles", { displayName: "Jay's Claude", profileMode: "agent" }), 401);
+  assert.equal(await status("PUT", "/v1/sub-profiles/dm-consent", { peerOwnerId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", status: "allowed" }), 401);
+  assert.equal(await status("GET", "/api/v1/sub-profiles/dm-consent"), 401);
   assert.equal(await status("GET", "/api/v1/sub-profiles"), 401);
   assert.equal(await status("POST", "/v1/agent/token", { apiKey: "not-a-key" }), 401);
   assert.equal(await status("POST", "/api/v1/agent/token", { apiKey: "not-a-key" }), 401);

@@ -10,11 +10,14 @@ import {
   type SerializedMessage,
 } from "./message-content";
 import {
-  agentMayMessagePeer,
+  agentPeerIdentity,
   assistantLabel,
   calendarProposeEnabled,
   canDecideProposal,
   chatAllowsAgent,
+  crossOwnerAgentDmEnabled,
+  crossOwnerDmDecision,
+  crossOwnerOpenRateLimit,
   hasScope,
   looksLikeDeviceCiphertext,
   MAX_AGENTS_PER_OWNER,
@@ -24,6 +27,7 @@ import {
   parseAvatar,
   parseClientId,
   parseDisplayName,
+  parseDmConsentStatus,
   DEFAULT_AGENT_KEY_SCOPES,
   parseProfileMode,
   parseProposalNote,
@@ -39,6 +43,7 @@ import {
   utcDayStart,
   validateProposalSlot,
   type AgentScope,
+  type CrossOwnerFacts,
   type Gate,
   type ProposalStatus,
 } from "./agent-policy";
@@ -775,6 +780,10 @@ export async function deliverSubProfileMessage(input: {
   } else if (!(await isMember(input.chatId, actor.id))) {
     return fail(403, "Agents cannot start a chat. Wait for an invite or an incoming message.", "not_member");
   }
+  if (actor.profileMode === "agent") {
+    const cross = await enforceCrossOwnerSend(actor, input.chatId);
+    if (!cross.ok) return cross;
+  }
   const prior = await existingClientMessage(actor.id, clientId);
   if (prior) {
     if (prior.chat_id !== input.chatId) return fail(409, "Client operation id belongs to another chat", "invalid");
@@ -1207,13 +1216,99 @@ export async function respondToCalendarProposal(input: {
   return { ok: true, proposal: toPublicProposal(updated), role: allowed.role, calendarWrite, todo, idempotent: false };
 }
 
+const DISABLED_CROSS_OWNER: CrossOwnerFacts = {
+  enabled: false,
+  receiverAllowlisted: false,
+  blocked: false,
+  ownersShareDirectChat: false,
+  senderOwnerKids: false,
+  receiverOwnerKids: false,
+};
+
+async function loadCrossOwnerFacts(senderOwnerId: string, receiverOwnerId: string): Promise<CrossOwnerFacts> {
+  if (!crossOwnerAgentDmEnabled()) return DISABLED_CROSS_OWNER;
+  const [consent, shared, owners] = await Promise.all([
+    query<{ owner_user_id: string; peer_owner_user_id: string; status: string }>(
+      `SELECT owner_user_id, peer_owner_user_id, status
+         FROM vm_agent_dm_consent
+        WHERE (owner_user_id = $1 AND peer_owner_user_id = $2)
+           OR (owner_user_id = $2 AND peer_owner_user_id = $1)`,
+      [senderOwnerId, receiverOwnerId],
+    ),
+    queryOne<{ id: string }>(
+      `SELECT c.id
+         FROM vm_chats c
+         JOIN vm_chat_members m1 ON m1.chat_id = c.id AND m1.user_id = $1
+         JOIN vm_chat_members m2 ON m2.chat_id = c.id AND m2.user_id = $2
+         JOIN vm_users u1 ON u1.id = $1 AND COALESCE(u1.account_type, '') <> 'agent'
+         JOIN vm_users u2 ON u2.id = $2 AND COALESCE(u2.account_type, '') <> 'agent'
+        WHERE c.type = 'direct'
+        LIMIT 1`,
+      [senderOwnerId, receiverOwnerId],
+    ),
+    query<{ id: string; account_type: string | null; supervised: boolean }>(
+      `SELECT u.id, u.account_type,
+              EXISTS (SELECT 1 FROM vm_parent_child pc WHERE pc.child_id = u.id) AS supervised
+         FROM vm_users u
+        WHERE u.id = $1 OR u.id = $2`,
+      [senderOwnerId, receiverOwnerId],
+    ),
+  ]);
+  const kids = (id: string) => {
+    const row = owners.find((owner) => owner.id === id);
+    return row?.account_type === "child" || row?.supervised === true;
+  };
+  return {
+    enabled: true,
+    receiverAllowlisted: consent.some((row) =>
+      row.owner_user_id === receiverOwnerId
+      && row.peer_owner_user_id === senderOwnerId
+      && row.status === "allowed",
+    ),
+    blocked: consent.some((row) => row.status === "blocked"),
+    ownersShareDirectChat: shared != null,
+    senderOwnerKids: kids(senderOwnerId),
+    receiverOwnerKids: kids(receiverOwnerId),
+  };
+}
+
+async function countCrossOwnerOpens(senderOwnerId: string, now: number): Promise<number> {
+  const row = await queryOne<{ n: number }>(
+    `SELECT COUNT(*)::int AS n
+       FROM vm_agent_dm_opens
+      WHERE sender_owner_user_id = $1 AND opened_at >= $2`,
+    [senderOwnerId, utcDayStart(now)],
+  );
+  return row?.n ?? 0;
+}
+
+async function enforceCrossOwnerSend(actor: Actor, chatId: string): Promise<Gate | { ok: true }> {
+  if (!actor.ownerUserId) return { ok: true };
+  const peers = await query<{ id: string; owner_user_id: string | null; account_type: string | null }>(
+    `SELECT u.id, u.owner_user_id, u.account_type
+       FROM vm_chat_members m
+       JOIN vm_users u ON u.id = m.user_id
+       JOIN vm_chats c ON c.id = m.chat_id AND c.type = 'direct'
+      WHERE m.chat_id = $1`,
+    [chatId],
+  );
+  if (peers.length !== 2) return { ok: true };
+  const other = peers.find((peer) => peer.id !== actor.id);
+  if (!other || other.account_type !== "agent" || !other.owner_user_id || other.owner_user_id === actor.ownerUserId) {
+    return { ok: true };
+  }
+  const facts = await loadCrossOwnerFacts(actor.ownerUserId, other.owner_user_id);
+  return crossOwnerDmDecision(facts, "reply");
+}
+
 async function ensureAgentDirect(
   left: Actor,
   right: Actor,
   createdBy: string,
 ): Promise<{ ok: true; chatId: string; existed: boolean } | Gate> {
-  const allowed = agentMayMessagePeer(left, right);
-  if (!allowed.ok) return allowed;
+  const identity = agentPeerIdentity(left, right);
+  if (!identity.ok) return identity;
+  const sameOwner = !!left.ownerUserId && left.ownerUserId === right.ownerUserId;
   const existing = await queryOne<{ id: string }>(
     `SELECT c.id FROM vm_chats c
        JOIN vm_chat_members m1 ON m1.chat_id = c.id AND m1.user_id = $1
@@ -1222,6 +1317,17 @@ async function ensureAgentDirect(
       LIMIT 1`,
     [left.id, right.id],
   );
+  if (!sameOwner) {
+    const facts = left.ownerUserId && right.ownerUserId
+      ? await loadCrossOwnerFacts(left.ownerUserId, right.ownerUserId)
+      : undefined;
+    const decision = crossOwnerDmDecision(facts, existing ? "reply" : "open");
+    if (!decision.ok) return decision;
+    if (!existing && left.ownerUserId) {
+      const limited = crossOwnerOpenRateLimit(await countCrossOwnerOpens(left.ownerUserId, Date.now()), Date.now());
+      if (!limited.ok) return limited;
+    }
+  }
   if (existing) {
     const chat = await loadChatGate(existing.id);
     if (!chat) return fail(404, "Chat not found", "not_found");
@@ -1231,14 +1337,21 @@ async function ensureAgentDirect(
   }
   const created = await queryOne<{ id: string }>(
     `INSERT INTO vm_chats (type, created_by) VALUES ('direct', $1) RETURNING id`,
-    [createdBy],
+    [sameOwner ? createdBy : null],
   );
   if (!created) return fail(500, "Could not open the agent chat", "error");
   await query(
     `INSERT INTO vm_chat_members (chat_id, user_id) VALUES ($1, $2), ($1, $3)`,
     [created.id, left.id, right.id],
   );
-  await audit(left.id, "chat.direct", created.id, { peerId: right.id });
+  if (!sameOwner && left.ownerUserId) {
+    await query(
+      `INSERT INTO vm_agent_dm_opens (sender_owner_user_id, sender_agent_user_id, peer_agent_user_id, chat_id, opened_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [left.ownerUserId, left.id, right.id, created.id, Date.now()],
+    );
+  }
+  await audit(left.id, sameOwner ? "chat.direct" : "chat.direct.cross", created.id, { peerId: right.id });
   return { ok: true, chatId: created.id, existed: false };
 }
 
@@ -1260,7 +1373,11 @@ export async function openOwnerAgentDirect(
   return ensureAgentDirect(left, right, callerId);
 }
 
-/** Agent opens (or reuses) a DM with another agent that shares its owner. */
+/**
+ * Agent opens or reuses a DM. Same-owner is unchanged. Cross-owner opens only
+ * when AGENT_CROSS_OWNER_DM is on and the receiver has accepted the sender
+ * (or the owners already share a human direct chat) and neither side is blocked.
+ */
 export async function openSameOwnerAgentDirect(
   agentId: string,
   peerId: string,
@@ -1270,6 +1387,83 @@ export async function openSameOwnerAgentDirect(
   if (!left?.ownerUserId) return fail(404, "Sub-profile not found", "not_found");
   if (!right) return fail(404, "Agent not found", "not_found");
   return ensureAgentDirect(left, right, left.ownerUserId);
+}
+
+export type AgentDmConsentGrant = {
+  peerOwnerId: string;
+  status: "allowed" | "blocked";
+  updatedAt: number;
+};
+
+async function humanOwner(userId: string): Promise<Actor | Gate> {
+  const actor = await loadActor(userId);
+  if (!actor) return fail(401, "Invalid or missing auth token", "auth");
+  const gate = ownerMayCreateSubProfile(actor);
+  if (!gate.ok) return gate;
+  return actor;
+}
+
+/** The receiving owner allowlists or blocks another human account. Agents are not a target. */
+export async function setAgentDmConsent(
+  callerId: string,
+  peerOwnerId: string,
+  status: unknown,
+): Promise<{ ok: true; grant: AgentDmConsentGrant } | Gate> {
+  const parsed = parseDmConsentStatus(status);
+  if (!parsed) return fail(400, "status must be allowed or blocked", "invalid");
+  if (!parseUuid(peerOwnerId)) return fail(400, "Invalid id", "invalid");
+  if (peerOwnerId === callerId) return fail(400, "Choose another account", "invalid");
+  const caller = await humanOwner(callerId);
+  if (!("id" in caller)) return caller;
+  const peer = await loadActor(peerOwnerId);
+  if (!peer || peer.accountType === "agent" || peer.accountType === "child" || peer.supervised) {
+    return fail(404, "Account not found", "not_found");
+  }
+  const now = Date.now();
+  const row = await queryOne<{ peer_owner_user_id: string; status: "allowed" | "blocked"; updated_at: string | number }>(
+    `INSERT INTO vm_agent_dm_consent (owner_user_id, peer_owner_user_id, status, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $4)
+     ON CONFLICT (owner_user_id, peer_owner_user_id)
+     DO UPDATE SET status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
+     RETURNING peer_owner_user_id, status, updated_at`,
+    [caller.id, peerOwnerId, parsed, now],
+  );
+  if (!row) return fail(500, "Could not save agent message consent", "error");
+  return {
+    ok: true,
+    grant: { peerOwnerId: row.peer_owner_user_id, status: row.status, updatedAt: Number(row.updated_at) || now },
+  };
+}
+
+export async function clearAgentDmConsent(callerId: string, peerOwnerId: string): Promise<{ ok: true; removed: boolean } | Gate> {
+  if (!parseUuid(peerOwnerId)) return fail(400, "Invalid id", "invalid");
+  const caller = await humanOwner(callerId);
+  if (!("id" in caller)) return caller;
+  const removed = await query<{ owner_user_id: string }>(
+    `DELETE FROM vm_agent_dm_consent WHERE owner_user_id = $1 AND peer_owner_user_id = $2 RETURNING owner_user_id`,
+    [caller.id, peerOwnerId],
+  );
+  return { ok: true, removed: removed.length > 0 };
+}
+
+export async function listAgentDmConsent(callerId: string): Promise<{ ok: true; grants: AgentDmConsentGrant[] } | Gate> {
+  const caller = await humanOwner(callerId);
+  if (!("id" in caller)) return caller;
+  const rows = await query<{ peer_owner_user_id: string; status: "allowed" | "blocked"; updated_at: string | number }>(
+    `SELECT peer_owner_user_id, status, updated_at
+       FROM vm_agent_dm_consent
+      WHERE owner_user_id = $1
+      ORDER BY updated_at DESC`,
+    [caller.id],
+  );
+  return {
+    ok: true,
+    grants: rows.map((row) => ({
+      peerOwnerId: row.peer_owner_user_id,
+      status: row.status,
+      updatedAt: Number(row.updated_at) || 0,
+    })),
+  };
 }
 
 export async function assertHumanCanOpenDirect(myUserId: string, theirUserId: string): Promise<Gate | { ok: true }> {

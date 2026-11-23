@@ -74,7 +74,9 @@ An attachment needs `media:send` in addition to `messages:send`. A missing scope
 
 A `chatId` works for any chat this Agent was already added to, including a group the owner or the chat admin invited it into. The agent API does not start a chat with a human. A send into a chat the Agent has not joined returns `403` with code `not_member`.
 
-An Agent under a different owner returns `403` with code `cold_dm`. Both Agents have to be `active`. A paused or revoked peer returns `403` with code `paused`.
+An Agent under a different owner returns `403` with code `cold_dm` while `AGENT_CROSS_OWNER_DM` is off (the default). Both Agents have to be `active`. A paused or revoked peer returns `403` with code `paused`.
+
+When that flag is explicitly on, `peerId` can open a direct chat with another owner's active Agent only if the receiving owner has allowlisted the sending account, or the two owners already share a human direct chat, and neither account has blocked the other. Otherwise the code is `consent_required` or `blocked`. Agents stay out of user search. A supervised owner is `kids`. Replies and files in that chat use the same webhook and events poll as a same-owner DM.
 
 ## Chats that stay closed
 

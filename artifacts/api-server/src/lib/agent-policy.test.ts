@@ -6,6 +6,10 @@ import {
   calendarProposeEnabled,
   canDecideProposal,
   chatAllowsAgent,
+  CROSS_OWNER_DM_OPENS_PER_DAY,
+  crossOwnerAgentDmEnabled,
+  crossOwnerDmDecision,
+  crossOwnerOpenRateLimit,
   nextProposalStatus,
   ownerMayCreateSubProfile,
   ownerMayIncludeOwnAgents,
@@ -15,6 +19,7 @@ import {
   AGENT_MESSAGES_PER_DAY,
   AGENT_MESSAGES_PER_MINUTE,
   AGENT_MEDIA_PER_DAY,
+  type CrossOwnerFacts,
 } from "./agent-policy.ts";
 import { calendarProposalCard } from "./message-content.ts";
 
@@ -189,4 +194,91 @@ test("same-owner agents may message each other and strangers may not", () => {
 
 test("public find queries exclude agent accounts", () => {
   assert.equal(AGENT_FIND_EXCLUSION, "COALESCE(account_type, '') <> 'agent'");
+});
+
+const accepted: CrossOwnerFacts = {
+  enabled: true,
+  receiverAllowlisted: true,
+  blocked: false,
+  ownersShareDirectChat: false,
+  senderOwnerKids: false,
+  receiverOwnerKids: false,
+};
+
+test("cross-owner agent DMs stay off unless the flag is explicitly on", () => {
+  assert.equal(crossOwnerAgentDmEnabled({}), false);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "" }), false);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "0" }), false);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "false" }), false);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "off" }), false);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "1" }), true);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "true" }), true);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "yes" }), true);
+  assert.equal(crossOwnerAgentDmEnabled({ AGENT_CROSS_OWNER_DM: "on" }), true);
+});
+
+test("cross-owner DMs require consent, and a block wins", () => {
+  const claude = {
+    id: owner,
+    accountType: "agent",
+    ownerUserId: "owner-1",
+    profileMode: "agent" as const,
+    agentStatus: "active" as const,
+  };
+  const axe = { ...claude, id: admin, ownerUserId: "owner-1" };
+  const stranger = { ...axe, ownerUserId: "owner-2" };
+
+  assert.equal(agentMayMessagePeer(claude, axe, { ...accepted, blocked: true, senderOwnerKids: true }).ok, true);
+
+  const flaggedOff = agentMayMessagePeer(claude, stranger, { ...accepted, enabled: false });
+  assert.equal(flaggedOff.ok, false);
+  if (!flaggedOff.ok) assert.equal(flaggedOff.code, "cold_dm");
+
+  const noConsent = agentMayMessagePeer(claude, stranger, { ...accepted, receiverAllowlisted: false });
+  assert.equal(noConsent.ok, false);
+  if (!noConsent.ok) assert.equal(noConsent.code, "consent_required");
+
+  assert.equal(agentMayMessagePeer(claude, stranger, accepted).ok, true);
+  assert.equal(agentMayMessagePeer(claude, stranger, {
+    ...accepted,
+    receiverAllowlisted: false,
+    ownersShareDirectChat: true,
+  }).ok, true);
+
+  const blocked = agentMayMessagePeer(claude, stranger, { ...accepted, blocked: true });
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) assert.equal(blocked.code, "blocked");
+  const blockedRelationship = agentMayMessagePeer(claude, stranger, {
+    ...accepted,
+    receiverAllowlisted: false,
+    ownersShareDirectChat: true,
+    blocked: true,
+  });
+  assert.equal(blockedRelationship.ok, false);
+  if (!blockedRelationship.ok) assert.equal(blockedRelationship.code, "blocked");
+
+  const kids = agentMayMessagePeer(claude, stranger, { ...accepted, receiverOwnerKids: true });
+  assert.equal(kids.ok, false);
+  if (!kids.ok) assert.equal(kids.code, "kids");
+
+  const reply = crossOwnerDmDecision({ ...accepted, receiverAllowlisted: false }, "reply");
+  assert.equal(reply.ok, true);
+  const replyBlocked = crossOwnerDmDecision({ ...accepted, blocked: true }, "reply");
+  assert.equal(replyBlocked.ok, false);
+  if (!replyBlocked.ok) assert.equal(replyBlocked.code, "blocked");
+  const replyOff = crossOwnerDmDecision({ ...accepted, enabled: false }, "reply");
+  assert.equal(replyOff.ok, false);
+  if (!replyOff.ok) assert.equal(replyOff.code, "cold_dm");
+});
+
+test("new cross-owner conversations share one daily cap per owner", () => {
+  const now = Date.UTC(2026, 10, 3, 12, 0, 0);
+  assert.equal(crossOwnerOpenRateLimit(CROSS_OWNER_DM_OPENS_PER_DAY - 1, now).ok, true);
+  const capped = crossOwnerOpenRateLimit(CROSS_OWNER_DM_OPENS_PER_DAY, now);
+  assert.equal(capped.ok, false);
+  if (!capped.ok) {
+    assert.equal(capped.code, "rate_limited");
+    assert.equal(capped.status, 429);
+    assert.ok((capped.retryAfter ?? 0) > 0);
+  }
 });

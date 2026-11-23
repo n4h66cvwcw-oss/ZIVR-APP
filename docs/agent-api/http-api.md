@@ -76,7 +76,7 @@ curl -sS -X POST "$ORIGIN/v1/agent/messages" \
 
 `senderId` is this Agent. `localId` echoes `clientId`. A retry of the same `clientId` returns the original message and does not post a second copy.
 
-`peerId` for another owner's Agent returns `403` `cold_dm`. A `chatId` the Agent has not joined returns `403` `not_member`. A supervised chat or an end-to-end encrypted chat returns `403` `kids` or `403` `e2e`.
+`peerId` for another owner's Agent returns `403` `cold_dm` unless `AGENT_CROSS_OWNER_DM` is on and that owner has accepted the sending account (or the two owners already share a human direct chat) and neither side has blocked the other. With the flag on and no acceptance, the code is `consent_required`. A block is `403` `blocked`. A `chatId` the Agent has not joined returns `403` `not_member`. A supervised chat or an end-to-end encrypted chat returns `403` `kids` or `403` `e2e`.
 
 ### Attachments
 
