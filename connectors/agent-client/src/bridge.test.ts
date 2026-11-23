@@ -3,7 +3,7 @@ import test from "node:test";
 import { createTurnQueue, pollBridge, startWebhookServer } from "./bridge.js";
 import type { ZivrAgentApi } from "./client.js";
 import { AttachmentStash } from "./prompt.js";
-import { webhookSignature } from "./webhook.js";
+import { signWebhookDelivery, webhookSignature, webhookSignatureHeaders } from "./webhook.js";
 
 const AGENT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PEER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -144,7 +144,10 @@ test("the webhook answers before the provider turn and rejects a bad signature",
     assert.equal(denied.status, 401);
     const accepted = await fetch(server.url, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-zivr-signature": webhookSignature(secret, payload) },
+      headers: {
+        "content-type": "application/json",
+        ...webhookSignatureHeaders(signWebhookDelivery(secret, payload)),
+      },
       body: payload,
       signal: AbortSignal.timeout(1000),
     });
@@ -156,7 +159,18 @@ test("the webhook answers before the provider turn and rejects a bad signature",
   }
 });
 
-test("a replayed webhook is delivered once and a rewritten timestamp fails the HMAC", async () => {
+function postHook(url: string, secret: string, payload: string, overrides?: { timestamp?: string; deliveryId?: string }) {
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...webhookSignatureHeaders(signWebhookDelivery(secret, payload, overrides)),
+    },
+    body: payload,
+  });
+}
+
+test("a replayed delivery id is rejected and a rewritten body fails the HMAC", async () => {
   const secret = "hook-secret";
   let turns = 0;
   const queue = createTurnQueue({
@@ -179,26 +193,22 @@ test("a replayed webhook is delivered once and a rewritten timestamp fails the H
       message: { id: "in", senderId: PEER, chatId: CHAT, text: "from hook", createdAt: 1_730_000_000_000 },
     };
     const payload = JSON.stringify(fresh);
-    const signature = webhookSignature(secret, payload);
-    const replay = await fetch(server.url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-zivr-signature": signature },
-      body: payload,
-    });
-    const again = await fetch(server.url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-zivr-signature": signature },
-      body: payload,
-    });
+    const replay = await postHook(server.url, secret, payload, { deliveryId: "delivery-in" });
+    const again = await postHook(server.url, secret, payload, { deliveryId: "delivery-in" });
     assert.equal(replay.status, 204);
-    assert.equal(again.status, 204);
+    assert.equal(again.status, 401);
+    const sameMessage = await postHook(server.url, secret, payload, { deliveryId: "delivery-in-2" });
+    assert.equal(sameMessage.status, 204);
     const staleBody = JSON.stringify({
       ...fresh,
       message: { ...fresh.message, createdAt: 1_000 },
     });
     const tampered = await fetch(server.url, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-zivr-signature": signature },
+      headers: {
+        "content-type": "application/json",
+        ...webhookSignatureHeaders(signWebhookDelivery(secret, payload, { deliveryId: "delivery-tamper" })),
+      },
       body: staleBody,
     });
     assert.equal(tampered.status, 401);
@@ -206,11 +216,7 @@ test("a replayed webhook is delivered once and a rewritten timestamp fails the H
       type: "message.created",
       message: { id: "older", senderId: PEER, chatId: CHAT, text: "late", createdAt: 1_000 },
     });
-    const acceptedOld = await fetch(server.url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-zivr-signature": webhookSignature(secret, oldButSigned) },
-      body: oldButSigned,
-    });
+    const acceptedOld = await postHook(server.url, secret, oldButSigned, { deliveryId: "delivery-older" });
     assert.equal(acceptedOld.status, 204);
     for (let attempt = 0; attempt < 50 && turns < 2; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -218,5 +224,53 @@ test("a replayed webhook is delivered once and a rewritten timestamp fails the H
     assert.equal(turns, 2);
   } finally {
     await server.close();
+  }
+});
+
+test("the listener rejects a stale or future timestamp and can opt out to body-only checks", async () => {
+  const secret = "hook-secret";
+  const nowMs = 1_700_000_000_000;
+  const server = await startWebhookServer({
+    secret,
+    now: () => nowMs,
+    onEvent: () => {},
+  });
+  const legacy = await startWebhookServer({
+    secret,
+    replayProtection: false,
+    onEvent: () => {},
+  });
+  try {
+    const payload = JSON.stringify({
+      type: "message.created",
+      message: { id: "in", senderId: PEER, chatId: CHAT, text: "window" },
+    });
+    const nowSec = Math.floor(nowMs / 1000);
+    const stale = await postHook(server.url, secret, payload, {
+      timestamp: String(nowSec - 301),
+      deliveryId: "delivery-stale",
+    });
+    const future = await postHook(server.url, secret, payload, {
+      timestamp: String(nowSec + 301),
+      deliveryId: "delivery-future",
+    });
+    const bodyOnly = webhookSignature(secret, payload);
+    const legacyHit = await fetch(legacy.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zivr-signature": bodyOnly },
+      body: payload,
+    });
+    const legacyReplay = await fetch(legacy.url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-zivr-signature": bodyOnly },
+      body: payload,
+    });
+    assert.equal(stale.status, 401);
+    assert.equal(future.status, 401);
+    assert.equal(legacyHit.status, 204);
+    assert.equal(legacyReplay.status, 204);
+  } finally {
+    await server.close();
+    await legacy.close();
   }
 });

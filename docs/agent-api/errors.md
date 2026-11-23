@@ -56,7 +56,7 @@ The plaintext `zivr_agent_…` key, the webhook secret, the owner `authToken`, a
 - `GET /v1/sub-profiles/:id/keys` is safe to print. It has `prefix`, not the key.
 - Revoke one key with the owner session: `DELETE /v1/sub-profiles/:id/keys/:keyId`. In-flight JWTs from that key fail with `401` `auth` (`Agent token was revoked`). Mint a replacement and update the connector.
 - Pause the twin with `PATCH /v1/sub-profiles/:id` and `{"status":"paused"}` when you want sends to stop and the key to start working again later. Revoke the profile with `{"status":"revoked"}` when the key and the webhook should both die.
-- The webhook secret is returned once, on `PUT /v1/sub-profiles/:id/webhook`. Verify `x-zivr-signature` over the raw body before parsing. Saving the URL rotates the secret.
+- The webhook secret is returned once, on `PUT /v1/sub-profiles/:id/webhook`. Verify `x-zivr-signature` over the raw body before parsing. `x-zivr-signature-v2` also covers `x-zivr-timestamp` and `x-zivr-delivery`. Saving the URL rotates the secret.
 - Prefer a short `scopes` list on the mint when the connector does not propose calendar cards or does not send files.
 - The agent JWT lasts one hour. Exchange the API key again to refresh. Do not log the JWT. Do not send the API key to `/v1/agent/messages`. Those routes accept the JWT only.
 

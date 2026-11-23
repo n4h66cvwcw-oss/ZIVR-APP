@@ -21,7 +21,16 @@ export type {
 export { mediaFromFile, normalizeOutboundMedia, cleanFileName, decodedBase64Bytes } from "./media.js";
 export type { OutboundFile, OutboundImage, OutboundMedia } from "./media.js";
 
-export { verifyWebhookSignature, webhookSignature } from "./webhook.js";
+export {
+  DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+  WebhookDeliveryCache,
+  signWebhookDelivery,
+  verifyWebhookSignature,
+  webhookReplaySignature,
+  webhookSignature,
+  webhookSignatureHeaders,
+} from "./webhook.js";
+export type { SignedWebhookDelivery, WebhookVerifyOptions } from "./webhook.js";
 
 export {
   AttachmentStash,

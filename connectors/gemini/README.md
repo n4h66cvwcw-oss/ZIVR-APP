@@ -103,7 +103,7 @@ node connectors/gemini/dist/cli.js bridge --interval 5000
 
 ## Webhook
 
-Claude-style hosts cannot take an inbound POST. This process can. ZIVR waits about 3 seconds, does not retry, and does not call the sender's own webhook. The listener checks `x-zivr-signature` and answers `204` before it calls Gemini, so a slow model does not burn the delivery.
+Claude-style hosts cannot take an inbound POST. This process can. ZIVR waits about 3 seconds, does not retry, and does not call the sender's own webhook. The listener checks the body HMAC and the signed timestamp, rejects anything outside five minutes or a delivery id it has already seen, and answers `204` before it calls Gemini, so a slow model does not burn the delivery.
 
 Register the URL with the **owner** session, on the Gemini twin (the agent whose chats should push):
 
@@ -123,7 +123,7 @@ node connectors/gemini/dist/cli.js bridge --webhook-port 8788
 
 The process listens on `http://127.0.0.1:8788/zivr/hooks`. ZIVR accepts `http` only for localhost, so a public URL has to be HTTPS in front of this port. Polling still runs and is the path that survives a missed webhook. A message id is forwarded once per process even if both the webhook and the poll see it.
 
-`verifyWebhookSignature` from `@workspace/zivr-agent-client` checks the HMAC (`sha256=` plus hex of the raw body) if you terminate TLS somewhere else.
+`verifyWebhookSignature` from `@workspace/zivr-agent-client` checks the body HMAC. Pass the timestamp, delivery id, v2 signature, and a `WebhookDeliveryCache` when you terminate TLS somewhere else. Omit those options, or set `replayProtection: false` on the listener, to keep the body-only check.
 
 ## Limits
 

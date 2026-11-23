@@ -9,7 +9,11 @@ import {
   type TurnResult,
   type TurnSession,
 } from "./prompt.js";
-import { verifyWebhookSignature } from "./webhook.js";
+import {
+  DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+  WebhookDeliveryCache,
+  verifyWebhookSignature,
+} from "./webhook.js";
 
 export type BridgeTurn = { messageId: string; text: string; sends: number };
 
@@ -150,19 +154,35 @@ export type WebhookServer = {
 };
 
 /**
- * Accepts `POST /zivr/hooks`, checks `x-zivr-signature`, and answers before `onEvent`.
- * ZIVR waits about 3 seconds and does not retry, so the provider call happens after the response.
+ * Accepts `POST /zivr/hooks`, checks the webhook signatures, and answers before `onEvent`.
+ * Replay protection is on unless `replayProtection` is false: the signed timestamp must fall
+ * inside five minutes, and a delivery id is accepted once. ZIVR waits about 3 seconds and
+ * does not retry, so the provider call happens after the response.
  */
 export function startWebhookServer(options: {
   secret: string;
   port?: number;
   host?: string;
   onEvent: (event: AgentEvent) => Promise<void> | void;
+  /** Default true. Set false to check only the raw-body HMAC. */
+  replayProtection?: boolean;
+  /** Clock skew in seconds. Default 300. */
+  toleranceSeconds?: number;
+  seen?: WebhookDeliveryCache;
+  /** Epoch milliseconds. Tests inject this. Default `Date.now`. */
+  now?: () => number;
 }): Promise<WebhookServer> {
   if (!options.secret) return Promise.reject(new Error("Set ZIVR_WEBHOOK_SECRET to the secret from the webhook registration"));
   const host = options.host ?? "127.0.0.1";
+  const toleranceSeconds = options.toleranceSeconds ?? DEFAULT_WEBHOOK_TOLERANCE_SECONDS;
+  const resolved = {
+    ...options,
+    replayProtection: options.replayProtection !== false,
+    toleranceSeconds,
+    seen: options.seen ?? new WebhookDeliveryCache({ ttlMs: (Math.max(0, toleranceSeconds) * 2 + 1) * 1000 }),
+  };
   const server: Server = createServer((req, res) => {
-    void handleWebhook(req, res, options).catch((err: unknown) => {
+    void handleWebhook(req, res, resolved).catch((err: unknown) => {
       const status = typeof err === "object" && err && "status" in err && typeof err.status === "number" ? err.status : 400;
       if (!res.headersSent) sendJson(res, status, { error: err instanceof Error ? err.message : "bad request" });
       else res.destroy();
@@ -182,10 +202,23 @@ export function startWebhookServer(options: {
   });
 }
 
+function headerValue(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name];
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
 async function handleWebhook(
   req: IncomingMessage,
   res: ServerResponse,
-  options: { secret: string; onEvent: (event: AgentEvent) => Promise<void> | void },
+  options: {
+    secret: string;
+    onEvent: (event: AgentEvent) => Promise<void> | void;
+    replayProtection: boolean;
+    toleranceSeconds: number;
+    seen: WebhookDeliveryCache;
+    now?: () => number;
+  },
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   if (url.pathname !== "/zivr/hooks") {
@@ -197,9 +230,18 @@ async function handleWebhook(
     return;
   }
   const raw = await readRawBody(req, MAX_WEBHOOK_BODY_BYTES);
-  const header = req.headers["x-zivr-signature"];
-  const signature = Array.isArray(header) ? header[0] : header;
-  if (!verifyWebhookSignature(options.secret, raw, signature)) {
+  const signature = headerValue(req, "x-zivr-signature");
+  const accepted = options.replayProtection
+    ? verifyWebhookSignature(options.secret, raw, signature, {
+      toleranceSeconds: options.toleranceSeconds,
+      timestamp: headerValue(req, "x-zivr-timestamp"),
+      deliveryId: headerValue(req, "x-zivr-delivery"),
+      replaySignature: headerValue(req, "x-zivr-signature-v2"),
+      seen: options.seen,
+      now: options.now?.(),
+    })
+    : verifyWebhookSignature(options.secret, raw, signature, { legacy: true });
+  if (!accepted) {
     sendJson(res, 401, { error: "invalid signature" });
     return;
   }

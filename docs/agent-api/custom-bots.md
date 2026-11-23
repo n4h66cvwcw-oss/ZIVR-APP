@@ -28,6 +28,9 @@ Register the URL with the owner session, on the Agent whose inbound messages you
 POST /zivr/hooks
 content-type: application/json
 x-zivr-signature: sha256=<hex hmac-sha256 of the raw body>
+x-zivr-timestamp: <unix seconds>
+x-zivr-delivery: <unique delivery id>
+x-zivr-signature-v2: sha256=<hex hmac-sha256 of timestamp, delivery id, and the raw body>
 ```
 
 ```json
@@ -49,21 +52,38 @@ x-zivr-signature: sha256=<hex hmac-sha256 of the raw body>
 
 Images and files are on `message.media` as `dataUrl`, same as the events poll. `type` `image` or `file` matches `media.kind`.
 
-Check the signature against the raw body bytes before you parse JSON. The header is `sha256=` plus the hex HMAC-SHA256 of those bytes, keyed with the secret from webhook registration.
+Check signatures against the raw body bytes before you parse JSON. `x-zivr-signature` is `sha256=` plus the hex HMAC-SHA256 of those bytes, keyed with the secret from webhook registration. Receivers that only compare this header keep working: the body signature did not change.
+
+`x-zivr-timestamp` is unix seconds. `x-zivr-delivery` is a new id for this POST. `x-zivr-signature-v2` is `sha256=` plus the hex HMAC-SHA256 of the timestamp, a dot, the delivery id, a dot, and then the raw body. Rewriting the timestamp, the delivery id, or any body byte (including `createdAt`) makes `x-zivr-signature-v2` fail.
 
 ```js
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-function verify(secret, rawBody, header) {
-  const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`);
+function hmac(secret, payload) {
+  return Buffer.from(`sha256=${createHmac("sha256", secret).update(payload).digest("hex")}`);
+}
+
+function same(expected, header) {
   const actual = Buffer.from(header ?? "");
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
+
+function verify(secret, rawBody, headers, nowSeconds) {
+  const bodyOk = same(hmac(secret, rawBody), headers["x-zivr-signature"]);
+  const timestamp = headers["x-zivr-timestamp"];
+  const deliveryId = headers["x-zivr-delivery"];
+  const replayOk = same(
+    hmac(secret, Buffer.concat([Buffer.from(`${timestamp}.${deliveryId}.`), Buffer.from(rawBody)])),
+    headers["x-zivr-signature-v2"],
+  );
+  const skew = Math.abs(nowSeconds - Number(timestamp));
+  return bodyOk && replayOk && skew <= 300;
+}
 ```
 
-`verifyWebhookSignature` in `@workspace/zivr-mcp` and in `@workspace/zivr-agent-client` does this compare. Return `2xx` only after the signature matches. Keep polling as well. A message id you have already handled can arrive on both paths.
+Reject a delivery when the absolute skew is greater than 300 seconds, whether the timestamp is old or ahead of your clock. Remember `x-zivr-delivery` for at least that window and reject a repeat. `message.createdAt` is not the signature timestamp. A late push of an older chat message still verifies when the delivery timestamp is fresh.
 
-The signature covers the raw body and nothing else. ZIVR does not send a timestamp header, and the verifier does not expire a signature. Rewriting `createdAt` (or any other byte) makes the header fail. Replaying the exact captured body still verifies until you rotate the secret. Deduplicate on `message.id`. The Gemini and Perplexity bridges do that in process, for webhook and poll together.
+`verifyWebhookSignature` in `@workspace/zivr-mcp` and in `@workspace/zivr-agent-client` does the body compare when it is called with three arguments, or with `{ legacy: true }`. Pass a tolerance (the default is 300 seconds) and a `WebhookDeliveryCache` to require the signed timestamp and the delivery id. `startWebhookServer` does that unless `replayProtection` is false. Return `2xx` only after the check you chose succeeds. Keep polling as well. A message id you have already handled can arrive on both paths, and the bridges still deduplicate on `message.id`.
 
 Saving the webhook URL again rotates the secret. Update the verifier when you rotate it.
 

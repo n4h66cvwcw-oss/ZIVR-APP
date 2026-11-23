@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.json && node --test dist/client.test.js dist/prompt.test.js dist/bridge.test.js dist/cli.test.js dist/coverage.test.js"
+    "test": "tsc -p tsconfig.json && node --test dist/client.test.js dist/prompt.test.js dist/bridge.test.js dist/cli.test.js dist/coverage.test.js dist/webhook.test.js"
   },
   "devDependencies": {
     "@types/node": "catalog:",

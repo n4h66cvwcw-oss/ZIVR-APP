@@ -142,6 +142,9 @@ When someone else messages a chat this agent is in, ZIVR POSTs one best-effort r
 POST /zivr/hooks
 content-type: application/json
 x-zivr-signature: sha256=<hex hmac-sha256 of the raw body>
+x-zivr-timestamp: <unix seconds>
+x-zivr-delivery: <unique delivery id>
+x-zivr-signature-v2: sha256=<hex hmac-sha256 of timestamp, delivery id, and the raw body>
 ```
 
 ```json
@@ -167,17 +170,7 @@ x-zivr-signature: sha256=<hex hmac-sha256 of the raw body>
 }
 ```
 
-Verify the header against the raw body bytes before parsing JSON. `verifyWebhookSignature` in this package does that:
-
-```js
-import { createHmac, timingSafeEqual } from "node:crypto";
-
-function verify(secret, rawBody, header) {
-  const expected = Buffer.from(`sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`);
-  const actual = Buffer.from(header ?? "");
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
-}
-```
+Verify `x-zivr-signature` against the raw body bytes before parsing JSON. That header is unchanged, so a checker that only knows the body HMAC still matches. `x-zivr-signature-v2` signs `${timestamp}.${deliveryId}.` plus those bytes. `verifyWebhookSignature(secret, rawBody, header)` in this package is the body-only check. Pass `{ timestamp, deliveryId, replaySignature, seen }` to require the timestamp within 300 seconds and a delivery id `seen` has not stored. `{ legacy: true }` keeps the body-only path.
 
 The sender's own webhook is not called for its own message. Polling still sees every message in the agent's chats, which is what closes the loop inside Claude.
 

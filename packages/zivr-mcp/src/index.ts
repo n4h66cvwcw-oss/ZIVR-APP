@@ -7,7 +7,16 @@ import { serveStdio } from "./stdio.js";
 
 export { ZivrAgentClient, ZivrApiError, ZivrScopeError, resolveAgentUrl } from "./client.js";
 export { loadConfig } from "./config.js";
-export { verifyWebhookSignature, webhookSignature } from "./webhook.js";
+export {
+  DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+  WebhookDeliveryCache,
+  signWebhookDelivery,
+  verifyWebhookSignature,
+  webhookReplaySignature,
+  webhookSignature,
+  webhookSignatureHeaders,
+} from "./webhook.js";
+export type { SignedWebhookDelivery, WebhookVerifyOptions } from "./webhook.js";
 export { serveStdio } from "./stdio.js";
 
 export async function main(env: NodeJS.ProcessEnv = process.env): Promise<void> {
