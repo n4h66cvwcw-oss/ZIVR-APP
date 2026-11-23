@@ -21,13 +21,24 @@ export function cloneReactions(reactions: ReactionMap | undefined): ReactionMap 
   return next;
 }
 
+function dedupeUsers(users: string[]): string[] {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const id of users) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    next.push(id);
+  }
+  return next;
+}
+
 /** Accept a history/socket reactions map. `null` means the field was unusable and must be ignored. */
 export function normalizeReactions(input: unknown): ReactionMap | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const next: ReactionMap = {};
   for (const [emoji, users] of Object.entries(input as Record<string, unknown>)) {
     if (!Array.isArray(users)) continue;
-    next[emoji] = users.filter((id): id is string => typeof id === "string");
+    next[emoji] = dedupeUsers(users.filter((id): id is string => typeof id === "string"));
   }
   return next;
 }
@@ -50,10 +61,24 @@ export function sameReactions(left: ReactionMap | undefined, right: ReactionMap 
 /** Optimistic toggle. The same emoji from the same user adds, then removes. */
 export function toggleReaction(reactions: ReactionMap | undefined, userId: string, emoji: string): ReactionMap {
   const next = cloneReactions(reactions);
-  const current = next[emoji] ?? [];
+  const current = dedupeUsers(next[emoji] ?? []);
   if (current.includes(userId)) next[emoji] = current.filter((id) => id !== userId);
   else next[emoji] = [...current, userId];
   return next;
+}
+
+/**
+ * Roll an optimistic toggle back after the POST fails.
+ * If the current map no longer matches that toggle, a server echo already
+ * replaced it and must be kept (no second increment, no stale rollback).
+ */
+export function reactionsAfterFailedToggle(
+  current: ReactionMap | undefined,
+  optimistic: ReactionMap,
+  previous: ReactionMap | undefined,
+): ReactionMap | undefined {
+  if (!sameReactions(current, optimistic)) return current;
+  return previous ? cloneReactions(previous) : undefined;
 }
 
 /**

@@ -6,6 +6,7 @@ import { MessagingProvider, useMessaging, type Message } from "./MessagingContex
 import {
   emitMessageReaction,
   emitNewMessage,
+  failNextReactionPosts,
   reactionPosts,
   resetServerMock,
   setFetchedMessages,
@@ -178,6 +179,102 @@ test("own-message echo records the server id without a duplicate bubble", async 
   assert.equal(copies[0]?.serverMessageId, "srv-echo");
   assert.deepEqual(copies[0]?.reactions, { "👍": ["jay"] });
   assert.deepEqual(notifications, []);
+
+  await act(async () => {
+    screen.unmount();
+  });
+});
+
+test("a failed reaction post rolls the optimistic toggle back", async () => {
+  resetServerMock();
+  resetStorageMock();
+  resetNotificationMock();
+  seedMessages({
+    "server-chat": [
+      { id: "srv-received", chatId: "server-chat", text: "Testing again", senderId: "jay", timestamp: 1 },
+    ],
+  });
+  failNextReactionPosts(1);
+
+  const { screen, api } = renderProvider();
+  await hydrate();
+  await act(async () => {
+    await api.current?.addReaction("server-chat", "srv-received", "👍");
+  });
+  assert.equal(message(api.current?.messages, "server-chat", "srv-received")?.reactions, undefined);
+  assert.equal(reactionPosts.length, 1);
+
+  await act(async () => {
+    screen.unmount();
+  });
+});
+
+test("toggling the same emoji on a local message removes it", async () => {
+  resetServerMock();
+  resetStorageMock();
+  resetNotificationMock();
+  seedMessages({
+    "local-chat": [
+      { id: "offline-1", chatId: "local-chat", text: "offline", senderId: "me", timestamp: 3 },
+    ],
+  });
+
+  const { screen, api } = renderProvider();
+  await hydrate();
+  await act(async () => {
+    await api.current?.addReaction("local-chat", "offline-1", "👍");
+    await api.current?.addReaction("local-chat", "offline-1", "👍");
+  });
+  assert.deepEqual(message(api.current?.messages, "local-chat", "offline-1")?.reactions, {
+    "👍": [],
+  });
+
+  await act(async () => {
+    screen.unmount();
+  });
+});
+
+test("syncing server history paints reactions onto messages already on the device", async () => {
+  resetServerMock();
+  resetStorageMock();
+  resetNotificationMock();
+  seedMessages({
+    "server-chat": [
+      { id: "local-history", chatId: "server-chat", text: "Testing again", senderId: "me", timestamp: 1 },
+      { id: "srv-live", chatId: "server-chat", text: "Hiiii", senderId: "jay", timestamp: 2 },
+    ],
+  });
+  setFetchedMessages([
+    {
+      id: "srv-history",
+      clientId: "local-history",
+      chatId: "server-chat",
+      senderId: "me",
+      text: "Testing again",
+      createdAt: 1,
+      reactions: { "👍": ["kristina", "kristina"] },
+    },
+    {
+      id: "srv-live",
+      chatId: "server-chat",
+      senderId: "jay",
+      text: "Hiiii",
+      createdAt: 2,
+      reactions: { "❤️": ["me"] },
+    },
+  ]);
+
+  const { screen, api } = renderProvider();
+  await hydrate();
+  await act(async () => {
+    await api.current?.syncServerChat("server-chat");
+  });
+  assert.deepEqual(message(api.current?.messages, "server-chat", "local-history")?.reactions, {
+    "👍": ["kristina"],
+  });
+  assert.deepEqual(message(api.current?.messages, "server-chat", "srv-live")?.reactions, {
+    "❤️": ["me"],
+  });
 
   await act(async () => {
     screen.unmount();

@@ -6,10 +6,13 @@ import {
   localMessageFromServer,
 } from "./message-time.ts";
 import {
+  endMediaSend,
   imageMediaFromParts,
   removeOutboxEntry,
   restMessageBody,
+  serverSendDisposition,
   socketMessagePayload,
+  tryBeginMediaSend,
   upsertOutboxEntry,
   type MessageOutboxEntry,
 } from "./message-outbox.ts";
@@ -29,6 +32,24 @@ test("formatMessageTime accepts numeric strings that Date would reject", () => {
 test("formatMessageTime leaves unparseable values blank", () => {
   assert.equal(formatMessageTime("not-a-date"), "");
   assert.equal(formatMessageTime(undefined), "");
+});
+
+test("a second image send is ignored while an upload is in flight", () => {
+  const gate = { busy: false };
+  assert.equal(tryBeginMediaSend(gate), true);
+  assert.equal(tryBeginMediaSend(gate), false);
+  assert.equal(gate.busy, true);
+  endMediaSend(gate);
+  assert.equal(tryBeginMediaSend(gate), true);
+});
+
+test("failed image uploads stay retryable and terminal text sends are dropped", () => {
+  assert.equal(serverSendDisposition({ ok: true }, true), "save");
+  assert.equal(serverSendDisposition({ ok: false, retryable: true }, true), "failed");
+  assert.equal(serverSendDisposition({ ok: false, retryable: false }, true), "failed");
+  assert.equal(serverSendDisposition({ ok: false, retryable: false, suppressed: true }, true), "drop");
+  assert.equal(serverSendDisposition({ ok: false, retryable: false }, false), "drop");
+  assert.equal(serverSendDisposition({ ok: false, retryable: true }, false), "save");
 });
 
 test("outbox entries keep image media with the text fields", () => {

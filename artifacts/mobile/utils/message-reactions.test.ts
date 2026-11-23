@@ -6,6 +6,7 @@ import {
   linkServerMessageId,
   localFieldsFromServerMessage,
   reactionPostId,
+  reactionsAfterFailedToggle,
   toggleReaction,
 } from "./message-reactions.ts";
 
@@ -23,6 +24,37 @@ test("optimistic toggle adds then removes the same emoji for one user", () => {
   const removed = toggleReaction(added, "me", "👍");
   assert.deepEqual(removed, { "❤️": ["sam"], "👍": [] });
   assert.deepEqual(toggleReaction(undefined, "me", "👍")["👍"], ["me"]);
+});
+
+test("a failed toggle rolls back unless the server echo already replaced the map", () => {
+  const previous = { "❤️": ["sam"] };
+  const optimistic = toggleReaction(previous, "me", "👍");
+  assert.deepEqual(reactionsAfterFailedToggle(optimistic, optimistic, previous), previous);
+  assert.equal(reactionsAfterFailedToggle(optimistic, optimistic, undefined), undefined);
+  const echoed = { "👍": ["me", "jay"] };
+  assert.equal(reactionsAfterFailedToggle(echoed, optimistic, previous), echoed);
+});
+
+test("server echo with a repeated user id does not double the count", () => {
+  const optimistic = {
+    chat: [{ id: "local-1", reactions: { "👍": ["me"] } }],
+  };
+  const echoed = applyReactionSnapshot(
+    optimistic,
+    "chat",
+    "srv-1",
+    { "👍": ["me", "me", "jay"] },
+    "local-1",
+  );
+  assert.deepEqual(echoed.chat[0].reactions, { "👍": ["me", "jay"] });
+  const again = applyReactionSnapshot(
+    echoed,
+    "chat",
+    "srv-1",
+    { "👍": ["me", "jay", "jay"] },
+    "local-1",
+  );
+  assert.equal(again, echoed);
 });
 
 test("inbound snapshot matches server uuid or sender localId and does not toggle twice", () => {

@@ -40,6 +40,7 @@ interface MessageBubbleProps {
   onVoiceCall?: () => void;
   onVideoCall?: () => void;
   onImageViewed?: (messageId: string) => void;
+  onRetry?: (messageId: string) => void;
   myId?: string;
   activeSkin?: SkinTheme;
 }
@@ -791,6 +792,7 @@ export function MessageBubble({
   onVoiceCall,
   onVideoCall,
   onImageViewed,
+  onRetry,
   myId,
   activeSkin,
 }: MessageBubbleProps) {
@@ -1263,6 +1265,20 @@ export function MessageBubble({
           </View>
         )}
       </Pressable>
+      {isMine && message.sendFailed && onRetry && (
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            onRetry(message.id);
+          }}
+          style={[styles.retrySend, { alignSelf: "flex-end" }]}
+          accessibilityRole="button"
+          accessibilityLabel="Retry send"
+        >
+          <Ionicons name="refresh" size={13} color="#FF453A" />
+          <Text style={styles.retrySendText}>Tap to retry</Text>
+        </Pressable>
+      )}
       {!isMine && hasText && (
         <Pressable
           style={[styles.readAloudBtn, isSpeaking && styles.readAloudBtnActive]}
@@ -1673,6 +1689,18 @@ const styles = StyleSheet.create({
   },
   reactionEmoji: {
     fontSize: 16,
+  },
+  retrySend: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 4,
+    paddingHorizontal: 4,
+  },
+  retrySendText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
+    color: "#FF453A",
   },
   reactionCount: {
     fontSize: 12,

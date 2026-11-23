@@ -52,6 +52,7 @@ export default function ChatScreen() {
     editMessage,
     deleteMessage,
     addReaction,
+    retryMessage,
     markChatRead,
     muteChat,
     getContactById,
@@ -309,6 +310,10 @@ export default function ChatScreen() {
         onVoiceCall={!isMine ? () => handleCallFromMessage(item.senderId, "voice") : undefined}
         onVideoCall={!isMine ? () => handleCallFromMessage(item.senderId, "video") : undefined}
         onImageViewed={handleImageViewed}
+        onRetry={(messageId) => {
+          if (!id) return;
+          void retryMessage(id, messageId);
+        }}
         selectionMode={selectionMode}
         isSelected={selectedMessageIds.includes(item.id)}
         onLongPress={selectionMode ? () => toggleMessageSelection(item.id) : undefined}
