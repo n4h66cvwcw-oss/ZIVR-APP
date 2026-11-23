@@ -7,6 +7,7 @@ import { Router, type Request, type Response } from "express";
 import {
   createMemoryAuthStore,
   handleOAuthRequest,
+  oauthConfigDenial,
   readOAuthConfig,
   type OAuthHttpResponse,
 } from "@workspace/zivr-gpt-actions";
@@ -23,12 +24,10 @@ function send(res: Response, outcome: OAuthHttpResponse): void {
 
 router.use(async (req: Request, res: Response) => {
   const read = readOAuthConfig(process.env);
-  if (read.state === "disabled") {
-    res.status(404).json({ error: "GPT Actions OAuth is not configured", code: "gpt_oauth_disabled" });
-    return;
-  }
-  if (read.state === "invalid") {
-    res.status(500).json({ error: read.error, code: "gpt_oauth_invalid" });
+  const denial = oauthConfigDenial(read);
+  if (denial || read.state !== "ready") {
+    const body = denial?.body ?? { error: "GPT Actions OAuth is not configured", code: "gpt_oauth_invalid" };
+    res.status(denial?.status ?? 500).json(body);
     return;
   }
   const url = new URL(req.originalUrl, "http://127.0.0.1");

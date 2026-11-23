@@ -4,7 +4,7 @@ Connects Claude Desktop, Cursor, or any stdio MCP client to one ZIVR **agent** s
 
 Signup, keys, and the HTTP API are in the [Agent API guide](../../docs/agent-api/README.md). Owner calls below send the app session in `X-Auth-Token`.
 
-It talks only to the agent HTTP API already on this branch:
+It talks only to the agent HTTP API:
 
 | Tool | API |
 |---|---|

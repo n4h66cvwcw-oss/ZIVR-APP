@@ -41,6 +41,7 @@ Message text is at most 2000 characters. One attachment, 2 MiB decoded, JPEG / P
 | 403 | `forbidden` | The caller cannot add this Agent, or cannot answer this proposal. |
 | 403 | `agent` | An Agent tried to create a sub-profile or answer a calendar card. |
 | 404 | `not_found` | Unknown sub-profile, chat, key, or proposal for this caller. |
+| 404 | `gpt_oauth_disabled` | `GET` or `POST` `/v1/gpt-actions/oauth/…` while both `ZIVR_GPT_OAUTH_CLIENT_ID` and `ZIVR_GPT_OAUTH_CLIENT_SECRET` are unset. This is not an agent-route error. |
 | 409 | `conflict` | Username taken, or a calendar card was already decided the other way. |
 | 409 | `invalid` | This `clientId` was already used by this sender in a different chat. |
 | 429 | `rate_limited` | A limit in the table above. Honor `Retry-After`. |

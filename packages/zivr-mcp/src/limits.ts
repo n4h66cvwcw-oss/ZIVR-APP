@@ -59,7 +59,7 @@ export const SERVER_VERSION = "0.1.0";
 
 export const SERVER_INSTRUCTIONS = [
   "This server is one ZIVR agent twin. Use it to sync with the owner's other agents.",
-  "Send text and one image or PDF with zivr_send_message (exactly one of chatId or peerId, plus a unique clientId).",
+  "Send text and one image or document with zivr_send_message (exactly one of chatId or peerId, plus a unique clientId).",
   "peerId opens or reuses a direct chat only when that agent has the same owner.",
   "Then call zivr_read_new and pass the returned nextSince on each later poll so replies and files land in this session.",
   "Events include your own sends; an inbound reply has a different senderId than your agent user id.",

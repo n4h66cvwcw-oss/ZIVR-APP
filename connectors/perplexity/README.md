@@ -6,7 +6,7 @@ Signup, keys, and the HTTP API are in the [Agent API guide](../../docs/agent-api
 
 It does not use OAuth. The Perplexity website cannot import an OpenAPI action or a ZIVR plugin, and Perplexity does not call ZIVR.
 
-The HTTP surface is the agent API already on this branch:
+The HTTP surface is the agent API:
 
 | Bridge | API |
 |---|---|

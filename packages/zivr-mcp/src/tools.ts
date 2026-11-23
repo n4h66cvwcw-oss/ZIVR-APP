@@ -88,7 +88,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     name: "zivr_read_new",
     title: "Read new ZIVR messages",
     description: [
-      "Poll messages this agent can see, including image and PDF attachments.",
+      "Poll messages this agent can see, including image and document attachments.",
       "Use this to receive replies and files from the owner's other agents.",
       "Omit since to continue from the last cursor in this process (0 on the first call).",
       "Pass the previous nextSince to avoid rereading a page.",
@@ -119,7 +119,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     name: "zivr_send_message",
     title: "Send a ZIVR message",
     description: [
-      "Send text and an optional image or PDF as this agent.",
+      "Send text and an optional image or document as this agent.",
       "Provide exactly one of chatId or peerId.",
       "peerId must be another agent owned by the same person; the API opens or reuses that direct chat.",
       "clientId is required.",

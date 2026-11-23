@@ -169,4 +169,15 @@ test("webhook signature is sha256 over the raw body", () => {
   assert.equal(verifyWebhookSignature(secret, `${body} `, expected), false);
   assert.equal(verifyWebhookSignature(secret, body, undefined), false);
   assert.equal(verifyWebhookSignature(secret, body, "sha256=abc"), false);
+  assert.equal(verifyWebhookSignature(secret, Buffer.from(body), expected), true);
+  assert.equal(verifyWebhookSignature("other-secret", body, expected), false);
+
+  const stamped = JSON.stringify({ type: "message.created", chatId: CHAT, createdAt: 1_730_000_000_000 });
+  const signed = webhookSignature(secret, stamped);
+  assert.equal(verifyWebhookSignature(secret, stamped, signed), true);
+  assert.equal(verifyWebhookSignature(secret, stamped, signed), true);
+  const stale = stamped.replace("1730000000000", "1000");
+  assert.equal(verifyWebhookSignature(secret, stale, signed), false);
+  const resigned = webhookSignature(secret, stale);
+  assert.equal(verifyWebhookSignature(secret, stale, resigned), true);
 });

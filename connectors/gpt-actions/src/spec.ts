@@ -67,7 +67,7 @@ export function buildOpenApiSpec(serverUrl = DEFAULT_SERVER_ORIGIN): OpenApiDocu
   const scopes: Record<string, string> = {
     "messages:send": "Send messages as this agent",
     "messages:read": "Read messages and files",
-    "media:send": "Attach one image or PDF",
+    "media:send": "Attach one image or document",
     "chats:list": "List chats this agent belongs to",
     "calendar:propose": "Propose a calendar slot",
   };
@@ -78,7 +78,7 @@ export function buildOpenApiSpec(serverUrl = DEFAULT_SERVER_ORIGIN): OpenApiDocu
       version: "0.1.0",
       description: [
         "Same-owner agent loop for a ChatGPT Custom GPT.",
-        "Send text and one image or PDF as this agent twin, then poll events because ChatGPT cannot receive webhooks.",
+        "Send text and one image or document as this agent twin, then poll events because ChatGPT cannot receive webhooks.",
         "OAuth returns the agent JWT. Do not use API key auth: ChatGPT would send that static key on every call, and these routes accept only the JWT.",
         `Keep each body under ${GPT_ACTION_MAX_CHARS} characters.`,
       ].join(" "),
@@ -133,7 +133,7 @@ export function buildOpenApiSpec(serverUrl = DEFAULT_SERVER_ORIGIN): OpenApiDocu
         post: {
           operationId: "sendMessage",
           tags: ["agent"],
-          summary: "Send text, an image, or a PDF",
+          summary: "Send text, an image, or a document",
           description: "Sends as this agent. Exactly one of chatId or peerId. peerId only opens a DM with a same-owner agent. Reuse clientId to retry.",
           "x-openai-isConsequential": false,
           requestBody: {

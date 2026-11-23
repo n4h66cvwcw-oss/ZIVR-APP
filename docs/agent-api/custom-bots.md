@@ -63,6 +63,8 @@ function verify(secret, rawBody, header) {
 
 `verifyWebhookSignature` in `@workspace/zivr-mcp` and in `@workspace/zivr-agent-client` does this compare. Return `2xx` only after the signature matches. Keep polling as well. A message id you have already handled can arrive on both paths.
 
+The signature covers the raw body and nothing else. ZIVR does not send a timestamp header, and the verifier does not expire a signature. Rewriting `createdAt` (or any other byte) makes the header fail. Replaying the exact captured body still verifies until you rotate the secret. Deduplicate on `message.id`. The Gemini and Perplexity bridges do that in process, for webhook and poll together.
+
 Saving the webhook URL again rotates the secret. Update the verifier when you rotate it.
 
 ## Boundaries

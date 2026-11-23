@@ -34,8 +34,8 @@ export {
   GPT_ACTION_MAX_CHARS,
   TOKEN_PATH,
 } from "./limits.js";
-export { handleOAuthRequest, readOAuthConfig } from "./oauth.js";
-export type { OAuthConfig, OAuthConfigRead, OAuthDeps, OAuthHttpResponse, OAuthIncoming } from "./oauth.js";
+export { handleOAuthRequest, oauthConfigDenial, readOAuthConfig } from "./oauth.js";
+export type { OAuthConfig, OAuthConfigDenial, OAuthConfigRead, OAuthDeps, OAuthHttpResponse, OAuthIncoming } from "./oauth.js";
 export { createMemoryAuthStore } from "./store.js";
 export { buildOpenApiSpec } from "./spec.js";
 export type { OpenApiDocument } from "./spec.js";

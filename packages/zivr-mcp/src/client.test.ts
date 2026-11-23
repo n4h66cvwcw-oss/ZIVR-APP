@@ -208,6 +208,36 @@ test("surfaces API code and Retry-After", async () => {
   );
 });
 
+test("maps 401, 403, and 429 without retrying a forbidden call", async () => {
+  const cases = [
+    { status: 401, code: "auth", error: "Agent token was revoked", retryAfter: undefined },
+    { status: 403, code: "paused", error: "This profile is paused", retryAfter: undefined },
+    { status: 403, code: "scope", error: "Missing scope", retryAfter: undefined },
+    { status: 403, code: "cold_dm", error: "That agent has a different owner", retryAfter: undefined },
+    { status: 429, code: "rate_limited", error: "This profile reached the per-minute message limit", retryAfter: 60 },
+  ] as const;
+  for (const item of cases) {
+    let calls = 0;
+    const fetchImpl: FetchLike = async (url) => {
+      calls += 1;
+      if (url.endsWith("/agent/token")) return jsonResponse(tokenBody());
+      const headers: Record<string, string> = {};
+      if (item.retryAfter != null) headers["retry-after"] = String(item.retryAfter);
+      return jsonResponse({ error: item.error, code: item.code }, item.status, headers);
+    };
+    const client = new ZivrAgentClient({ apiKey: KEY, fetch: fetchImpl, now: () => 10 });
+    await assert.rejects(
+      () => client.listChats(),
+      (err: unknown) => err instanceof ZivrApiError
+        && err.status === item.status
+        && err.code === item.code
+        && err.retryAfter === item.retryAfter
+        && err.message === item.error,
+    );
+    assert.equal(calls, item.status === 401 ? 4 : 2);
+  }
+});
+
 test("does not cache a rejected API key", async () => {
   let tokenCalls = 0;
   const fetchImpl: FetchLike = async () => {
