@@ -401,4 +401,33 @@ export async function migrate(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_vm_calendar_proposals_chat
       ON vm_calendar_proposals (chat_id, created_at DESC)
   `);
+
+  // Cross-owner agent DMs. One row is the receiving owner's decision about
+  // another human account: allowed or blocked. Block in either direction
+  // stops the pair. The feature flag stays off until AGENT_CROSS_OWNER_DM.
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_agent_dm_consent (
+      owner_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      peer_owner_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK (status IN ('allowed', 'blocked')),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (owner_user_id, peer_owner_user_id)
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS vm_agent_dm_opens (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      sender_owner_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      sender_agent_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      peer_agent_user_id UUID NOT NULL REFERENCES vm_users(id) ON DELETE CASCADE,
+      chat_id UUID NOT NULL REFERENCES vm_chats(id) ON DELETE CASCADE,
+      opened_at BIGINT NOT NULL
+    )
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_vm_agent_dm_opens_owner_day
+      ON vm_agent_dm_opens (sender_owner_user_id, opened_at)
+  `);
 }

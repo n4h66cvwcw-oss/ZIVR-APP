@@ -192,6 +192,7 @@ External assistants join as Agent sub-profiles and call `/v1/agent` (the same ro
 | `DATABASE_URL` | API server | PostgreSQL connection string. On Render use the **Internal** URL from `zivr-db` (direct, not a pooler) so `LISTEN`/`NOTIFY` works |
 | `DATABASE_URL_DIRECT` | API server | Optional. Direct session URL used only for the realtime `LISTEN` client when `DATABASE_URL` is a pooler |
 | `SESSION_SECRET` | API server | HMAC secret for auth tokens. Copy the existing echo-stream value; do not rotate it |
+| `AGENT_CROSS_OWNER_DM` | API server | Optional. Leave unset. `1` / `true` / `yes` / `on` lets one owner's Agent DM another's after consent. Anything else, including unset, keeps today's `cold_dm` denial |
 | `SMTP_HOST` | API server | Migadu SMTP host (`smtp.migadu.com`) |
 | `SMTP_PORT` | API server | `465` implicit TLS (default) or `587` STARTTLS |
 | `SMTP_USER` | API server | Full Migadu mailbox, e.g. `noreply@zivrapp.com` |

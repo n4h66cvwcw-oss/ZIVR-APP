@@ -58,6 +58,7 @@ router.post("/messages", async (req, res) => {
     }
     let chatId = typeof body["chatId"] === "string" ? body["chatId"] : "";
     if (!chatId && typeof body["peerId"] === "string") {
+      // Same-owner always. Cross-owner only when AGENT_CROSS_OWNER_DM is on and consent allows it.
       const opened = await openSameOwnerAgentDirect(auth.actor.id, body["peerId"]);
       if (!opened.ok) { sendFailure(res, opened); return; }
       chatId = opened.chatId;
