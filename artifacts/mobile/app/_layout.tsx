@@ -27,7 +27,12 @@ import { FavoritesProvider } from "@/context/FavoritesContext";
 import { IncomingCallModal } from "@/components/IncomingCallModal";
 import { ScreenCaptureGuard } from "@/components/ScreenCaptureGuard";
 import { TimeLockScreen } from "@/components/TimeLockScreen";
-import { registerForPushNotificationsAsync } from "@/utils/notifications";
+import { consumeChatNotificationRoute } from "@/utils/notification-policy";
+import {
+  installRemoteNotificationDeliveryTracker,
+  recordNotificationData,
+  registerForPushNotificationsAsync,
+} from "@/utils/notifications";
 import { getRecoveredLanguageUpdate } from "@/utils/language-sync";
 import {
   createForegroundCheckHandler,
@@ -219,6 +224,50 @@ function ContactApprovalNotifications() {
 
     return () => subscription.remove();
   }, [openApprovedContact, serverUserId]);
+
+  return null;
+}
+
+const handledNotificationResponses = new Set<string>();
+
+/**
+ * A tap on a chat message notification opens that chat. Cold starts read the
+ * last response; later taps use the listener. Other notification types and
+ * payloads without a chat id are ignored.
+ */
+function ChatNotificationLinks() {
+  const pathname = usePathname();
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+
+  useEffect(() => {
+    const openFromResponse = (response: Notifications.NotificationResponse) => {
+      const data = response.notification.request.content.data;
+      recordNotificationData(data);
+      const route = consumeChatNotificationRoute(
+        response.notification.request.identifier,
+        data,
+        handledNotificationResponses,
+      );
+      if (!route || pathnameRef.current === route) return;
+      router.push(route as `/chat/${string}`);
+    };
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      openFromResponse(response);
+    });
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (response) openFromResponse(response);
+      })
+      .catch(() => {});
+    const removeTracker = installRemoteNotificationDeliveryTracker();
+
+    return () => {
+      subscription.remove();
+      removeTracker();
+    };
+  }, []);
 
   return null;
 }
@@ -592,6 +641,7 @@ function RootLayoutNav() {
     <TimeLockGate>
       <OnboardingGate />
       <PushRegistrar />
+      <ChatNotificationLinks />
       <ContactApprovalNotifications />
       <ScheduledMessageNotifications />
       <LanguageSyncer />

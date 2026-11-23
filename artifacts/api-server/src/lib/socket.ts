@@ -1,7 +1,7 @@
 import { Server as HttpServer } from "http";
 import { Server as SocketServer, Socket } from "socket.io";
 import { query, queryOne } from "./db";
-import { sendExpoPush } from "./push";
+import { chatMessagePushData, sendExpoPush } from "./push";
 import { verifyToken } from "./auth";
 import {
   checkDirectContactAllowed,
@@ -766,7 +766,13 @@ export function attachSocket(httpServer: HttpServer): SocketServer {
 
         if (tokens.length > 0) {
           const preview = text.length > 80 ? text.slice(0, 80) + "…" : text;
-          await sendExpoPush(tokens, sender?.display_name ?? "New message", preview, "default");
+          await sendExpoPush(
+            tokens,
+            sender?.display_name ?? "New message",
+            preview,
+            "default",
+            chatMessagePushData(chatId, msg!.id),
+          );
         }
       } catch (err) {
         console.error("message:send error", err);

@@ -14,8 +14,10 @@ import {
   resetStorageMock,
 } from "../test/mocks/async-storage";
 import {
+  clearedChatIds,
   notifications,
   resetNotificationMock,
+  seedDeliveredMessageIds,
 } from "../test/mocks/notifications";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -82,7 +84,69 @@ test("startup replay waits for persisted chat notification settings", async () =
     title: "Jo",
     body: "Audible",
     sound: "chime",
+    data: {
+      type: "chat_message",
+      chatId: "audible",
+      messageId: "m-audible",
+      messageIds: ["m-audible"],
+    },
   }]);
+
+  await act(async () => {
+    screen.unmount();
+  });
+});
+
+test("missed catch-up skips the open chat and messages already delivered by push", async () => {
+  resetServerMock();
+  resetStorageMock();
+  resetNotificationMock();
+  seedDeliveredMessageIds(["m-remote"]);
+
+  const api = { current: null as { setActiveChatId: (id: string | null) => void } | null };
+  function Harness() {
+    const { setActiveChatId } = useMessaging();
+    api.current = { setActiveChatId };
+    return null;
+  }
+
+  const screen = renderProvider(<Harness />);
+  await act(async () => {
+    await flush();
+    api.current?.setActiveChatId("open-chat");
+  });
+
+  const replay: MockServerMessage[] = [
+    { id: "m-open-1", chatId: "open-chat", senderId: "alex", senderName: "Alex", text: "On screen", createdAt: 1 },
+    { id: "m-open-2", chatId: "open-chat", senderId: "alex", senderName: "Alex", text: "Still here", createdAt: 2 },
+    { id: "m-remote", chatId: "alex-chat", senderId: "alex", senderName: "Alex", text: "Already pushed", createdAt: 3 },
+    { id: "m-2", chatId: "alex-chat", senderId: "alex", senderName: "Alex", text: "Second", createdAt: 4 },
+    { id: "m-3", chatId: "alex-chat", senderId: "alex", senderName: "Alex", text: "Third", createdAt: 5 },
+  ];
+  replay.forEach((message) => emitNewMessage(message, "missed"));
+
+  await act(async () => {
+    resolveChatHydration([
+      { id: "open-chat", type: "direct", name: "Open", participantIds: ["alex"], createdAt: 1 },
+      { id: "alex-chat", type: "direct", name: "Alex", participantIds: ["alex"], createdAt: 1 },
+    ]);
+    await flush();
+    await flush();
+    await flush();
+  });
+
+  assert.deepEqual(notifications, [{
+    title: "2 new messages from Alex",
+    body: "Third",
+    sound: "default",
+    data: {
+      type: "chat_message",
+      chatId: "alex-chat",
+      messageId: "m-3",
+      messageIds: ["m-2", "m-3"],
+    },
+  }]);
+  assert.deepEqual(clearedChatIds, ["open-chat"]);
 
   await act(async () => {
     screen.unmount();

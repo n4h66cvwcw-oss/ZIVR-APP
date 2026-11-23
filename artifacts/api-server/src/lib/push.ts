@@ -1,3 +1,7 @@
+export function chatMessagePushData(chatId: string, messageId: string) {
+  return { type: "chat_message" as const, chatId, messageId };
+}
+
 export async function sendExpoPush(
   tokens: string[],
   title: string,

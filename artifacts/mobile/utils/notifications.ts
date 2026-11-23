@@ -1,7 +1,12 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import { resolveExpoProjectId } from "@/utils/expo-project-id";
+import {
+  messageIdsFromNotificationData,
+  partitionPresentedNotifications,
+  type ChatNotificationData,
+} from "@/utils/notification-policy";
 
 export type NotificationSoundOption = {
   id: string;
@@ -73,10 +78,48 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   }
 }
 
+const deliveredRemoteMessageIds = new Set<string>();
+
+export function recordNotificationData(data: unknown): void {
+  for (const messageId of messageIdsFromNotificationData(data)) {
+    deliveredRemoteMessageIds.add(messageId);
+  }
+}
+
+/** In-memory ids plus anything still in the notification tray. */
+export async function loadDeliveredMessageIds(): Promise<Set<string>> {
+  if (Platform.OS !== "web") {
+    try {
+      const presented = await Notifications.getPresentedNotificationsAsync();
+      for (const notification of presented) {
+        recordNotificationData(notification.request.content.data);
+      }
+    } catch {
+      // Tray lookup can fail before the native module is ready.
+    }
+  }
+  return new Set(deliveredRemoteMessageIds);
+}
+
+export function installRemoteNotificationDeliveryTracker(): () => void {
+  const received = Notifications.addNotificationReceivedListener((notification) => {
+    recordNotificationData(notification.request.content.data);
+  });
+  const appState = AppState.addEventListener("change", (state) => {
+    if (state === "active") void loadDeliveredMessageIds();
+  });
+  void loadDeliveredMessageIds();
+  return () => {
+    received.remove();
+    appState.remove();
+  };
+}
+
 export async function scheduleLocalNotification(
   title: string,
   body: string,
-  soundId: string = "default"
+  soundId: string = "default",
+  data?: ChatNotificationData,
 ): Promise<void> {
   if (Platform.OS === "web") return;
   if (soundId === "none") return;
@@ -86,7 +129,29 @@ export async function scheduleLocalNotification(
       title,
       body,
       sound: true,
+      ...(data ? { data: { ...data } } : {}),
     },
     trigger: null,
   });
+}
+
+/** Dismiss tray items for this chat and set the badge to the other chats' remaining count. */
+export async function clearPresentedNotificationsForChat(chatId: string): Promise<void> {
+  if (!chatId || Platform.OS === "web") return;
+  try {
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    const { dismissIds, remainingBadgeCount } = partitionPresentedNotifications(
+      presented.map((notification) => ({
+        identifier: notification.request.identifier,
+        data: notification.request.content.data,
+      })),
+      chatId,
+    );
+    await Promise.all(
+      dismissIds.map((identifier) => Notifications.dismissNotificationAsync(identifier).catch(() => {})),
+    );
+    await Notifications.setBadgeCountAsync(remainingBadgeCount);
+  } catch (error) {
+    console.warn("[notifications] failed to clear chat notifications", error);
+  }
 }
